@@ -192,6 +192,14 @@ print(','.join(ev))")" UG_SHOT=1200 ./out/underground.exe   (NJ level by ~frame 
   ran OK with it. Game window icon = underground.ico. TODO before release: rebuild the Android kit in WSL
   (tools/build_android.sh) so template.apk carries the new ic_launcher.png, copy to dist\_cache\android-kit, and
   the Linux package (icon.png changed). Launcher hover/clicks by hand still untested.
-- Not pushed since the initial commits (user rule: push only when asked).
+- DISPLAY (2026-11-23): UG_WIDESCREEN (default on) sets the XC_VIDEO widescreen bit 0x00010000: THUG renders 16:9
+  anamorphic with its own HUD layout (NJ gameplay checked, 60 fps); present at s->w/s->h * 4/3. UG_ASPECT=stretch,
+  UG_WINDOW=WxH (physical px), window centred on its monitor, per-monitor DPI aware (process + thread context; the
+  creation-time WM_DPICHANGED is ignored). Launcher: Window size / Screen / Picture combos.
+  FPS: the game does not cap itself (UG_FPS=0 -> 240 fps = monitor vsync); all clocks (rdtsc, QPC, KeTickCount) are
+  real-time. 60 fps paced = native rate. Above 60 untested (logic speed unverified at high rates).
+  NOTE: the first README push (2f72b39) had docs/images/installer.jpg showing a C:\Users\<name> path; replaced in
+  b6894d0. Still in history: rewrite only if the user asks (force push needs their OK).
+- Pushed to both remotes 2026-11-23 (README, avatars, display settings). No release until all three ports are ready.
 - Repos: origin gitlab.com/octagram-labs-group/Project-Underground, forge 8gramlabs/Project-Underground (both public).
   Homepage card live (placeholder image landing/img/thug.jpg: replace with a screenshot later). release-sync REPOS updated.
