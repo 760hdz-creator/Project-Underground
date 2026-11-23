@@ -5,7 +5,7 @@ Usage: python -I tools/build.py [lifted] [oracle] [runtime] [--jobs N]
   oracle   link out/oracle.dll (lifted objects + runtime/oracle/oracle.c) for tools/oracle_test.py
 No Visual Studio or Windows SDK: llvm-mingw ships clang, lld and the mingw-w64 headers/libraries.
 """
-import argparse, concurrent.futures, glob, os, subprocess, sys
+import argparse, concurrent.futures, glob, os, re, subprocess, sys
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, os.path.join(ROOT, "tools"))
@@ -29,10 +29,22 @@ def run(cmd):
     return p.returncode, p.stdout
 
 
+def newest_input(src):
+    """mtime of src and of the local headers it #includes directly (e.g. shaders_spv.h)."""
+    t = os.path.getmtime(src)
+    d = os.path.dirname(src)
+    with open(src, encoding="latin-1") as f:
+        for line in f:
+            m = re.match(r'\s*#\s*include\s+"([^"]+)"', line)
+            if m and os.path.exists(os.path.join(d, m.group(1))):
+                t = max(t, os.path.getmtime(os.path.join(d, m.group(1))))
+    return t
+
+
 def compile_all(items, jobs):
     def one(it):
         src, obj, flags = it
-        if os.path.exists(obj) and os.path.getmtime(obj) >= os.path.getmtime(src):
+        if os.path.exists(obj) and os.path.getmtime(obj) >= newest_input(src):
             return src, (0, "")
         return src, run([CC] + flags + [src, "-o", obj])
     bad = 0

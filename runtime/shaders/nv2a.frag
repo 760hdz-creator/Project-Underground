@@ -18,6 +18,8 @@ layout(std140, set = 0, binding = 0) uniform Draw {
     vec4 alpha;            // ref (0..255), func (0..7), test enable, output alpha scale
     vec4 tsz[4];           // 1/w, 1/h of linear (rect) textures
     uvec4 tmode;           // per stage: 0 none, 1 2D, 2 2D rect (unnormalized coords), 3 pass-through
+    vec4 sfac[2];          // final combiner c0, c1 (SET_SPECULAR_FOG_FACTOR)
+    vec4 fogp;             // fog params 0, 1; function (0 off, 1 linear, 2 exp, 3 exp2); abs
 } D;
 
 layout(set = 0, binding = 2) uniform sampler2D tex0;
@@ -97,7 +99,7 @@ float outop1(float x, uint ocw) {
 void main() {
     vec4 t0 = stage_tex(0, i_t0), t1 = stage_tex(1, i_t1), t2 = stage_tex(2, i_t2), t3 = stage_tex(3, i_t3);
     uint ctl = D.comb[0].x;
-    REG[0] = vec4(0.0); REG[1] = D.cfac[0]; REG[2] = D.cfac[8]; REG[3] = vec4(D.fogc.rgb, i_fog);
+    REG[0] = vec4(0.0); REG[1] = D.cfac[0]; REG[2] = D.cfac[8]; REG[3] = vec4(D.fogc.rgb, D.fogp.z != 0.0 ? i_fog : 1.0);   // fog disabled: factor 1 (no fog)
     REG[4] = i_d0; REG[5] = i_d1; REG[6] = vec4(0.0); REG[7] = vec4(0.0);
     REG[8] = t0; REG[9] = t1; REG[10] = t2; REG[11] = t3;
     REG[12] = vec4(0.0, 0.0, 0.0, t0.a); REG[13] = vec4(0.0); REG[14] = vec4(0.0); REG[15] = vec4(0.0);
@@ -129,6 +131,7 @@ void main() {
     }
     // final combiner: rgb = A*B + (1-A)*C + D, alpha = G; sum = r0 + v1, ef = E*F
     uint f0 = D.comb[0].y, f1 = D.comb[0].z;
+    REG[1] = D.sfac[0]; REG[2] = D.sfac[1];   // the final combiner has its own constants
     REG[14].rgb = (f1 & 0x80u) != 0u ? clamp(REG[12].rgb + REG[5].rgb, 0.0, 1.0) : REG[12].rgb + REG[5].rgb;
     REG[15].rgb = inp_rgb(f1 >> 24) * inp_rgb((f1 >> 16) & 0xFFu);
     vec3 A = inp_rgb(f0 >> 24), B = inp_rgb((f0 >> 16) & 0xFFu), C = inp_rgb((f0 >> 8) & 0xFFu), Dd = inp_rgb(f0 & 0xFFu);

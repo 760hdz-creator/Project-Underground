@@ -898,6 +898,8 @@ typedef struct {
     float fogc[4], alpha[4];
     float tsz[4][4];
     uint32_t tmode[4];
+    float sfac[2][4];            /* final combiner c0, c1 (SET_SPECULAR_FOG_FACTOR) */
+    float fogp[4];               /* fog params 0, 1; function (0 off, 1 linear, 2 exp, 3 exp2); abs */
 } DrawUBO;
 
 #define VTX_RING (96ull << 20)
@@ -1061,6 +1063,11 @@ static void argb_to_f4(uint32_t c, float *o) {
 static void draw_impl(int topo, const KVertex *v, uint32_t nv, const uint32_t *idx, uint32_t ni) {
     st_draws++; st_verts += nv;
     if (!ready() || !ni) return;
+    {   /* UG_SKIPFMT=<hex>: drop draws whose texture 0 has this colour format (debug) */
+        static int skip = -2;
+        if (skip == -2) { const char *e = getenv("UG_SKIPFMT"); skip = e ? (int)strtol(e, NULL, 16) : -1; }
+        if (skip >= 0 && (KREG(K_TEX_CONTROL0(0)) >> 30 & 1) && (int)(KREG(K_TEX_FORMAT(0)) >> 8 & 0xFF) == skip) return;
+    }
     if (!select_targets()) return;
     Frame *f = &frames[fi];
 
@@ -1096,6 +1103,15 @@ static void draw_impl(int topo, const KVertex *v, uint32_t nv, const uint32_t *i
         u->comb[1 + st][2] = KREG(K_COMB_ALPHA_ICW + st * 4); u->comb[1 + st][3] = KREG(K_COMB_ALPHA_OCW + st * 4);
         argb_to_f4(KREG(K_COMB_FACTOR0 + st * 4), u->cfac[st]);
         argb_to_f4(KREG(K_COMB_FACTOR1 + st * 4), u->cfac[8 + st]);
+    }
+    argb_to_f4(KREG(K_SPECFOG_FACTOR0), u->sfac[0]);
+    argb_to_f4(KREG(K_SPECFOG_FACTOR1), u->sfac[1]);
+    {   /* fog function (as xemu): FOG_MODE 0x2601 linear, 0x800 exp, 0x801 exp2, 0x802/0x803 abs, 0x804 linear abs */
+        uint32_t fm = KREG(K_FOG_MODE);
+        memcpy(&u->fogp[0], &g_kreg[(K_FOG_PARAMS >> 2) + 0], 4);
+        memcpy(&u->fogp[1], &g_kreg[(K_FOG_PARAMS >> 2) + 1], 4);
+        u->fogp[2] = !(KREG(K_FOG_ENABLE) & 1) ? 0.f : fm == 0x800 || fm == 0x802 ? 2.f : fm == 0x801 || fm == 0x803 ? 3.f : 1.f;
+        u->fogp[3] = (fm == 0x802 || fm == 0x803 || fm == 0x804) ? 1.f : 0.f;
     }
     { uint32_t fc = KREG(K_FOG_COLOR); u->fogc[0] = (fc & 0xFF) / 255.f; u->fogc[1] = ((fc >> 8) & 0xFF) / 255.f; u->fogc[2] = ((fc >> 16) & 0xFF) / 255.f; u->fogc[3] = 1; }
     u->alpha[0] = (float)(KREG(K_ALPHA_REF) & 0xFF);
@@ -1138,6 +1154,19 @@ static void draw_impl(int topo, const KVertex *v, uint32_t nv, const uint32_t *i
                 KREG(K_BLEND_EN), KREG(K_BLEND_SFACTOR), KREG(K_BLEND_DFACTOR), KREG(K_BLEND_EQUATION), KREG(K_COLOR_MASK),
                 KREG(K_DEPTH_TEST_EN), KREG(K_DEPTH_MASK), KREG(K_ALPHA_TEST_EN), KREG(K_ALPHA_FUNC), KREG(K_ALPHA_REF),
                 KREG(K_TEX_FORMAT(0)), KREG(K_TEX_CONTROL0(0)), KREG(K_TEX_FILTER(0)));
+            {
+                float lo[4] = {1e30f, 1e30f, 1e30f, 1e30f}, hi[4] = {-1e30f, -1e30f, -1e30f, -1e30f};
+                for (uint32_t i = 0; i < nv; i++)
+                    for (int k = 0; k < 4; k++) {
+                        if (v[i].a[0][k] < lo[k]) lo[k] = v[i].a[0][k];
+                        if (v[i].a[0][k] > hi[k]) hi[k] = v[i].a[0][k];
+                    }
+                LOG("[draw]   fog en %X mode %X gen %X color %08X params %g %g sfac %08X %08X fogp.z %g\n", KREG(K_FOG_ENABLE),
+                    KREG(K_FOG_MODE), KREG(K_FOG_GEN_MODE), KREG(K_FOG_COLOR), u->fogp[0], u->fogp[1],
+                    KREG(K_SPECFOG_FACTOR0), KREG(K_SPECFOG_FACTOR1), u->fogp[2]);
+                LOG("[draw]   pos range x %g..%g y %g..%g z %g..%g w %g..%g\n", lo[0], hi[0], lo[1], hi[1], lo[2], hi[2],
+                    lo[3], hi[3]);
+            }
             for (uint32_t i = 0; i < nv && i < 4; i++)
                 LOG("[draw]   v%u pos %g %g %g %g d %g %g %g %g t0 %g %g %g %g\n", i, v[i].a[0][0], v[i].a[0][1], v[i].a[0][2],
                     v[i].a[0][3], v[i].a[3][0], v[i].a[3][1], v[i].a[3][2], v[i].a[3][3], v[i].a[9][0], v[i].a[9][1],

@@ -59,6 +59,8 @@ extern uint32_t g_kreg[0x800];
 #define K_TEXMAT_EN        0x0420   /* [4] */
 #define K_COMPOSITE        0x0680   /* [16] floats */
 #define K_TEXTURE_MATRIX   0x06C0   /* [4][16] floats */
+#define K_SPECFOG_FACTOR0  0x1E20   /* final combiner constants c0, c1 */
+#define K_SPECFOG_FACTOR1  0x1E24
 #define K_FOG_PARAMS       0x09C0   /* [3] floats */
 #define K_VIEWPORT_OFFSET  0x0A20   /* [4] floats */
 #define K_COMB_FACTOR0     0x0A60   /* [8] */

@@ -22,6 +22,8 @@ layout(std140, set = 0, binding = 0) uniform Draw {
     vec4 alpha;
     vec4 tsz[4];
     uvec4 tmode;
+    vec4 sfac[2];          // final combiner c0, c1 (SET_SPECULAR_FOG_FACTOR)
+    vec4 fogp;             // fog params 0, 1; function (0 off, 1 linear, 2 exp, 3 exp2); abs
 } D;
 
 layout(location = 0) out vec4 o_d0;
@@ -172,6 +174,13 @@ void main() {
         o_d0 = V(3); o_d1 = V(4);
         o_t0 = texmat(0, V(9)); o_t1 = texmat(1, V(10)); o_t2 = texmat(2, V(11)); o_t3 = texmat(3, V(12));
         o_fog = V(5).x;
+    }
+    if (D.fogp.z != 0.0) {   // NV2A fog function (xemu's formulas), result clamped by the rasterizer
+        float d = D.fogp.w != 0.0 ? abs(o_fog) : o_fog, f;
+        if (D.fogp.z == 1.0) f = D.fogp.x + d * D.fogp.y - 1.0;
+        else if (D.fogp.z == 2.0) f = D.fogp.x + exp2(d * D.fogp.y * 16.0) - 1.5;
+        else f = D.fogp.x + exp2(-d * d * D.fogp.y * D.fogp.y * 32.0) - 1.5;
+        o_fog = clamp(f, 0.0, 1.0);
     }
     gl_Position = pos;
     gl_PointSize = 1.0;
