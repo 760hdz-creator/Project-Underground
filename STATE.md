@@ -121,8 +121,13 @@ print(','.join(ev))")" UG_SHOT=1200 ./out/underground.exe   (NJ level by ~frame 
       D/toolchain (bootstrap with a dir parameter), lift with committed seeds only -> D/build/lifted (must be
       byte-identical to out/lifted), compile + link with build.py's flags (import, never copy) -> D/underground.exe
       (-mwindows, -DUG_VERSION). Test dir G:\ug_test (delete by hand later); run from another cwd to the menus.
-   b. main.c: cwd = exe dir when game\default.xbe missing; LOG -> out\underground.log without a console; settings.ini.
-   c. tools/package.py -> dist/payload.zip (SHIP allowlist, THUG FORBIDDEN list, embedded CPython + capstone at the
+      DONE fc8825a: ~60 s into G:\ug_test (toolchain there = junction to the dev toolchain, so the download path
+      was not re-tested); lift byte-identical (23 files); imports only system DLLs + UCRT api-ms-*; GUI subsystem;
+      run from C:\ -> quick reboot (HalReturnToFirmware 2) -> relaunch -> Neversoft intro at f900, log in out\.
+   b. main.c: ALREADY DONE (ported from Gauntlet earlier): cwd = exe dir when game\default.xbe missing; LOG -> out\underground.log without a console; settings.ini.
+   c. DONE: payload 14.3 MB (67 tracked files); its embedded python ran ug_build into G:\ug_test2 (also delete by
+      hand), lift byte-identical. VERSION = 0.1.0 (new file). Spec was:
+      tools/package.py -> dist/payload.zip (SHIP allowlist, THUG FORBIDDEN list, embedded CPython + capstone at the
       dev version, licenses: Vulkan-Headers, volk, xxhash, CPython, capstone).
    d. installer/setup.cpp port built with llvm-mingw (-static, -municode, llvm-rc), neutral placeholder art (user
       art wanted; never Activision art), launcher + updater (forge releases/latest).
