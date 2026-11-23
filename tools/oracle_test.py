@@ -50,8 +50,8 @@ def f80_to_float(v):
     exp &= 0x7FFF
     if exp == 0 and mant == 0:
         return 0.0 * sign
-    if exp == 0x7FFF:
-        return float("nan")
+    if exp == 0x7FFF:   # infinity: integer bit set, fraction zero; anything else is a NaN
+        return sign * float("inf") if (mant & ((1 << 63) - 1)) == 0 else float("nan")
     return sign * mant * 2.0 ** (exp - 16383 - 63)
 
 

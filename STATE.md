@@ -104,15 +104,17 @@ print(','.join(ev))")" UG_SHOT=1200 ./out/underground.exe   (NJ level by ~frame 
   OPEN: texgen draws have LIGHT_CONTROL 0x294 = 00020001; if bit 16 is LOCALEYE (unverified), the viewer is
   infinite and u should be a constant eye vector, not normalize(eye pos). Sign of that vector unverified too.
 - Oracle (all leaves): 2228 pass, 17 fail, 887 skip. Explained: ret imm16 sign (unicorn bug: 19430, 224EF, 3DC24,
-  168D83, 181B68 are junk starts), rdtsc/cpuid stubs (173E80, 18A9D0, 1975F0, 182300). Unexamined: 11980, 48D63,
-  6A330, 78820/1C5395 (st0 nan vs inf), 1945D0 (x87 top), 1C5FA7, 1F8A78.
+  168D83, 181B68 are junk starts), rdtsc/cpuid stubs (173E80, 18A9D0, 1975F0, 182300). 2026-11-23, all explained:
+  78820/1C5395 st0 "nan vs inf" was a harness bug (f80_to_float read x87 inf as NaN; fixed, pass); 1945D0, 1C5FA7,
+  1F8A78 pass on rerun; 48D63 junk start (push esp; ... ret 4); 11980 memzero, uc stops mid rep stosd on a huge
+  random count; 6A330 NaN-vs-NaN payload only (clang swaps commutative mulss operands). No lifter bug found.
 
 ## Next
 1. Sky wedge (cosmetic); pool-floor rectangle (UG_DBGCOLOR=7). Neither showed in 16 NJ shots on 2026-11-23
    (run_texgen, run_dbg7); a quarter-pipe light/dark split at f14400 is not a shadow draw (baked lighting).
 2. Renderer gaps (not seen in NJ so far: check other levels first): FF lighting, cube maps, eye/object-linear and
    sphere texgen, MSAA, widescreen, CPU-drawn loading bar (writes guest framebuffer RAM directly).
-3. Oracle fails above. Unimplemented lifter sites (46: enter, segment movs, fnsave/frstor).
+3. Unimplemented lifter sites (46: enter, segment movs, fnsave/frstor).
 4. Installer (llvm-mingw fetched on the player PC, build like Gauntlet's gt_build.py), Linux port, PS2 HD textures.
 - Not pushed since the initial commits (user rule: push only when asked).
 - Repos: origin gitlab.com/octagram-labs-group/Project-Underground, forge 8gramlabs/Project-Underground (both public).
