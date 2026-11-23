@@ -100,12 +100,16 @@ print(','.join(ev))")" UG_SHOT=1200 ./out/underground.exe   (NJ level by ~frame 
   implemented). FF path computes eye pos (MV 0x480) and eye normal (IMV 0x580 = inverse-transpose 3x3, same row
   layout: n_eye.j = dot(imv[j], n), checked against dumped matrices), r = u - 2(n.u)n, then texture matrix. Other
   texgen modes and FF skinning (0x0328) log once. Most texgen draws have the stage disabled (stale state).
+  q forced to 1 on generated stages (absent texcoord arrays come from k_cur, w may be 0). Not A/B'd visually.
+  OPEN: texgen draws have LIGHT_CONTROL 0x294 = 00020001; if bit 16 is LOCALEYE (unverified), the viewer is
+  infinite and u should be a constant eye vector, not normalize(eye pos). Sign of that vector unverified too.
 - Oracle (all leaves): 2228 pass, 17 fail, 887 skip. Explained: ret imm16 sign (unicorn bug: 19430, 224EF, 3DC24,
   168D83, 181B68 are junk starts), rdtsc/cpuid stubs (173E80, 18A9D0, 1975F0, 182300). Unexamined: 11980, 48D63,
   6A330, 78820/1C5395 (st0 nan vs inf), 1945D0 (x87 top), 1C5FA7, 1F8A78.
 
 ## Next
-1. Sky wedge (cosmetic); pool-floor rectangle (UG_DBGCOLOR=7).
+1. Sky wedge (cosmetic); pool-floor rectangle (UG_DBGCOLOR=7). Neither showed in 16 NJ shots on 2026-11-23
+   (run_texgen, run_dbg7); a quarter-pipe light/dark split at f14400 is not a shadow draw (baked lighting).
 2. Renderer gaps (not seen in NJ so far: check other levels first): FF lighting, cube maps, eye/object-linear and
    sphere texgen, MSAA, widescreen, CPU-drawn loading bar (writes guest framebuffer RAM directly).
 3. Oracle fails above. Unimplemented lifter sites (46: enter, segment movs, fnsave/frstor).

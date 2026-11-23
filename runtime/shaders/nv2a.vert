@@ -152,6 +152,8 @@ vec3 g_en, g_refl;
 vec4 texgen(int s, vec4 t) {
     uint g = D.tgen[s];
     if (g == 0u) return t;
+    // D3D feeds (generated xyz, 1) to the texture matrix; an absent texcoord array would leave q = 0 (k_cur)
+    if ((g >> 24) == 0u) t.w = 1.0;
     for (int c = 0; c < 4; c++) {
         uint m = (g >> uint(c * 8)) & 255u;
         if (m == 5u && c < 3) t[c] = g_refl[c];

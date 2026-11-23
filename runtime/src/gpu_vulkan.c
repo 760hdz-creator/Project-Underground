@@ -1263,8 +1263,9 @@ static void draw_impl(int topo, const KVertex *v, uint32_t nv, const uint32_t *i
                 if (u->tgen[0] | u->tgen[1] | u->tgen[2] | u->tgen[3]) {
                     /* the driver writes the inverse-transpose 3x3 of MV into IMV (translation row/col zero), same
                      * row layout as MV: eye normal j = dot(imv[j], n) */
-                    LOG("[draw]   texgen %08X %08X %08X %08X vfmt2 %08X n0 %g %g %g\n", u->tgen[0], u->tgen[1],
-                        u->tgen[2], u->tgen[3], KREG(K_VTX_FORMAT + 8), v[0].a[2][0], v[0].a[2][1], v[0].a[2][2]);
+                    LOG("[draw]   texgen %08X %08X %08X %08X vfmt2 %08X n0 %g %g %g light ctl %08X\n", u->tgen[0], u->tgen[1],
+                        u->tgen[2], u->tgen[3], KREG(K_VTX_FORMAT + 8), v[0].a[2][0], v[0].a[2][1], v[0].a[2][2],
+                        g_kreg[0x294 >> 2]);
                     for (int i = 0; i < 4; i++)
                         LOG("[draw]   mv %g %g %g %g | imv %g %g %g %g | comp %g %g %g %g\n", u->mv[i][0], u->mv[i][1], u->mv[i][2],
                             u->mv[i][3], u->imv[i][0], u->imv[i][1], u->imv[i][2], u->imv[i][3], u->comp[i][0], u->comp[i][1],
