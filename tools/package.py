@@ -22,7 +22,9 @@ PY_URL = f"https://www.python.org/ftp/python/{PY_VER}/python-{PY_VER}-embed-amd6
 CAPSTONE_VER = "5.0.7"   # the dev lift's version: a different decoder could change the lifted code
 SHIP = ["VERSION", "recomp/lift.py", "recomp/hle.txt", "recomp/hooks.txt", "recomp/seeds_extra.txt",
         "recomp/include/*", "runtime/src/*", "third_party/vulkan/*", "tools/ug_build.py", "tools/build.py",
-        "tools/bootstrap.py", "tools/extract_xiso.py", "tools/xbedis.py"]
+        "tools/bootstrap.py", "tools/extract_xiso.py", "tools/xbedis.py", "tools/ug_android.py"]
+# Android kit (tools/build_android.sh in WSL: android-kit/ = libugrt.a, include/, template.apk, licenses/; no game code)
+ANDROID_KIT = Path(__import__("os").environ.get("UG_ANDROID_KIT", ROOT / "dist" / "_cache" / "android-kit"))
 FORBIDDEN = ["*.xbe", "*.iso", "*.rar", "*.bik", "*.prx", "*.xbx", "*.pdb", "game/*", "extracted/*", "out/*",
              "*/lifted/*", "toolchain/*"]
 
@@ -58,6 +60,14 @@ def main():
     shutil.copy2(out / "python" / "LICENSE.txt", lic_dir / "python_LICENSE.txt")
     for lic in ("LICENSE-Vulkan-Headers.md", "LICENSE-volk.md"):
         shutil.copy2(ROOT / "third_party" / "vulkan" / lic, lic_dir / lic)
+    if not (ANDROID_KIT / "template.apk").exists():
+        sys.exit(f"Android kit missing at {ANDROID_KIT} (tools/build_android.sh <dir> in WSL, then copy <dir>/android-kit)")
+    shutil.copytree(ANDROID_KIT, out / "android", ignore=shutil.ignore_patterns("licenses"))
+    for lic in (ANDROID_KIT / "licenses").glob("*"):
+        shutil.copy2(lic, lic_dir / ("android_" + lic.name))
+    with zipfile.ZipFile(ANDROID_KIT / "template.apk") as z:   # the template must hold no game code
+        if any(n.endswith("libmain.so") for n in z.namelist()):
+            sys.exit("android template.apk holds game code")
     # xxHash (BSD-2-Clause): the license is the header comment of runtime/src/xxhash.h
     head = (ROOT / "runtime" / "src" / "xxhash.h").read_text(encoding="utf-8", errors="replace").split("*/")[0] + "*/\n"
     (lic_dir / "xxhash_LICENSE.txt").write_text(head, encoding="utf-8")

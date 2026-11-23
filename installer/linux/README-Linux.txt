@@ -32,5 +32,9 @@ Play
   Settings: <folder>/settings.ini (the same UG_* keys as the Windows launcher). Log: <folder>/out/underground.log.
   Saves: <folder>/out.
 
+Android:   ./setup.sh --android --dir <folder> builds an APK of your installed game for Android phones (arm64,
+           Android 13+, Vulkan 1.3; about 3.5 GB, the phone needs about 7 GB free). The first build downloads
+           Google's Android NDK (about 700 MB). Copy the APK to the phone and open it there to install.
+
 Update:    the game checks for a new version at start, or run a newer package's setup.sh --update --dir <folder>.
 Uninstall: the menu entry's "Uninstall" action, or <folder>/kit/setup.sh --uninstall --dir <folder> (keeps out/).

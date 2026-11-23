@@ -24,10 +24,18 @@ cp "$work/rt/libugrt.a" "$kit/linux/"
 cp -r "$work/rt/lib" "$work/rt/include" "$kit/linux/"
 strip --strip-unneeded "$kit/linux/lib/"*.so* 2>/dev/null || true
 cp "$root/installer/res/icon.png" "$kit/linux/icon.png"
+# Android kit (no game code; setup.sh --android builds the APK from it): tools/build_android.sh stage 1
+akit=${UG_ANDROID_KIT:-}
+if [[ -z $akit ]]; then bash "$root/tools/build_android.sh" "$work/android" --version "$ver" >/dev/null; akit=$work/android/android-kit; fi
+mkdir -p "$kit/android"
+cp -r "$akit/libugrt.a" "$akit/include" "$akit/template.apk" "$kit/android/"
+for f in "$akit/licenses/"*; do cp "$f" "$kit/licenses/android_$(basename "$f")"; done
+unzip -l "$kit/android/template.apk" | grep -q libmain.so && { echo "android template.apk holds game code" >&2; exit 1; }
 
 # kit files (git-tracked): what tools/ug_build.py needs on Linux
 ship=(VERSION recomp/lift.py recomp/hle.txt recomp/hooks.txt recomp/seeds_extra.txt 'recomp/include/*'
-      tools/ug_build.py tools/build.py tools/bootstrap.py tools/pyrun.py tools/extract_xiso.py tools/xbedis.py)
+      tools/ug_build.py tools/ug_android.py tools/build.py tools/bootstrap.py tools/pyrun.py tools/extract_xiso.py
+      tools/xbedis.py)
 cd "$root"
 for pat in "${ship[@]}"; do
     git ls-files -- "$pat" | while read -r f; do mkdir -p "$kit/$(dirname "$f")"; tr -d '\r' < "$f" > "$kit/$f"; done

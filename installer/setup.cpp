@@ -51,12 +51,13 @@ static const wchar_t kShortcut[] = L"Project Underground.lnk";
 
 enum { ID_ISO_EDIT = 200, ID_ISO_BROWSE, ID_DIR_EDIT, ID_DIR_BROWSE, ID_DESKTOP, ID_STARTMENU, ID_INSTALL, ID_PROGRESS,
        ID_STATUS, ID_PLAY, ID_UPDATE, ID_UNINSTALL, ID_FULLSCREEN, ID_SCALE, ID_PADS, ID_FPS60, ID_VSYNC, ID_LOGS,
-       ID_MONITOR };
+       ID_MONITOR, ID_ANDROID };
 #define WM_APP_STATUS (WM_APP + 1)
 #define WM_APP_PROGRESS (WM_APP + 2)
 #define WM_APP_DONE (WM_APP + 3)
 #define WM_APP_UPDATE (WM_APP + 4)   // launcher: update check finished (wp 1 = newer version in g_upd)
 #define WM_APP_UPDATING (WM_APP + 5) // launcher: wp 1 = new setup started (close), 0 = download failed
+#define WM_APP_ANDROID (WM_APP + 6)  // launcher: Android APK build finished (wp 1 = ok; g_error / g_apk)
 
 static HWND g_wnd, g_status, g_progress, g_iso, g_dir, g_install, g_updBtn;
 static bool g_updating, g_running, g_launcher;
@@ -302,7 +303,8 @@ static int Uninstall(const std::wstring& dir) {
     }
     // never out\ (saves, log)
     const wchar_t* parts[] = {L"python", L"tools", L"recomp", L"runtime", L"third_party", L"licenses", L"build", L"game",
-                              L"toolchain"};
+                              L"toolchain", L"android\\ndk", L"android\\template.apk", L"android\\include",
+                              L"android\\libugrt.a"};   // keeps android\signing-key.json (a new APK installs over the old one)
     for (auto p : parts) {
         std::wstring path = dir + L"\\" + p;
         DWORD at = GetFileAttributesW(path.c_str());
@@ -733,6 +735,19 @@ static bool LauncherCommand(HWND h, int id, int code) {
     case ID_UNINSTALL:
         if (Uninstall(g_instDir) == 0) DestroyWindow(h);
         return true;
+    case ID_ANDROID:
+        if (g_worker.joinable()) return true;
+        if (MessageBoxW(h, L"Build Project Underground for Android phones (arm64, Android 13 or newer, Vulkan 1.3)?\n\n"
+                           L"Your installed game is compiled for Android on this PC and packed with your game files into "
+                           L"one APK (about 3.5 GB; the phone needs about 7 GB free). The first build downloads Google's "
+                           L"Android NDK (about 700 MB; Android SDK license: developer.android.com/studio/terms) and takes "
+                           L"5-15 minutes.\n\nThen copy the APK to your phone and open it there to install it.",
+                        kAppName, MB_OKCANCEL | MB_ICONQUESTION) != IDOK)
+            return true;
+        EnableWindow(g_androidBtn, FALSE);
+        SetWindowTextW(g_status, L"Android: starting...");
+        g_worker = std::thread(BuildAndroid);
+        return true;
     case ID_FULLSCREEN: case ID_FPS60: case ID_VSYNC:
         if (code == BN_CLICKED) SaveSettings();
         return true;
@@ -801,6 +816,17 @@ static LRESULT CALLBACK WndProc(HWND h, UINT m, WPARAM wp, LPARAM lp) {
                                         : L"Could not check for updates (offline?).");
         }
         return 0;
+    case WM_APP_ANDROID:
+        if (g_worker.joinable()) g_worker.join();
+        EnableWindow(g_androidBtn, TRUE);
+        if (wp) {
+            SetWindowTextW(g_status, (L"Android APK ready: " + g_apk).c_str());
+            ShellExecuteW(h, nullptr, L"explorer.exe", (L"/select,\"" + g_apk + L"\"").c_str(), nullptr, SW_SHOWNORMAL);
+        } else {
+            SetWindowTextW(g_status, L"The Android build failed.");
+            MessageBoxW(h, g_error.c_str(), kAppName, MB_OK | MB_ICONERROR);
+        }
+        return 0;
     case WM_APP_UPDATING:
         if (g_worker.joinable()) g_worker.join();
         if (wp) { DestroyWindow(h); return 0; }
@@ -843,6 +869,35 @@ static void MakeCombo(int id, const Choice* c, int n, int x, int y, int w, HFONT
     for (int i = 0; i < n; i++) SendMessageW(cb, CB_ADDSTRING, 0, (LPARAM)c[i].label);
 }
 
+// ---- Android: tools\ug_android.py builds an APK from this install (NDK downloaded once into <install>\android) ----
+static std::wstring g_apk;
+static HWND g_androidBtn;
+static void BuildAndroid() {
+    g_error.clear();
+    g_apk.clear();
+    std::wstring cmd = L"\"" + g_instDir + L"\\python\\python.exe\" -I \"" + g_instDir + L"\\tools\\ug_android.py\" --root \"" +
+                       g_instDir + L"\" --accept-ndk-license";
+    CreateDirectoryW((g_instDir + L"\\build").c_str(), nullptr);
+    HANDLE log = CreateFileW((g_instDir + L"\\build\\android.log").c_str(), GENERIC_WRITE, FILE_SHARE_READ, nullptr,
+                             CREATE_ALWAYS, 0, nullptr);
+    std::wstring err;
+    int code = RunLines(cmd, g_instDir, [&](const std::string& l) {
+        DWORD w;
+        if (log != INVALID_HANDLE_VALUE) { WriteFile(log, l.data(), (DWORD)l.size(), &w, nullptr); WriteFile(log, "\r\n", 2, &w, nullptr); }
+        if (!l.compare(0, 3, "## ")) PostStatus(L"Android: " + Widen(l.substr(3)) + L"...");
+        else if (!l.compare(0, 7, "ERROR: ")) err = Widen(l.substr(7));
+        else if (!l.compare(0, 5, "APK: ")) g_apk = Widen(l.substr(5));
+        else if (!l.compare(0, 9, "compiled ") || !l.compare(0, 11, "downloaded ") || !l.compare(0, 9, "unpacked ") ||
+                 !l.compare(0, 7, "packed ")) {
+            PostStatus(L"Android: " + Widen(l) + L"...");
+        }
+    });
+    if (log != INVALID_HANDLE_VALUE) CloseHandle(log);
+    bool ok = code == 0 && !g_apk.empty() && Exists(g_apk);
+    if (!ok) g_error = (err.empty() ? L"The Android build failed." : err) + L"\n\nLog: " + g_instDir + L"\\build\\android.log";
+    PostMessageW(g_wnd, WM_APP_ANDROID, ok, 0);
+}
+
 static void CreateLauncherControls() {
     InitMonitors();
     int x = kPanel.left + 30, t = kPanel.top, fw = kPanel.right - kPanel.left - 60, cx = x + 260, cw = fw - 260;
@@ -858,6 +913,7 @@ static void CreateLauncherControls() {
     MakeCombo(ID_PADS, kPads, 4, cx, t + 438, cw);
     Make(L"BUTTON", L"Logs", BS_PUSHBUTTON | WS_TABSTOP, ID_LOGS, x + fw - 350, t + 560, 170, 36, g_smallFont);
     Make(L"BUTTON", L"Uninstall", BS_PUSHBUTTON | WS_TABSTOP, ID_UNINSTALL, x + fw - 170, t + 560, 170, 36, g_smallFont);
+    g_androidBtn = Make(L"BUTTON", L"Android...", BS_PUSHBUTTON | WS_TABSTOP, ID_ANDROID, x, t + 560, 200, 36, g_smallFont);
     LoadSettings();
     SetFocus(play);
 }
