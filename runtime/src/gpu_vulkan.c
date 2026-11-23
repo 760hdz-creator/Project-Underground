@@ -143,6 +143,7 @@ static VkFormat sc_fmt;
 static VkExtent2D sc_ext;
 static uint32_t sc_count;
 static VkImage sc_img[8];
+static VkImageView sc_view[8];   /* for the touch overlay pass (the frame itself is blitted) */
 static VkSemaphore sc_done[8];   /* render finished, per swapchain image */
 
 static VkDescriptorSetLayout dsl;
@@ -351,11 +352,15 @@ static int swapchain_create(void) {
     ci.oldSwapchain = swapchain;
     VkSwapchainKHR sc;
     VKC(vkCreateSwapchainKHR(dev, &ci, 0, &sc));
+    for (uint32_t i = 0; i < 8; i++) if (sc_view[i]) { vkDestroyImageView(dev, sc_view[i], 0); sc_view[i] = 0; }
     if (swapchain) vkDestroySwapchainKHR(dev, swapchain, 0);
     swapchain = sc;
     sc_count = 8;
     vkGetSwapchainImagesKHR(dev, swapchain, &sc_count, sc_img);
     for (uint32_t i = 0; i < sc_count; i++) {
+        VkImageViewCreateInfo vci = {VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO, 0, 0, sc_img[i], VK_IMAGE_VIEW_TYPE_2D, sc_fmt};
+        vci.subresourceRange = (VkImageSubresourceRange){VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1};
+        if (vkCreateImageView(dev, &vci, 0, &sc_view[i]) != VK_SUCCESS) sc_view[i] = 0;
         if (!sc_done[i]) {
             VkSemaphoreCreateInfo si = {VK_STRUCTURE_TYPE_SEMAPHORE_CREATE_INFO};
             vkCreateSemaphore(dev, &si, 0, &sc_done[i]);
@@ -1491,6 +1496,126 @@ static void clear_impl(uint32_t flags) {
     if (n) vkCmdClearAttachments(CMD(), (uint32_t)n, ca, 1, &rect);
 }
 
+/* ================================================================ touch controls overlay
+ * Android: the on-screen controls of linux/touch.c, drawn over the presented frame (touch.vert / touch.frag).
+ * Desktop test: UG_TOUCHDEMO=1 draws sample shapes. */
+typedef struct { float shape[24][4], color[24][4], info[4]; } TouchUBO;
+static VkDescriptorSetLayout touch_dsl;
+static VkPipelineLayout touch_pl;
+static VkPipeline touch_pipe;
+static VkFormat touch_fmt;
+
+static int touch_shapes_get(float (*sh)[8], int max) {
+#ifdef __ANDROID__
+    return touch_shapes(sh, max, (int)sc_ext.width, (int)sc_ext.height);
+#else
+    static int demo = -1;
+    if (demo < 0) { const char *e = getenv("UG_TOUCHDEMO"); demo = e && *e == '1'; }
+    if (!demo) return 0;
+    float H = (float)sc_ext.height, W = (float)sc_ext.width;
+    float d[4][8] = {{W - 0.26f * H, 0.835f * H, 0.075f * H, 0, 0.25f, 0.80f, 0.30f, 0.30f},
+                     {W - 0.125f * H, 0.70f * H, 0.075f * H, 0, 0.90f, 0.25f, 0.25f, 0.60f},
+                     {0.28f * H, 0.72f * H, 0.16f * H, 0.012f * H, 0.85f, 0.85f, 0.90f, 0.30f},
+                     {0.28f * H, 0.72f * H, 0.07f * H, 0, 0.85f, 0.85f, 0.90f, 0.30f}};
+    int n = max < 4 ? max : 4;
+    memcpy(sh, d, sizeof(float) * 8 * (size_t)n);
+    return n;
+#endif
+}
+
+static int touch_pipeline(void) {
+    if (touch_pipe && touch_fmt == sc_fmt) return 1;
+    if (touch_pipe) { vkDestroyPipeline(dev, touch_pipe, 0); touch_pipe = 0; }
+    if (!touch_pl) {
+        VkDescriptorSetLayoutBinding b = {0, VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER_DYNAMIC, 1, VK_SHADER_STAGE_FRAGMENT_BIT, 0};
+        VkDescriptorSetLayoutCreateInfo dli = {VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO, 0, 0, 1, &b};
+        if (vkCreateDescriptorSetLayout(dev, &dli, 0, &touch_dsl) != VK_SUCCESS) return 0;
+        VkPipelineLayoutCreateInfo pli = {VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO, 0, 0, 1, &touch_dsl};
+        if (vkCreatePipelineLayout(dev, &pli, 0, &touch_pl) != VK_SUCCESS) return 0;
+    }
+    VkShaderModule vs = 0, fs = 0;
+    VkShaderModuleCreateInfo smi = {VK_STRUCTURE_TYPE_SHADER_MODULE_CREATE_INFO, 0, 0, sizeof spv_touch_vert, spv_touch_vert};
+    vkCreateShaderModule(dev, &smi, 0, &vs);
+    smi.codeSize = sizeof spv_touch_frag; smi.pCode = spv_touch_frag;
+    vkCreateShaderModule(dev, &smi, 0, &fs);
+    VkPipelineShaderStageCreateInfo st[2] = {
+        {VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO, 0, 0, VK_SHADER_STAGE_VERTEX_BIT, vs, "main"},
+        {VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO, 0, 0, VK_SHADER_STAGE_FRAGMENT_BIT, fs, "main"}};
+    VkPipelineVertexInputStateCreateInfo vi = {VK_STRUCTURE_TYPE_PIPELINE_VERTEX_INPUT_STATE_CREATE_INFO};
+    VkPipelineInputAssemblyStateCreateInfo ia = {VK_STRUCTURE_TYPE_PIPELINE_INPUT_ASSEMBLY_STATE_CREATE_INFO};
+    ia.topology = VK_PRIMITIVE_TOPOLOGY_TRIANGLE_LIST;
+    VkPipelineViewportStateCreateInfo vp = {VK_STRUCTURE_TYPE_PIPELINE_VIEWPORT_STATE_CREATE_INFO, 0, 0, 1, 0, 1, 0};
+    VkPipelineRasterizationStateCreateInfo rs = {VK_STRUCTURE_TYPE_PIPELINE_RASTERIZATION_STATE_CREATE_INFO};
+    rs.polygonMode = VK_POLYGON_MODE_FILL; rs.lineWidth = 1.0f; rs.cullMode = VK_CULL_MODE_NONE;
+    VkPipelineMultisampleStateCreateInfo ms = {VK_STRUCTURE_TYPE_PIPELINE_MULTISAMPLE_STATE_CREATE_INFO};
+    ms.rasterizationSamples = VK_SAMPLE_COUNT_1_BIT;
+    VkPipelineDepthStencilStateCreateInfo ds = {VK_STRUCTURE_TYPE_PIPELINE_DEPTH_STENCIL_STATE_CREATE_INFO};
+    VkPipelineColorBlendAttachmentState ba = {0};
+    ba.blendEnable = VK_TRUE;
+    ba.srcColorBlendFactor = ba.srcAlphaBlendFactor = VK_BLEND_FACTOR_ONE;
+    ba.dstColorBlendFactor = ba.dstAlphaBlendFactor = VK_BLEND_FACTOR_ONE_MINUS_SRC_ALPHA;
+    ba.colorBlendOp = ba.alphaBlendOp = VK_BLEND_OP_ADD;
+    ba.colorWriteMask = VK_COLOR_COMPONENT_R_BIT | VK_COLOR_COMPONENT_G_BIT | VK_COLOR_COMPONENT_B_BIT | VK_COLOR_COMPONENT_A_BIT;
+    VkPipelineColorBlendStateCreateInfo cb = {VK_STRUCTURE_TYPE_PIPELINE_COLOR_BLEND_STATE_CREATE_INFO};
+    cb.attachmentCount = 1; cb.pAttachments = &ba;
+    VkDynamicState dyn[] = {VK_DYNAMIC_STATE_VIEWPORT, VK_DYNAMIC_STATE_SCISSOR};
+    VkPipelineDynamicStateCreateInfo dy = {VK_STRUCTURE_TYPE_PIPELINE_DYNAMIC_STATE_CREATE_INFO, 0, 0, 2, dyn};
+    VkPipelineRenderingCreateInfo pr = {VK_STRUCTURE_TYPE_PIPELINE_RENDERING_CREATE_INFO};
+    pr.colorAttachmentCount = 1; pr.pColorAttachmentFormats = &sc_fmt;
+    VkGraphicsPipelineCreateInfo ci = {VK_STRUCTURE_TYPE_GRAPHICS_PIPELINE_CREATE_INFO, &pr};
+    ci.stageCount = 2; ci.pStages = st; ci.pVertexInputState = &vi; ci.pInputAssemblyState = &ia; ci.pViewportState = &vp;
+    ci.pRasterizationState = &rs; ci.pMultisampleState = &ms; ci.pDepthStencilState = &ds; ci.pColorBlendState = &cb;
+    ci.pDynamicState = &dy; ci.layout = touch_pl;
+    VkResult r = vs && fs ? vkCreateGraphicsPipelines(dev, 0, 1, &ci, 0, &touch_pipe) : VK_ERROR_INITIALIZATION_FAILED;
+    if (vs) vkDestroyShaderModule(dev, vs, 0);
+    if (fs) vkDestroyShaderModule(dev, fs, 0);
+    if (r != VK_SUCCESS) { touch_pipe = 0; return 0; }
+    touch_fmt = sc_fmt;
+    return 1;
+}
+
+/* swapchain image in TRANSFER_DST: draws the controls; returns 1 if it left the image in COLOR_ATTACHMENT */
+static int touch_draw(VkCommandBuffer cb, uint32_t img) {
+    static int failed, logged;
+    if (failed || !sc_view[img]) return 0;
+    float sh[24][8];
+    int n = touch_shapes_get(sh, 24);
+    if (!logged++) LOG("[touch] overlay: %d shapes on %ux%u\n", n, sc_ext.width, sc_ext.height);
+    if (n <= 0) return 0;
+    if (!touch_pipeline()) { failed = 1; LOG("[touch] overlay pipeline failed\n"); return 0; }
+    Frame *f = &frames[fi];
+    VkDeviceSize uoff;
+    TouchUBO *u = ring_alloc(&f->ubo, sizeof(TouchUBO), pprops.limits.minUniformBufferOffsetAlignment, &uoff);
+    if (!u) return 0;
+    memset(u, 0, sizeof *u);
+    for (int i = 0; i < n; i++) { memcpy(u->shape[i], sh[i], 16); memcpy(u->color[i], sh[i] + 4, 16); }
+    u->info[0] = (float)n; u->info[2] = (float)sc_ext.width; u->info[3] = (float)sc_ext.height;
+    VkDescriptorSet set;
+    VkDescriptorSetAllocateInfo dai = {VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO, 0, f->dpool, 1, &touch_dsl};
+    if (vkAllocateDescriptorSets(dev, &dai, &set) != VK_SUCCESS) return 0;
+    VkDescriptorBufferInfo ub = {f->ubo.buf, 0, sizeof(TouchUBO)};
+    VkWriteDescriptorSet w = {VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET, 0, set, 0, 0, 1, VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER_DYNAMIC, 0, &ub, 0};
+    vkUpdateDescriptorSets(dev, 1, &w, 0, 0);
+    raw_barrier(cb, sc_img[img], VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL);
+    VkRenderingAttachmentInfo ca = {VK_STRUCTURE_TYPE_RENDERING_ATTACHMENT_INFO};
+    ca.imageView = sc_view[img]; ca.imageLayout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL;
+    ca.loadOp = VK_ATTACHMENT_LOAD_OP_LOAD; ca.storeOp = VK_ATTACHMENT_STORE_OP_STORE;
+    VkRenderingInfo ri = {VK_STRUCTURE_TYPE_RENDERING_INFO};
+    ri.renderArea = (VkRect2D){{0, 0}, sc_ext};
+    ri.layerCount = 1; ri.colorAttachmentCount = 1; ri.pColorAttachments = &ca;
+    vkCmdBeginRendering(cb, &ri);
+    VkViewport vpt = {0, 0, (float)sc_ext.width, (float)sc_ext.height, 0, 1};
+    vkCmdSetViewport(cb, 0, 1, &vpt);
+    VkRect2D sci = {{0, 0}, sc_ext};
+    vkCmdSetScissor(cb, 0, 1, &sci);
+    vkCmdBindPipeline(cb, VK_PIPELINE_BIND_POINT_GRAPHICS, touch_pipe);
+    uint32_t dof = (uint32_t)uoff;
+    vkCmdBindDescriptorSets(cb, VK_PIPELINE_BIND_POINT_GRAPHICS, touch_pl, 0, 1, &set, 1, &dof);
+    vkCmdDraw(cb, 3, 1, 0, 0);
+    vkCmdEndRendering(cb);
+    return 1;
+}
+
 /* SUBOPTIMAL: recreate only when the surface really changed (Android reports it every frame for a rotated
  * display, and a recreate per frame would stall) */
 static int surface_changed(void) {
@@ -1505,6 +1630,7 @@ static int surface_changed(void) {
 /* the window's surface went away (Android: app in the background, a new native window on resume) */
 static void surface_recreate(void) {
     vkDeviceWaitIdle(dev);
+    for (uint32_t i = 0; i < 8; i++) if (sc_view[i]) { vkDestroyImageView(dev, sc_view[i], 0); sc_view[i] = 0; }
     if (swapchain) { vkDestroySwapchainKHR(dev, swapchain, 0); swapchain = 0; }
     if (surface) vkDestroySurfaceKHR(inst, surface, 0);
     surface = 0;
@@ -1554,7 +1680,9 @@ static void submit_and_present(Surface *s) {
             vkCmdBlitImage(cb, s->color.img, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, sc_img[img],
                            VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, 1, &bl, VK_FILTER_LINEAR);
         }
-        raw_barrier(cb, sc_img[img], VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, VK_IMAGE_LAYOUT_PRESENT_SRC_KHR);
+        int drawn = touch_draw(cb, img);
+        raw_barrier(cb, sc_img[img], drawn ? VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL : VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
+                    VK_IMAGE_LAYOUT_PRESENT_SRC_KHR);
     }
     /* UG_SHOT=N: every N frames, read the presented surface back and write out/shot_<frame>.ppm (debug) */
     static int shot_every = -1;
