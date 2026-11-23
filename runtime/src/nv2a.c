@@ -75,6 +75,10 @@ static uint32_t dma_base(uint32_t handle) {
 /* Kelvin state the "GPU" acts on. */
 static uint32_t k_dma_semaphore, k_semaphore_offset;
 uint32_t g_kreg[0x800];
+uint32_t g_vp_prog[VP_SLOTS][4];
+float g_vp_const[VP_CONSTS][4];
+uint32_t g_vp_start, g_vp_serial, g_vc_serial;
+static uint32_t vp_load, vc_load;   /* upload cursors in dwords */
 
 uint32_t nv2a_dma_base(uint32_t handle) {
     static uint32_t cache_h[16], cache_b[16];
@@ -105,6 +109,50 @@ static void *grow(void *p, uint32_t *cap, uint32_t need, size_t sz) {
 
 static float s16n(int16_t v) { float f = v / 32767.0f; return f < -1.f ? -1.f : f; }
 
+static inline uint16_t ld16(const uint8_t *q) { uint16_t v; memcpy(&v, q, 2); return v; }
+static inline uint32_t ld32(const uint8_t *q) { uint32_t v; memcpy(&v, q, 4); return v; }
+
+/* One vertex attribute of NV097 type/size at host pointer q -> float4 */
+static void decode_attr(int a, uint32_t type, uint32_t size, const uint8_t *q, float *o) {
+    o[0] = o[1] = o[2] = 0; o[3] = 1;
+    switch (type) {
+    case 0:  /* UB_D3D: D3DCOLOR (B,G,R,A bytes) -> R,G,B,A */
+        o[0] = q[2] / 255.f; o[1] = q[1] / 255.f; o[2] = q[0] / 255.f; o[3] = q[3] / 255.f;
+        if (size < 4) o[3] = 1;
+        break;
+    case 4:  /* UB_OGL */
+        for (uint32_t i = 0; i < size && i < 4; i++) o[i] = q[i] / 255.f;
+        break;
+    case 1:  /* S1: signed normalized short */
+        for (uint32_t i = 0; i < size && i < 4; i++) o[i] = s16n((int16_t)ld16(q + 2 * i));
+        break;
+    case 5:  /* S32K: short */
+        for (uint32_t i = 0; i < size && i < 4; i++) o[i] = (float)(int16_t)ld16(q + 2 * i);
+        break;
+    case 2:  /* F */
+        for (uint32_t i = 0; i < size && i < 4; i++) { uint32_t u = ld32(q + 4 * i); memcpy(&o[i], &u, 4); }
+        break;
+    case 6: { /* CMP: 11:11:10 signed normalized */
+        uint32_t v = ld32(q);
+        o[0] = ((int32_t)(v << 21) >> 21) / 1023.f;
+        o[1] = ((int32_t)(v << 10) >> 21) / 1023.f;
+        o[2] = ((int32_t)v >> 22) / 511.f;
+        break;
+    }
+    default: {
+        static int warned;
+        if (!warned++) LOG("[pb] vertex attribute %d: unknown type %u\n", a, type);
+        break;
+    }
+    }
+}
+
+/* bytes one attribute occupies in an inline array (dword aligned) */
+static uint32_t attr_bytes(uint32_t type, uint32_t size) {
+    uint32_t b = type == 0 || type == 4 ? size : type == 1 || type == 5 ? 2 * size : type == 6 ? 4 : 4 * size;
+    return (b + 3) & ~3u;
+}
+
 static void fetch_vertex(uint32_t index, KVertex *out) {
     for (int a = 0; a < 16; a++) {
         uint32_t fmt = KREG(K_VTX_FORMAT + a * 4), type = fmt & 0xF, size = (fmt >> 4) & 0xF, stride = fmt >> 8;
@@ -113,38 +161,38 @@ static void fetch_vertex(uint32_t index, KVertex *out) {
         uint32_t off = KREG(0x1720 + a * 4);
         uint32_t base = nv2a_dma_base(KREG((off & 0x80000000u) ? K_DMA_VERTEX_B : K_DMA_VERTEX_A));
         uint32_t p = (base + (off & 0x7FFFFFFF) + index * stride) & 0x03FFFFFF;
-        o[0] = o[1] = o[2] = 0; o[3] = 1;
-        switch (type) {
-        case 0:  /* UB_D3D: D3DCOLOR (B,G,R,A bytes) -> R,G,B,A */
-            o[0] = RD8(p + 2) / 255.f; o[1] = RD8(p + 1) / 255.f; o[2] = RD8(p) / 255.f; o[3] = RD8(p + 3) / 255.f;
-            if (size < 4) o[3] = 1;
-            break;
-        case 4:  /* UB_OGL */
-            for (uint32_t i = 0; i < size && i < 4; i++) o[i] = RD8(p + i) / 255.f;
-            break;
-        case 1:  /* S1: signed normalized short */
-            for (uint32_t i = 0; i < size && i < 4; i++) o[i] = s16n((int16_t)RD16(p + 2 * i));
-            break;
-        case 5:  /* S32K: short */
-            for (uint32_t i = 0; i < size && i < 4; i++) o[i] = (float)(int16_t)RD16(p + 2 * i);
-            break;
-        case 2:  /* F */
-            for (uint32_t i = 0; i < size && i < 4; i++) { uint32_t u = RD32(p + 4 * i); memcpy(&o[i], &u, 4); }
-            break;
-        case 6: { /* CMP: 11:11:10 signed normalized */
-            uint32_t v = RD32(p);
-            o[0] = ((int32_t)(v << 21) >> 21) / 1023.f;
-            o[1] = ((int32_t)(v << 10) >> 21) / 1023.f;
-            o[2] = ((int32_t)v >> 22) / 511.f;
-            break;
-        }
-        default: {
-            static int warned;
-            if (!warned++) LOG("[pb] vertex attribute %d: unknown type %u\n", a, type);
-            break;
-        }
+        decode_attr(a, type, size, g_mem + p, o);
+    }
+}
+
+static void assemble(uint32_t prim, uint32_t b, uint32_t n);
+
+/* INLINE_ARRAY: vertices packed in the push buffer, enabled attributes in order */
+static uint32_t *kinl;
+static uint32_t kinl_n, kinl_cap;
+
+static void inline_array_flush(void) {
+    uint32_t vsize = 0;
+    for (int a = 0; a < 16; a++) {
+        uint32_t fmt = KREG(K_VTX_FORMAT + a * 4);
+        if ((fmt >> 4) & 0xF) vsize += attr_bytes(fmt & 0xF, (fmt >> 4) & 0xF);
+    }
+    if (!vsize) { kinl_n = 0; return; }
+    uint32_t n = kinl_n * 4 / vsize;
+    kv = grow(kv, &kv_cap, kv_n + n, sizeof(KVertex));
+    uint32_t b = kv_n;
+    const uint8_t *q = (const uint8_t *)kinl;
+    for (uint32_t v = 0; v < n; v++) {
+        KVertex *out = &kv[kv_n++];
+        for (int a = 0; a < 16; a++) {
+            uint32_t fmt = KREG(K_VTX_FORMAT + a * 4), type = fmt & 0xF, size = (fmt >> 4) & 0xF;
+            if (!size) { memcpy(out->a[a], k_cur[a], 16); continue; }
+            decode_attr(a, type, size, q, out->a[a]);
+            q += attr_bytes(type, size);
         }
     }
+    assemble(k_prim, b, n);
+    kinl_n = 0;
 }
 
 /* Append indices for a primitive segment of n vertices starting at vertex b. */
@@ -192,6 +240,7 @@ static void draw_arrays(uint32_t data) {
 }
 
 static void end_primitive(void) {
+    if (kinl_n) inline_array_flush();
     if (kelem_n) {
         kv = grow(kv, &kv_cap, kv_n + kelem_n, sizeof(KVertex));
         uint32_t b = kv_n;
@@ -244,6 +293,49 @@ static void inline_attr(uint32_t method, uint32_t data) {
 
 static int pb_frame = -1, pb_clears;   /* UG_PBFRAME=N: log methods between clear N and N+1 */
 
+/* UG_PBSTATS=<s>: every s seconds, a histogram of Kelvin methods and the distinct values of the state that sizes the
+ * renderer (transform mode, lighting, combiners, texture/vertex/surface formats). Research only. */
+static uint32_t st_hist[0x800];
+#define ST_VALS 24
+static const uint32_t st_watch[] = {0x1E94, 0x0314, 0x1E60, 0x1E70, 0x0208, 0x1B04, 0x1B44, 0x1B84, 0x1BC4, 0x0300,
+                                    0x0304, 0x029C, 0x02A4, 0x17FC, 0x1E98, 0x1EA0};
+static uint32_t st_val[sizeof st_watch / 4][ST_VALS], st_nval[sizeof st_watch / 4];
+static uint64_t st_next;
+
+static void stats_method(uint32_t method, uint32_t data) {
+    st_hist[method >> 2]++;
+    for (unsigned w = 0; w < sizeof st_watch / 4; w++) {
+        if (st_watch[w] != method) continue;
+        uint32_t i = 0;
+        while (i < st_nval[w] && st_val[w][i] != data) i++;
+        if (i == st_nval[w] && i < ST_VALS) st_val[w][st_nval[w]++] = data;
+    }
+}
+
+static void stats_dump(void) {
+    static int period = -1;
+    if (period < 0) { const char *e = getenv("UG_PBSTATS"); period = e ? atoi(e) : 0; }
+    if (!period) return;
+    uint64_t now = sched_now_100ns();
+    if (now < st_next) return;
+    st_next = now + (uint64_t)period * 10000000ull;
+    LOG("[pbstats] t=%.1f s, clears %d\n", now / 1e7, pb_clears);
+    for (int k = 0; k < 40; k++) {   /* top methods */
+        uint32_t best = 0, bm = 0;
+        for (uint32_t m = 0; m < 0x800; m++) if (st_hist[m] > best) { best = st_hist[m]; bm = m; }
+        if (!best) break;
+        LOG("[pbstats]   %04X x%u\n", bm << 2, best);
+        st_hist[bm] = 0;
+    }
+    memset(st_hist, 0, sizeof st_hist);
+    for (unsigned w = 0; w < sizeof st_watch / 4; w++) {
+        char line[512]; int n = 0;
+        for (uint32_t i = 0; i < st_nval[w] && n < 480; i++) n += snprintf(line + n, sizeof line - n, " %X", st_val[w][i]);
+        line[n] = 0;
+        if (st_nval[w]) LOG("[pbstats]   %04X:%s\n", st_watch[w], line);
+    }
+}
+
 static void pgraph_method(uint32_t subch, uint32_t method, uint32_t data) {
     if (pb_frame < 0) { const char *e = getenv("UG_PBFRAME"); pb_frame = e ? atoi(e) : 0; }
     if (subch == 0 && method == 0x1D94) pb_clears++;
@@ -251,30 +343,41 @@ static void pgraph_method(uint32_t subch, uint32_t method, uint32_t data) {
         LOG("[pb] sub%u %04X = %08X\n", subch, method, data);
     if (method == 0) { sub_class[subch] = data; return; }
     if (subch != 0) return;   /* subchannel 0 = Kelvin (3D) */
+    stats_method(method, data);
     g_kreg[method >> 2] = data;
     if (method >= 0x1500 && method < 0x1B00 && method != 0x17FC && method != 0x1800 && method != 0x1808 &&
         method != 0x1810 && method != 0x1818 && (method < 0x1720 || method >= 0x17A0))
         inline_attr(method, data);
+    if (method >= 0x0B00 && method < 0x0B80) {                          /* SET_TRANSFORM_PROGRAM[32] */
+        if (vp_load < VP_SLOTS * 4) { ((uint32_t *)g_vp_prog)[vp_load++] = data; g_vp_serial++; }
+        return;
+    }
+    if (method >= 0x0B80 && method < 0x0C00) {                          /* SET_TRANSFORM_CONSTANT[32] */
+        if (vc_load < VP_CONSTS * 4) { memcpy(&((float *)g_vp_const)[vc_load++], &data, 4); g_vc_serial++; }
+        return;
+    }
     switch (method) {
     case 0x17FC:                                                        /* SET_BEGIN_END */
         if (data == 0) end_primitive();
-        else { kv_n = ki_n = kelem_n = 0; }
+        else { kv_n = ki_n = kelem_n = kinl_n = 0; }
         k_prim = data;
         break;
     case 0x1810: draw_arrays(data); break;                              /* DRAW_ARRAYS */
     case 0x1800: add_element(data & 0xFFFF); add_element(data >> 16); break;   /* ARRAY_ELEMENT16 pair */
     case 0x1808: add_element(data); break;                              /* ARRAY_ELEMENT32 */
-    case 0x1818: {                                                      /* INLINE_ARRAY */
-        static int warned;
-        if (!warned++) LOG("[pb] INLINE_ARRAY not implemented\n");
+    case 0x1818:                                                        /* INLINE_ARRAY */
+        kinl = grow(kinl, &kinl_cap, kinl_n + 1, 4);
+        kinl[kinl_n++] = data;
         break;
-    }
     case 0x1D94: gpu_clear(data); break;                                /* CLEAR_SURFACE */
     case 0x012C:                                                        /* FLIP_INCREMENT_WRITE */
         /* XDK Swap: 1D8C (scratch) holds the surface offset just completed */
         gpu_flip((nv2a_dma_base(KREG(K_DMA_COLOR)) + KREG(K_ZSTENCIL_CLEAR)) & 0x03FFFFFF);
         break;
     case 0x01A4: k_dma_semaphore = data; break;                         /* SET_CONTEXT_DMA_SEMAPHORE */
+    case 0x1E9C: vp_load = data * 4; break;                             /* SET_TRANSFORM_PROGRAM_LOAD */
+    case 0x1EA0: g_vp_start = data; break;                              /* SET_TRANSFORM_PROGRAM_START */
+    case 0x1EA4: vc_load = data * 4; break;                             /* SET_TRANSFORM_CONSTANT_LOAD */
     case 0x1D6C: k_semaphore_offset = data; break;                      /* SET_SEMAPHORE_OFFSET */
     case 0x1D70: {                                                      /* BACK_END_WRITE_SEMAPHORE_RELEASE */
         uint32_t a = dma_base(k_dma_semaphore) + k_semaphore_offset;
@@ -320,6 +423,7 @@ static void pfifo_kick(uint32_t put) {
     }
     pb_get = get;
     *reg(NV_USER_GET) = get;
+    stats_dump();
 }
 
 uint32_t mmio_read(uint32_t a, int size) {

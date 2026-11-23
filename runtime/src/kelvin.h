@@ -84,7 +84,9 @@ extern uint32_t g_kreg[0x800];
 #define K_COMB_CONTROL     0x1E60
 #define K_SHADER_STAGE_PROG 0x1E70
 #define K_SHADER_OTHER_IN  0x1E78
-#define K_TRANSFORM_MODE   0x1E94
+#define K_TRANSFORM_MODE   0x1E94   /* bits 1:0: 0 fixed function, 2 vertex program */
+#define K_CLIP_MIN         0x0394   /* float: depth range min (Z-buffer units) */
+#define K_CLIP_MAX         0x0398
 
 static inline float kf(uint32_t m) { union { uint32_t u; float f; } x; x.u = KREG(m); return x.f; }
 
@@ -94,6 +96,14 @@ static inline float kf(uint32_t m) { union { uint32_t u; float f; } x; x.u = KRE
 typedef struct { float a[16][4]; } KVertex;
 
 enum { KTOPO_POINTS, KTOPO_LINES, KTOPO_TRIS };
+
+/* Vertex program state (nv2a.c): 136 instruction slots of 4 dwords, 192 float4 constants. */
+#define VP_SLOTS 136
+#define VP_CONSTS 192
+extern uint32_t g_vp_prog[VP_SLOTS][4];
+extern float g_vp_const[VP_CONSTS][4];
+extern uint32_t g_vp_start;                  /* SET_TRANSFORM_PROGRAM_START */
+extern uint32_t g_vp_serial, g_vc_serial;    /* bumped on every program / constant write (upload caching) */
 
 /* Physical base of a DMA context object (nv2a.c). */
 uint32_t nv2a_dma_base(uint32_t handle);

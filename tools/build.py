@@ -89,9 +89,9 @@ RT_LIBS = ["-lwinmm", "-luser32", "-lgdi32", "-lshlwapi", "-lshell32", "-ladvapi
 def build_runtime(jobs):
     os.makedirs(RT_OBJ, exist_ok=True)
     flags = ["-O2", "-g", "-c", "-I" + INC, "-I" + RT_SRC, "-I" + os.path.join(ROOT, "third_party", "vulkan"),
-             "-I" + os.path.join(ROOT, "third_party", "vulkan", "include"), "-D_CRT_SECURE_NO_WARNINGS",
+             "-I" + os.path.join(ROOT, "third_party", "vulkan", "include"), "-D_CRT_SECURE_NO_WARNINGS", "-DVK_USE_PLATFORM_WIN32_KHR",
              "-Wall", "-Wno-unused-function", "-Wno-missing-braces"]
-    srcs = sorted(glob.glob(os.path.join(RT_SRC, "*.c")))
+    srcs = sorted(glob.glob(os.path.join(RT_SRC, "*.c"))) + [os.path.join(ROOT, "third_party", "vulkan", "volk.c")]
     compile_all([(f, os.path.join(RT_OBJ, os.path.basename(f)[:-2] + ".o"), flags) for f in srcs], jobs)
     objs = [os.path.join(RT_OBJ, os.path.basename(f)[:-2] + ".o") for f in srcs]
     objs += sorted(glob.glob(os.path.join(LIFTED, "*.o")))
