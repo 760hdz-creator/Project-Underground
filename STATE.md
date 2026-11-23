@@ -114,7 +114,9 @@ print(','.join(ev))")" UG_SHOT=1200 ./out/underground.exe   (NJ level by ~frame 
    (run_texgen, run_dbg7); a quarter-pipe light/dark split at f14400 is not a shadow draw (baked lighting).
 2. Renderer gaps (not seen in NJ so far: check other levels first): FF lighting, cube maps, eye/object-linear and
    sphere texgen, MSAA, widescreen, CPU-drawn loading bar (writes guest framebuffer RAM directly).
-3. Unimplemented lifter sites (46: enter, segment movs, fnsave/frstor).
+3. Lifter sites: fnsave/frstor/fnstenv/fldenv implemented 2026-11-23 (MSVC CRT pow error path 182F30 uses
+   fnsave/frstor around its handler). Remaining 41 unimplemented sites are all junk decodes (enter with nonzero
+   level, nonsense segment movs, ltr/sgdt/ljmp/int1/fstpnce): nothing to do.
 4. INSTALLER (in progress 2026-11-23; port of G:\Project Gauntlet docs/installer.md, minus its VS/admin toolchain path).
    Slices, in order:
    a. tools/ug_build.py --root D [--iso img] [--version V]: extract -> D/game, xbe SHA-256 check, llvm-mingw into

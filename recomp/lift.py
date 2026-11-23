@@ -1291,6 +1291,23 @@ class Emitter:
         elif m in ("ffree", "ffreep"):
             if m == "ffreep":
                 e("FPOP(c);")
+        elif m in ("fnsave", "fsave", "fnstenv", "fstenv"):
+            # 32-bit protected-mode image: FCW, FSW (with TOP), tag word (all valid: the lifter keeps no empty
+            # tags), IP/DP zeroed; fnsave adds ST(0..7) as 80-bit values at +28 and then reinitializes the FPU
+            # (MSVC CRT pow's error path saves/restores around its handler: 183040/18304C)
+            e(f"{{ uint32_t a = {self.addr(ins, ops[0])}; WR32(a, c->fcw); WR32(a + 4, FSTSW(c)); WR32(a + 8, 0); "
+              "for (int i = 12; i < 28; i += 4) WR32(a + i, 0);")
+            if "save" in m:
+                e("  for (int i = 0; i < 8; i++) x87_store80(a + 28 + i * 10, ST(i));")
+                e("  c->top = 0; c->fcw = 0x037F; c->fsw = 0; }")
+            else:
+                e("  c->fcw |= 0x3F; }")   # fnstenv masks all exceptions after storing
+        elif m in ("frstor", "fldenv"):
+            e(f"{{ uint32_t a = {self.addr(ins, ops[0])}; uint16_t s = RD16(a + 4); c->fcw = RD16(a); "
+              "c->top = (s >> 11) & 7; c->fsw = s & ~0x3800;")
+            if m == "frstor":
+                e("  for (int i = 0; i < 8; i++) ST(i) = x87_load80(a + 28 + i * 10);")
+            e("}")
         elif m in ("fnclex", "fclex", "fninit", "finit"):
             if "init" in m:
                 e("c->top = 0; c->fcw = 0x037F; c->fsw = 0;")
