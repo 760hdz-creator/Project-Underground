@@ -59,7 +59,7 @@ static void commit_fixed(uint32_t va, uint32_t size) {
 
 /* 4 GB reserved (PROT_NONE); RAM is one memfd mapped at guest 0 and at RAM_ALIAS, like the Windows section view. */
 void mem_init(void) {
-    int fd = memfd_create("gauntlet-ram", MFD_CLOEXEC);
+    int fd = memfd_create("underground-ram", MFD_CLOEXEC);
     if (fd < 0 || ftruncate(fd, RAM_SIZE)) rt_fatal("memfd_create failed (%d)", errno);
     uint8_t *base = mmap(NULL, 1ull << 32, PROT_NONE, MAP_PRIVATE | MAP_ANONYMOUS | MAP_NORESERVE, -1, 0);
     if (base == MAP_FAILED) rt_fatal("cannot reserve 4 GB");

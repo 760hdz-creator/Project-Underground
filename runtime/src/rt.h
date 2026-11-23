@@ -96,7 +96,7 @@ void linux_set_argv(char **argv);
 _Noreturn void linux_relaunch(void);
 #endif
 #ifdef __ANDROID__
-/* Android (linux/sdl_plat.c): working directory = the app's external files folder, stderr -> out/gauntlet.log,
+/* Android (linux/sdl_plat.c): working directory = the app's external files folder, stderr -> out/underground.log,
  * the window created on the main stack (SDL calls into Java there; Java checks the stack pointer) */
 void android_start(void);
 void android_relaunch(void);   /* restart the activity (Java), then the process ends */

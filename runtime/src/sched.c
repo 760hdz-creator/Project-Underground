@@ -16,7 +16,7 @@
 void ug_ctx_swap(void **save_sp, void *load_sp);
 void ug_fiber_start(void);
 __asm__(".text\n"
-        ".global ug_ctx_swap\n.type ug_ctx_swap,%function\ngt_ctx_swap:\n"
+        ".global ug_ctx_swap\n.type ug_ctx_swap,%function\nug_ctx_swap:\n"
         "    sub sp, sp, #176\n"
         "    stp x19, x20, [sp, #0]\n    stp x21, x22, [sp, #16]\n    stp x23, x24, [sp, #32]\n"
         "    stp x25, x26, [sp, #48]\n    stp x27, x28, [sp, #64]\n    stp x29, x30, [sp, #80]\n"
@@ -28,7 +28,7 @@ __asm__(".text\n"
         "    ldp d8, d9, [sp, #96]\n    ldp d10, d11, [sp, #112]\n    ldp d12, d13, [sp, #128]\n"
         "    ldp d14, d15, [sp, #144]\n"
         "    add sp, sp, #176\n    ret\n"
-        ".global ug_fiber_start\n.type ug_fiber_start,%function\ngt_fiber_start:\n"
+        ".global ug_fiber_start\n.type ug_fiber_start,%function\nug_fiber_start:\n"
         "    mov x29, #0\n    bl ug_fiber_entry\n    brk #0\n");
 typedef struct { void *sp; } Fiber;
 static Fiber main_fb, *running_fb = &main_fb;

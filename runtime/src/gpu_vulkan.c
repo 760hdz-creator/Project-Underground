@@ -31,6 +31,8 @@
 #include "xxhash.h"
 
 static int has_depth_clamp;
+static int has_bc = 1;   /* textureCompressionBC: most Mali and older Adreno GPUs lack it (UG_NOBC=1 forces the CPU path) */
+static VkSurfaceTransformFlagBitsKHR sc_transform;
 static int g_scale = 2;   /* UG_SCALE=1..8: host render-target scale over the guest resolution */
 
 static HWND g_hwnd;
@@ -344,6 +346,7 @@ static int swapchain_create(void) {
     ci.imageExtent = sc_ext; ci.imageArrayLayers = 1;
     ci.imageUsage = VK_IMAGE_USAGE_TRANSFER_DST_BIT | VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT;
     ci.imageSharingMode = VK_SHARING_MODE_EXCLUSIVE; ci.preTransform = caps.currentTransform;
+    sc_transform = caps.currentTransform;
     ci.compositeAlpha = VK_COMPOSITE_ALPHA_OPAQUE_BIT_KHR; ci.presentMode = pm; ci.clipped = VK_TRUE;
     ci.oldSwapchain = swapchain;
     VkSwapchainKHR sc;
@@ -358,7 +361,8 @@ static int swapchain_create(void) {
             vkCreateSemaphore(dev, &si, 0, &sc_done[i]);
         }
     }
-    LOG("[gpu] swapchain %ux%u, %u images, format %d, present mode %d\n", sc_ext.width, sc_ext.height, sc_count, sc_fmt, pm);
+    LOG("[gpu] swapchain %ux%u, %u images, format %d, present mode %d, transform %X\n", sc_ext.width, sc_ext.height,
+        sc_count, sc_fmt, pm, (unsigned)sc_transform);
     return 1;
 }
 
@@ -577,6 +581,41 @@ static uint32_t c5(uint32_t v) { return (v << 3) | (v >> 2); }
 static uint32_t c6(uint32_t v) { return (v << 2) | (v >> 4); }
 
 /* one texel -> RGBA8 (R in the low byte) */
+/* DXT1/3/5 block -> 4x4 RGBA8 texels (texel() byte order: r | g << 8 | b << 16 | a << 24), for GPUs without BC */
+static uint32_t rgb565(uint16_t v) { return c5(v >> 11) | c6((v >> 5) & 63) << 8 | c5(v & 31) << 16; }
+static void dxt_block(int kind, const uint8_t *b, uint32_t out[16]) {
+    const uint8_t *cb = kind == TF_DXT1 ? b : b + 8;
+    uint16_t c0 = (uint16_t)(cb[0] | cb[1] << 8), c1 = (uint16_t)(cb[2] | cb[3] << 8);
+    uint32_t p[4];
+    p[0] = rgb565(c0) | 0xFF000000u;
+    p[1] = rgb565(c1) | 0xFF000000u;
+    uint32_t r0 = p[0] & 255, g0 = (p[0] >> 8) & 255, b0 = (p[0] >> 16) & 255;
+    uint32_t r1 = p[1] & 255, g1 = (p[1] >> 8) & 255, b1 = (p[1] >> 16) & 255;
+    if (kind != TF_DXT1 || c0 > c1) {
+        p[2] = (2 * r0 + r1) / 3 | (2 * g0 + g1) / 3 << 8 | (2 * b0 + b1) / 3 << 16 | 0xFF000000u;
+        p[3] = (r0 + 2 * r1) / 3 | (g0 + 2 * g1) / 3 << 8 | (b0 + 2 * b1) / 3 << 16 | 0xFF000000u;
+    } else {
+        p[2] = (r0 + r1) / 2 | (g0 + g1) / 2 << 8 | (b0 + b1) / 2 << 16 | 0xFF000000u;
+        p[3] = 0;   /* transparent black */
+    }
+    uint32_t idx = (uint32_t)(cb[4] | cb[5] << 8 | cb[6] << 16 | (uint32_t)cb[7] << 24);
+    for (int i = 0; i < 16; i++) out[i] = p[(idx >> (2 * i)) & 3];
+    if (kind == TF_DXT3) {
+        for (int i = 0; i < 16; i++) {
+            uint32_t a = (b[i / 2] >> (4 * (i & 1))) & 15;
+            out[i] = (out[i] & 0x00FFFFFFu) | (a * 17) << 24;
+        }
+    } else if (kind == TF_DXT5) {
+        uint32_t a[8], a0 = b[0], a1 = b[1];
+        a[0] = a0; a[1] = a1;
+        if (a0 > a1) for (int k = 1; k < 7; k++) a[k + 1] = ((7 - k) * a0 + k * a1) / 7;
+        else { for (int k = 1; k < 5; k++) a[k + 1] = ((5 - k) * a0 + k * a1) / 5; a[6] = 0; a[7] = 255; }
+        uint64_t bits = 0;
+        for (int k = 0; k < 6; k++) bits |= (uint64_t)b[2 + k] << (8 * k);
+        for (int i = 0; i < 16; i++) out[i] = (out[i] & 0x00FFFFFFu) | a[(bits >> (3 * i)) & 7] << 24;
+    }
+}
+
 static uint32_t texel(int kind, const uint8_t *p, const uint32_t *pal) {
     uint32_t v, r, g, b, a;
     switch (kind) {
@@ -650,9 +689,22 @@ static int create_texture(TexEntry *e, TexFmt f, int levels, const uint32_t *pal
         if (dxt) {
             if (l > 0 && (lw < 4 || lh < 4)) break;
             uint32_t bsz = f.kind == TF_DXT1 ? 8 : 16, bw = (lw + 3) / 4, bh = (lh + 3) / 4, sz = bw * bh * bsz;
-            uint8_t *p = ring_alloc(&fr->stage, sz, 16, &off);
-            if (!p) return 0;
-            memcpy(p, g_mem + (src & 0x03FFFFFF), sz);
+            if (has_bc) {
+                uint8_t *p = ring_alloc(&fr->stage, sz, 16, &off);
+                if (!p) return 0;
+                memcpy(p, g_mem + (src & 0x03FFFFFF), sz);
+            } else {   /* no BC on this GPU: decode to RGBA8 */
+                uint32_t *out = ring_alloc(&fr->stage, (VkDeviceSize)lw * lh * 4, 16, &off), blk[16];
+                if (!out) return 0;
+                const uint8_t *base = g_mem + (src & 0x03FFFFFF);
+                for (uint32_t by = 0; by < bh; by++)
+                    for (uint32_t bx = 0; bx < bw; bx++) {
+                        dxt_block(f.kind, base + (by * bw + bx) * bsz, blk);
+                        for (int y = 0; y < 4 && (int)(by * 4) + y < lh; y++)
+                            for (int x = 0; x < 4 && (int)(bx * 4) + x < lw; x++)
+                                out[(by * 4 + y) * lw + bx * 4 + x] = blk[y * 4 + x];
+                    }
+            }
             src += sz;
         } else {
             uint32_t *out = ring_alloc(&fr->stage, (VkDeviceSize)lw * lh * 4, 16, &off);
@@ -675,7 +727,7 @@ static int create_texture(TexEntry *e, TexFmt f, int levels, const uint32_t *pal
                                           {(uint32_t)lw, (uint32_t)lh, 1}};
         nl++;
     }
-    VkFormat vf = f.kind == TF_DXT1 ? VK_FORMAT_BC1_RGBA_UNORM_BLOCK : f.kind == TF_DXT3 ? VK_FORMAT_BC2_UNORM_BLOCK :
+    VkFormat vf = dxt && !has_bc ? VK_FORMAT_R8G8B8A8_UNORM : f.kind == TF_DXT1 ? VK_FORMAT_BC1_RGBA_UNORM_BLOCK : f.kind == TF_DXT3 ? VK_FORMAT_BC2_UNORM_BLOCK :
                   f.kind == TF_DXT5 ? VK_FORMAT_BC3_UNORM_BLOCK : VK_FORMAT_R8G8B8A8_UNORM;
     if (!e->im.img && !img_create(&e->im, w, h, nl, vf, VK_IMAGE_USAGE_SAMPLED_BIT | VK_IMAGE_USAGE_TRANSFER_DST_BIT,
                                   VK_IMAGE_ASPECT_COLOR_BIT)) return 0;   /* an existing image is re-uploaded in place */
@@ -1045,6 +1097,10 @@ static int vk_init(void) {
         vkGetPhysicalDeviceFeatures(pdev, &have);
         f2.features.depthClamp = have.depthClamp;
         has_depth_clamp = have.depthClamp;
+        const char *nobc = getenv("UG_NOBC");
+        has_bc = have.textureCompressionBC && !(nobc && *nobc == '1');
+        f2.features.textureCompressionBC = (VkBool32)has_bc;
+        if (!has_bc) LOG("[gpu] no BC texture compression: DXT textures are decoded on the CPU\n");
     }
     float prio = 1.0f;
     VkDeviceQueueCreateInfo qci = {VK_STRUCTURE_TYPE_DEVICE_QUEUE_CREATE_INFO, 0, 0, qfam, 1, &prio};
@@ -1053,12 +1109,20 @@ static int vk_init(void) {
     VKC(vkCreateDevice(pdev, &dci, 0, &dev));
     volkLoadDevice(dev);
     vkGetDeviceQueue(dev, qfam, 0, &queue);
-    /* depth: D24S8 is not on every GPU (AMD); D32S8 is */
-    depth_fmt = VK_FORMAT_D32_SFLOAT_S8_UINT;
+    /* depth: D24S8 is not on every GPU (AMD, many Mali); D32S8 is on most. Shadow maps also sample it. */
     {
-        VkFormatProperties fp;
-        vkGetPhysicalDeviceFormatProperties(pdev, VK_FORMAT_D24_UNORM_S8_UINT, &fp);
-        if (fp.optimalTilingFeatures & VK_FORMAT_FEATURE_DEPTH_STENCIL_ATTACHMENT_BIT) depth_fmt = VK_FORMAT_D24_UNORM_S8_UINT;
+        const VkFormatFeatureFlags need = VK_FORMAT_FEATURE_DEPTH_STENCIL_ATTACHMENT_BIT | VK_FORMAT_FEATURE_SAMPLED_IMAGE_BIT;
+        const VkFormat cand[2] = {VK_FORMAT_D24_UNORM_S8_UINT, VK_FORMAT_D32_SFLOAT_S8_UINT};
+        depth_fmt = VK_FORMAT_UNDEFINED;
+        for (int i = 0; i < 2 && depth_fmt == VK_FORMAT_UNDEFINED; i++) {
+            VkFormatProperties fp;
+            vkGetPhysicalDeviceFormatProperties(pdev, cand[i], &fp);
+            if ((fp.optimalTilingFeatures & need) == need) depth_fmt = cand[i];
+        }
+        if (depth_fmt == VK_FORMAT_UNDEFINED) {
+            LOG("[gpu] no sampleable depth-stencil format (D24S8 or D32S8): shadows may be wrong\n");
+            depth_fmt = VK_FORMAT_D32_SFLOAT_S8_UINT;
+        }
     }
     if (!swapchain_create()) return 0;
 
@@ -1427,19 +1491,50 @@ static void clear_impl(uint32_t flags) {
     if (n) vkCmdClearAttachments(CMD(), (uint32_t)n, ca, 1, &rect);
 }
 
+/* SUBOPTIMAL: recreate only when the surface really changed (Android reports it every frame for a rotated
+ * display, and a recreate per frame would stall) */
+static int surface_changed(void) {
+    VkSurfaceCapabilitiesKHR caps;
+    if (vkGetPhysicalDeviceSurfaceCapabilitiesKHR(pdev, surface, &caps) != VK_SUCCESS) return 0;
+    if (caps.currentTransform != sc_transform) return 1;
+    return caps.currentExtent.width != UINT32_MAX &&
+           (caps.currentExtent.width != sc_ext.width || caps.currentExtent.height != sc_ext.height);
+}
+
+#ifndef _WIN32
+/* the window's surface went away (Android: app in the background, a new native window on resume) */
+static void surface_recreate(void) {
+    vkDeviceWaitIdle(dev);
+    if (swapchain) { vkDestroySwapchainKHR(dev, swapchain, 0); swapchain = 0; }
+    if (surface) vkDestroySurfaceKHR(inst, surface, 0);
+    surface = 0;
+    if (!SDL_Vulkan_CreateSurface((SDL_Window *)g_hwnd, inst, NULL, &surface)) {
+        LOG("[gpu] SDL_Vulkan_CreateSurface (recreate): %s\n", SDL_GetError());
+        surface = 0;
+        return;
+    }
+    swapchain_create();
+    LOG("[gpu] surface recreated\n");
+}
+#endif
+
 static void submit_and_present(Surface *s) {
     Frame *f = &frames[fi];
     end_rendering();
     uint32_t img = UINT32_MAX;
 #ifndef _WIN32
+    if (linux_surface_lost) { linux_surface_lost = 0; linux_window_resized = 0; surface_recreate(); }
     if (linux_window_resized) {   /* Wayland may never report OUT_OF_DATE after a resize or fullscreen toggle */
         linux_window_resized = 0;
         vkDeviceWaitIdle(dev);
         swapchain_create();
     }
 #endif
-    VkResult ar = swapchain ? vkAcquireNextImageKHR(dev, swapchain, UINT64_MAX, f->acquired, 0, &img) : VK_ERROR_OUT_OF_DATE_KHR;
-    if (ar == VK_ERROR_OUT_OF_DATE_KHR) { vkDeviceWaitIdle(dev); swapchain_create(); img = UINT32_MAX; }
+    VkResult ar = swapchain && surface ? vkAcquireNextImageKHR(dev, swapchain, UINT64_MAX, f->acquired, 0, &img) : VK_ERROR_OUT_OF_DATE_KHR;
+#ifndef _WIN32
+    if (ar == VK_ERROR_SURFACE_LOST_KHR) { linux_surface_lost = 1; img = UINT32_MAX; } else
+#endif
+    if (ar == VK_ERROR_OUT_OF_DATE_KHR) { if (surface) { vkDeviceWaitIdle(dev); swapchain_create(); } img = UINT32_MAX; }
     else if (ar != VK_SUCCESS && ar != VK_SUBOPTIMAL_KHR) img = UINT32_MAX;
     VkCommandBuffer cb = f->cmd;
     if (img != UINT32_MAX) {
@@ -1505,7 +1600,13 @@ static void submit_and_present(Surface *s) {
     if (img != UINT32_MAX) {
         VkPresentInfoKHR pi = {VK_STRUCTURE_TYPE_PRESENT_INFO_KHR, 0, 1, &sc_done[img], 1, &swapchain, &img, 0};
         VkResult pr = vkQueuePresentKHR(queue, &pi);
-        if (pr == VK_ERROR_OUT_OF_DATE_KHR || pr == VK_SUBOPTIMAL_KHR) { vkDeviceWaitIdle(dev); swapchain_create(); }
+        if (pr == VK_ERROR_OUT_OF_DATE_KHR || (pr == VK_SUBOPTIMAL_KHR && surface_changed())) {
+            vkDeviceWaitIdle(dev);
+            swapchain_create();
+        }
+#ifndef _WIN32
+        if (pr == VK_ERROR_SURFACE_LOST_KHR) linux_surface_lost = 1;
+#endif
     }
     fi = (fi + 1) % FRAMES;
     frame_begin();

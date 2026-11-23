@@ -12,6 +12,7 @@ void touch_event(uint32_t type, uint64_t id, float nx, float ny);   /* touch.c *
 
 static SDL_Window *g_win;
 volatile int linux_window_resized;
+volatile int linux_surface_lost;
 static int g_video;
 
 /* ---------------- window ---------------- */
@@ -96,6 +97,11 @@ void linux_pump_events(void) {
         case SDL_EVENT_WINDOW_PIXEL_SIZE_CHANGED:
             linux_window_resized = 1;
             break;
+#ifdef __ANDROID__
+        case SDL_EVENT_DID_ENTER_FOREGROUND:
+            linux_surface_lost = 1;   /* the native window was replaced while in the background */
+            break;
+#endif
         case SDL_EVENT_KEY_DOWN:
             if (e.key.repeat) break;
             if (e.key.key == SDLK_ESCAPE) { LOG("[gpu] escape\n"); ExitProcess(0); }
@@ -229,7 +235,7 @@ static void unpack_game(void) {
     sscanf(lst, "# %159s", id);
     FILE *f = fopen("game/.build-id", "r");
     if (f) { if (fscanf(f, "%159s", have) != 1) have[0] = 0; fclose(f); }
-    if (id[0] && !strcmp(id, have) && !access("game/Default.xbe", R_OK)) { SDL_free(lst); return; }
+    if (id[0] && !strcmp(id, have) && !access("game/default.xbe", R_OK)) { SDL_free(lst); return; }
     SDL_ShowAndroidToast("Project Underground: preparing the game files (first start, about a minute)", 1, -1, 0, 0);
     LOG("[android] unpacking the game files (build %s)\n", id);
     remove("game/.build-id");
@@ -273,7 +279,7 @@ void android_start(void) {
     LOG("[android] files folder %s\n", dir);
     mkdir("game", 0755);
     unpack_game();
-    if (access("game/Default.xbe", R_OK)) {
+    if (access("game/default.xbe", R_OK)) {
         char msg[1024];
         snprintf(msg, sizeof msg, "The game files are missing: copy the disc's files to\n%s/game", dir);
         LOG("[android] %s\n", msg);

@@ -161,7 +161,8 @@ BOOL GetMonitorInfoW(HMONITOR m, MONITORINFO *mi);
 BOOL GetClientRect(HWND w, RECT *r);
 HWND linux_create_window(void);   /* sdl_plat.c: the game window (UG_MONITOR, UG_FULLSCREEN, size like Windows) */
 void linux_pump_events(void);
-extern volatile int linux_window_resized;   /* sdl_plat.c sets it on a pixel size change; gpu_flip recreates the swapchain */      /* sdl_plat.c: SDL events (close, Esc, F11, Alt+Enter); main thread only */
+extern volatile int linux_window_resized;
+extern volatile int linux_surface_lost;     /* Android: back in the foreground with a new native window */   /* sdl_plat.c sets it on a pixel size change; gpu_flip recreates the swapchain */      /* sdl_plat.c: SDL events (close, Esc, F11, Alt+Enter); main thread only */
 
 /* virtual keys used by the runtime (and the launcher's UG_KEYS values) */
 #define VK_BACK 0x08
