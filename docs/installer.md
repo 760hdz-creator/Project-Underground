@@ -21,7 +21,13 @@ Gauntlet's installer (G:\Project Gauntlet\docs\installer.md) without its Visual 
   `%LOCALAPPDATA%\Project Underground`.
   - Command line: `--update [--dir X]`, `--uninstall [--dir X]` (keeps `out\` = saves and log), `--iso <img> [--dir X]`,
     `--launcher [--dir X]`.
-  - Art: neutral placeholders from `installer/art/*.py` (never game art; user art welcome).
+  - Art (user's own, 2026-11-23): `installer/art/src/background.jpg` (2752x1536, embedded as is) and
+    `art/src/icon_source.jpg`. `python installer/art/icon.py installer/res/app.ico installer/res/icon.png` cuts the
+    icon tile out of its backdrop; copy icon.png to android/app/src/main/res/mipmap-xxxhdpi/ic_launcher.png.
+  - UI: borderless window shaped like the art (drag anywhere, the art's X closes, Esc too). The six skateboards are
+    owner-drawn buttons (setup.cpp kBoards, art pixels): setup = Disc image / Install folder / Desktop icon /
+    Start menu / Install / Quit; launcher = Play / Settings (panel over the left art) / Update / Android / Logs /
+    Uninstall. Status, progress and version sit on the bottom metal bar. The game window loads underground.ico.
 - Launcher: Play (UG_NOUPDATE=1), update check, settings to `settings.ini [settings]` (UG_FULLSCREEN, UG_FPS=30 when
   60 fps is off, UG_VSYNC=0 when VSync is off, UG_MONITOR, UG_SCALE, UG_PADS; a default deletes the key; the game's
   main.c load_settings applies keys not already in the environment), Logs, Uninstall.

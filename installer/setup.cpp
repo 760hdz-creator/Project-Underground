@@ -33,6 +33,7 @@
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
+#include <map>
 #include <string>
 #include <thread>
 #include <vector>
@@ -49,9 +50,9 @@ static const wchar_t kRegKey[] = L"Software\\ProjectUnderground";
 static const wchar_t kUninstKey[] = L"Software\\Microsoft\\Windows\\CurrentVersion\\Uninstall\\ProjectUnderground";
 static const wchar_t kShortcut[] = L"Project Underground.lnk";
 
-enum { ID_ISO_EDIT = 200, ID_ISO_BROWSE, ID_DIR_EDIT, ID_DIR_BROWSE, ID_DESKTOP, ID_STARTMENU, ID_INSTALL, ID_PROGRESS,
+enum { ID_ISO_BROWSE = 200, ID_DIR_BROWSE, ID_DESKTOP, ID_STARTMENU, ID_INSTALL, ID_PROGRESS,
        ID_STATUS, ID_PLAY, ID_UPDATE, ID_UNINSTALL, ID_FULLSCREEN, ID_SCALE, ID_PADS, ID_FPS60, ID_VSYNC, ID_LOGS,
-       ID_MONITOR, ID_ANDROID };
+       ID_MONITOR, ID_ANDROID, ID_SETTINGS, ID_QUIT, ID_CLOSE };
 #define WM_APP_STATUS (WM_APP + 1)
 #define WM_APP_PROGRESS (WM_APP + 2)
 #define WM_APP_DONE (WM_APP + 3)
@@ -59,10 +60,10 @@ enum { ID_ISO_EDIT = 200, ID_ISO_BROWSE, ID_DIR_EDIT, ID_DIR_BROWSE, ID_DESKTOP,
 #define WM_APP_UPDATING (WM_APP + 5) // launcher: wp 1 = new setup started (close), 0 = download failed
 #define WM_APP_ANDROID (WM_APP + 6)  // launcher: Android APK build finished (wp 1 = ok; g_error / g_apk)
 
-static HWND g_wnd, g_status, g_progress, g_iso, g_dir, g_install, g_updBtn;
+static HWND g_wnd, g_status, g_progress, g_install, g_updBtn;
 static bool g_updating, g_running, g_launcher;
 static std::wstring g_instDir;   // launcher: the install folder (the exe's own folder)
-// Buttons are owner-drawn (dark, on the art). GWLP_USERDATA: 1 push button, 2 toggle (checkbox), | 4 when ticked.
+// Buttons are owner-drawn on the art (DrawButton; the kinds are its K_* bits). GWLP_USERDATA | 4: a ticked toggle.
 static bool IsOn(int id) { return (GetWindowLongPtrW(GetDlgItem(g_wnd, id), GWLP_USERDATA) & 4) != 0; }
 static void SetOn(int id, bool on) {
     HWND c = GetDlgItem(g_wnd, id);
@@ -90,12 +91,6 @@ static std::wstring KnownDir(REFKNOWNFOLDERID id) {
     return r;
 }
 static bool Exists(const std::wstring& p) { return GetFileAttributesW(p.c_str()) != INVALID_FILE_ATTRIBUTES; }
-static std::wstring GetText(HWND h) {
-    int n = GetWindowTextLengthW(h);
-    std::wstring s(n, 0);
-    GetWindowTextW(h, s.data(), n + 1);
-    return s;
-}
 static void SetReg(HKEY root, const wchar_t* key, const wchar_t* name, const std::wstring& v) {
     HKEY k;
     if (RegCreateKeyExW(root, key, 0, nullptr, 0, KEY_SET_VALUE, nullptr, &k, nullptr) == ERROR_SUCCESS) {
@@ -531,16 +526,28 @@ static bool PlayGame() {
 }
 
 // ---- window ----
-static const int kArtW = 1600, kArtH = 893;
-static RECT kPanel = {60, 140, 760, 800};   // art pixels: the translucent control panel (left side)
+// Laid out in pixels of the background art (art/src/background.jpg, 2752x1536), scaled by g_scale. The art has its own
+// frame and close button, so the window is borderless (dragged anywhere on the art); its six skateboards are the
+// buttons, the bottom metal bar holds the status line and progress.
+static const int kArtW = 2752, kArtH = 1536;
+static const RECT kBoards[6] = {{1590, 225, 2522, 421}, {1590, 433, 2522, 621}, {1590, 633, 2522, 823},
+                                {1590, 832, 2522, 1021}, {1590, 1030, 2522, 1219}, {1590, 1228, 2522, 1420}};
+static const RECT kClose = {2618, 12, 2710, 100};     // the X plate, top right
+static const RECT kOverlay = {200, 650, 1550, 1415};  // launcher settings panel (over the skater)
+static const RECT kStatus = {200, 1446, 2250, 1494}, kBar = {200, 1502, 2250, 1520}, kInfo = {2280, 1446, 2600, 1494};
 static double g_scale = 1;
 static HDC g_artDC;
-static HBITMAP g_artBmp;
-static HFONT g_font, g_titleFont, g_smallFont;
-static HBRUSH g_fieldBrush, g_artBrush;   // g_artBrush: the panel art, behind labels
-static const COLORREF kText = RGB(228, 232, 240), kDim = RGB(150, 160, 180), kAccent = RGB(255, 176, 60);
-static const COLORREF kField = RGB(20, 24, 32), kEdge = RGB(150, 100, 40);
+static HBITMAP g_artBmp, g_artPanelBmp;                 // the art, and the art with the settings panel painted in
+static HBRUSH g_artBrush, g_plainBrush, g_panelBrush;   // g_artBrush: the current one (control backgrounds)
+static bool g_panel;
+static HFONT g_font, g_titleFont, g_smallFont, g_boardFont, g_subFont;
+static HBRUSH g_fieldBrush;
+static const COLORREF kText = RGB(236, 232, 224), kDim = RGB(170, 162, 150), kAccent = RGB(247, 148, 29);
+static const COLORREF kOff = RGB(125, 120, 112), kField = RGB(24, 22, 20), kEdge = RGB(150, 100, 40);
+static std::map<int, std::wstring> g_sub;   // second line on a skateboard (a path, a hint)
+static std::wstring g_isoPath, g_dirPath;
 static int S(int v) { return (int)lround(v * g_scale); }
+static RECT SR(const RECT& r) { return {S(r.left), S(r.top), S(r.right), S(r.bottom)}; }
 
 static HBITMAP LoadArt(int w, int h) {
     HRSRC r = FindResourceW(nullptr, MAKEINTRESOURCEW(IDR_INSTALLER_BG), RT_RCDATA);
@@ -574,71 +581,104 @@ static HBITMAP LoadArt(int w, int h) {
     return bmp;
 }
 
-// The art with the darkened panel painted in (kept in g_artDC; WM_PAINT copies it).
+static void ArtText(HDC dc, const RECT& r, HFONT f, COLORREF c, const std::wstring& s, UINT fmt) {
+    RECT sr = SR(r);
+    SelectObject(dc, f);
+    SetBkMode(dc, TRANSPARENT);
+    SetTextColor(dc, c);
+    DrawTextW(dc, s.c_str(), (int)s.size(), &sr, fmt | DT_NOPREFIX);
+}
+// g_artBmp: the art + the version on the bottom bar. g_artPanelBmp (launcher): the same with the settings panel.
 static void BuildArt(int w, int h) {
     HDC screen = GetDC(nullptr);
     g_artDC = CreateCompatibleDC(screen);
     g_artBmp = LoadArt(w, h);
     if (!g_artBmp) g_artBmp = CreateCompatibleBitmap(screen, w, h);
-    SelectObject(g_artDC, g_artBmp);
+    g_artPanelBmp = CreateCompatibleBitmap(screen, w, h);
     ReleaseDC(nullptr, screen);
-    RECT p = {S(kPanel.left), S(kPanel.top), S(kPanel.right), S(kPanel.bottom)};
-    HDC tmp = CreateCompatibleDC(g_artDC);
-    HBITMAP b = CreateCompatibleBitmap(g_artDC, 1, 1);
-    HGDIOBJ old = SelectObject(tmp, b);
-    SetPixel(tmp, 0, 0, RGB(6, 8, 12));
-    BLENDFUNCTION bf = {AC_SRC_OVER, 0, 200, 0};
-    GdiAlphaBlend(g_artDC, p.left, p.top, p.right - p.left, p.bottom - p.top, tmp, 0, 0, 1, 1, bf);
-    SelectObject(tmp, old);
-    DeleteObject(b);
-    DeleteDC(tmp);
-    HPEN pen = CreatePen(PS_SOLID, std::max(1, S(2)), kEdge);
-    HGDIOBJ op = SelectObject(g_artDC, pen), ob = SelectObject(g_artDC, GetStockObject(NULL_BRUSH));
-    Rectangle(g_artDC, p.left, p.top, p.right, p.bottom);
-    SelectObject(g_artDC, op); SelectObject(g_artDC, ob);
-    DeleteObject(pen);
-    // static labels
-    SetBkMode(g_artDC, TRANSPARENT);
-    auto text = [&](int x, int y, HFONT f, COLORREF c, const std::wstring& s) {
-        SelectObject(g_artDC, f);
-        SetTextColor(g_artDC, c);
-        TextOutW(g_artDC, S(x), S(y), s.c_str(), (int)s.size());
-    };
-    int x = kPanel.left + 30, t = kPanel.top;
+    SelectObject(g_artDC, g_artBmp);
+    ArtText(g_artDC, kInfo, g_smallFont, kDim, L"Version " + std::wstring(kVersion), DT_SINGLELINE | DT_VCENTER | DT_RIGHT);
+    HDC pd = CreateCompatibleDC(g_artDC);
+    SelectObject(pd, g_artPanelBmp);
+    BitBlt(pd, 0, 0, w, h, g_artDC, 0, 0, SRCCOPY);
     if (g_launcher) {
-        text(x, t + 24, g_titleFont, kAccent, L"Project Underground");
-        {   // long install paths end in an ellipsis inside the panel
-            std::wstring v = L"Version " + std::wstring(kVersion) + L"   " + g_instDir;
-            SelectObject(g_artDC, g_smallFont);
-            SetTextColor(g_artDC, kDim);
-            RECT r = {S(x), S(t + 84), S(kPanel.right - 20), S(t + 120)};
-            DrawTextW(g_artDC, v.data(), (int)v.size(), &r, DT_SINGLELINE | DT_PATH_ELLIPSIS | DT_NOPREFIX);
-        }
-        text(x, t + 262, g_font, kAccent, L"Display");
-        text(x, t + 371, g_font, kText, L"Monitor");
-        text(x, t + 407, g_font, kText, L"Render scale");
-        text(x, t + 443, g_font, kText, L"Players (gamepads)");
-        text(x, t + 490, g_smallFont, kDim, L"Settings are saved at once to settings.ini in the install folder.");
-        return;
+        RECT p = SR(kOverlay);
+        HDC tmp = CreateCompatibleDC(pd);
+        HBITMAP b = CreateCompatibleBitmap(pd, 1, 1);
+        HGDIOBJ old = SelectObject(tmp, b);
+        SetPixel(tmp, 0, 0, RGB(8, 7, 6));
+        BLENDFUNCTION bf = {AC_SRC_OVER, 0, 222, 0};
+        GdiAlphaBlend(pd, p.left, p.top, p.right - p.left, p.bottom - p.top, tmp, 0, 0, 1, 1, bf);
+        SelectObject(tmp, old);
+        DeleteObject(b);
+        DeleteDC(tmp);
+        HPEN pen = CreatePen(PS_SOLID, std::max(1, S(4)), kAccent);
+        HGDIOBJ op = SelectObject(pd, pen), ob = SelectObject(pd, GetStockObject(NULL_BRUSH));
+        Rectangle(pd, p.left, p.top, p.right, p.bottom);
+        SelectObject(pd, op); SelectObject(pd, ob);
+        DeleteObject(pen);
+        ArtText(pd, {260, 665, 1500, 755}, g_titleFont, kAccent, L"SETTINGS", DT_SINGLELINE | DT_VCENTER);
+        ArtText(pd, {260, 875, 700, 935}, g_font, kText, L"Monitor", DT_SINGLELINE | DT_VCENTER);
+        ArtText(pd, {260, 965, 700, 1025}, g_font, kText, L"Render scale", DT_SINGLELINE | DT_VCENTER);
+        ArtText(pd, {260, 1055, 700, 1115}, g_font, kText, L"Players (gamepads)", DT_SINGLELINE | DT_VCENTER);
+        ArtText(pd, {260, 1300, 1500, 1380}, g_smallFont, kDim,
+                L"Saved at once to settings.ini in the install folder.", DT_SINGLELINE | DT_VCENTER);
     }
-    text(x, t + 24, g_titleFont, kAccent, g_updating ? L"Update Project Underground" : L"Install Project Underground");
-    text(x, t + 84, g_smallFont, kDim, L"Builds the game on this PC from your own disc image. Version " + std::wstring(kVersion) + L".");
-    if (!g_updating) text(x, t + 130, g_font, kText, L"Tony Hawk's Underground disc image (Xbox, USA)");
-    text(x, t + 230, g_font, kText, L"Install folder");
+    DeleteDC(pd);
 }
 
+// Owner-drawn buttons. GWLP_USERDATA bits:
+enum { K_PUSH = 1, K_TOGGLE = 2, K_ON = 4, K_HOT = 8, K_BOARD = 16, K_CLOSE = 32 };
+// Hover: the button under the mouse gets K_HOT (owner-drawn buttons have no hover state of their own); hand cursor.
+static LRESULT CALLBACK HoverProc(HWND h, UINT m, WPARAM wp, LPARAM lp, UINT_PTR, DWORD_PTR) {
+    LONG_PTR k = GetWindowLongPtrW(h, GWLP_USERDATA);
+    if (m == WM_MOUSEMOVE && !(k & K_HOT)) {
+        SetWindowLongPtrW(h, GWLP_USERDATA, k | K_HOT);
+        TRACKMOUSEEVENT t = {sizeof t, TME_LEAVE, h, 0};
+        TrackMouseEvent(&t);
+        InvalidateRect(h, nullptr, FALSE);
+    } else if (m == WM_MOUSELEAVE) {
+        SetWindowLongPtrW(h, GWLP_USERDATA, k & ~K_HOT);
+        InvalidateRect(h, nullptr, FALSE);
+    } else if (m == WM_SETCURSOR) {
+        SetCursor(LoadCursorW(nullptr, IDC_HAND));
+        return TRUE;
+    }
+    return DefSubclassProc(h, m, wp, lp);
+}
 static HWND Make(const wchar_t* cls, const wchar_t* text, DWORD style, int id, int x, int y, int w, int h,
                  HFONT font = nullptr) {
     LONG_PTR kind = 0;
     if (!wcscmp(cls, L"BUTTON")) {
-        kind = (style & BS_TYPEMASK) == BS_AUTOCHECKBOX ? 2 : 1;
+        kind = (style & BS_TYPEMASK) == BS_AUTOCHECKBOX ? K_TOGGLE : K_PUSH;
         style = (style & ~BS_TYPEMASK) | BS_OWNERDRAW;
     }
     HWND c = CreateWindowExW(0, cls, text, WS_CHILD | WS_VISIBLE | style, S(x), S(y), S(w), S(h), g_wnd,
                              (HMENU)(INT_PTR)id, GetModuleHandleW(nullptr), nullptr);
     SendMessageW(c, WM_SETFONT, (WPARAM)(font ? font : g_font), TRUE);
-    if (kind) SetWindowLongPtrW(c, GWLP_USERDATA, kind);
+    if (kind) {
+        SetWindowLongPtrW(c, GWLP_USERDATA, kind);
+        SetWindowSubclass(c, HoverProc, 1, 0);
+    }
     return c;
+}
+static HWND MakeAt(const wchar_t* cls, const wchar_t* text, DWORD style, int id, const RECT& r, HFONT font = nullptr) {
+    return Make(cls, text, style, id, r.left, r.top, r.right - r.left, r.bottom - r.top, font);
+}
+// Skateboard slot 0-5 (top to bottom) as a button; toggle: the label gets ": ON" / ": OFF".
+static HWND MakeBoard(int slot, const wchar_t* text, int id, bool toggle = false) {
+    HWND c = MakeAt(L"BUTTON", text, BS_PUSHBUTTON | WS_TABSTOP, id, kBoards[slot], g_boardFont);
+    SetWindowLongPtrW(c, GWLP_USERDATA, K_BOARD | (toggle ? K_TOGGLE : 0));
+    return c;
+}
+static void SetSub(int id, const std::wstring& s) {
+    g_sub[id] = s;
+    InvalidateRect(GetDlgItem(g_wnd, id), nullptr, FALSE);
+}
+static void SetBoard(HWND c, const std::wstring& text, const std::wstring& sub, bool enabled) {
+    SetWindowTextW(c, text.c_str());
+    EnableWindow(c, enabled);
+    SetSub(GetDlgCtrlID(c), sub);
 }
 // Lines the art brush up with control c, so its background is the art behind it.
 static HBRUSH ArtBrushFor(HDC dc, HWND c) {
@@ -648,47 +688,98 @@ static HBRUSH ArtBrushFor(HDC dc, HWND c) {
     SetBrushOrgEx(dc, -rc.left, -rc.top, nullptr);
     return g_artBrush;
 }
+// Text with a black outline (readable on the worn decks and stickers).
+static void OutlinedText(HDC dc, const std::wstring& s, RECT r, UINT fmt, COLORREF c) {
+    int o = std::max(1, S(4));
+    SetTextColor(dc, RGB(0, 0, 0));
+    for (int dy = -o; dy <= o; dy += o)
+        for (int dx = -o; dx <= o; dx += o)
+            if (dx || dy) {
+                RECT t = r;
+                OffsetRect(&t, dx, dy);
+                DrawTextW(dc, s.c_str(), (int)s.size(), &t, fmt | DT_NOPREFIX);
+            }
+    SetTextColor(dc, c);
+    DrawTextW(dc, s.c_str(), (int)s.size(), &r, fmt | DT_NOPREFIX);
+}
 static void DrawButton(const DRAWITEMSTRUCT* di) {
-    HDC dc = di->hDC;
     RECT r = di->rcItem;
+    int w = r.right - r.left, h = r.bottom - r.top;
+    HDC dc = CreateCompatibleDC(di->hDC);   // drawn off screen, then copied: no flicker on hover
+    HBITMAP bmp = CreateCompatibleBitmap(di->hDC, w, h);
+    HGDIOBJ oldBmp = SelectObject(dc, bmp);
     FillRect(dc, &r, ArtBrushFor(dc, di->hwndItem));
     LONG_PTR kind = GetWindowLongPtrW(di->hwndItem, GWLP_USERDATA);
-    bool dis = di->itemState & ODS_DISABLED, focus = di->itemState & ODS_FOCUS, down = di->itemState & ODS_SELECTED;
-    wchar_t text[128];
-    GetWindowTextW(di->hwndItem, text, 128);
-    SelectObject(dc, (HFONT)SendMessageW(di->hwndItem, WM_GETFONT, 0, 0));
+    bool dis = di->itemState & ODS_DISABLED, down = di->itemState & ODS_SELECTED, hot = (kind & K_HOT) && !dis;
+    bool focus = (di->itemState & ODS_FOCUS) && !(di->itemState & ODS_NOFOCUSRECT);   // keyboard focus only
+    wchar_t text[256];
+    GetWindowTextW(di->hwndItem, text, 256);
     SetBkMode(dc, TRANSPARENT);
-    SetTextColor(dc, dis ? kDim : kText);
-    HPEN pen = CreatePen(PS_SOLID, std::max(1, S(2)), focus ? kAccent : kEdge);
-    HGDIOBJ op = SelectObject(dc, pen);
-    if (kind & 2) {   // toggle: box + label
-        int b = S(24), y0 = (r.top + r.bottom - b) / 2;
-        HBRUSH fill = CreateSolidBrush(kField);
-        HGDIOBJ ob = SelectObject(dc, fill);
-        Rectangle(dc, r.left + S(2), y0, r.left + S(2) + b, y0 + b);
-        SelectObject(dc, ob);
-        DeleteObject(fill);
-        if (kind & 4) {
-            RECT in = {r.left + S(2) + S(6), y0 + S(6), r.left + S(2) + b - S(6), y0 + b - S(6)};
-            HBRUSH on = CreateSolidBrush(kAccent);
-            FillRect(dc, &in, on);
-            DeleteObject(on);
+    if (kind & K_BOARD) {
+        std::wstring label = text;
+        if (kind & K_TOGGLE) label += (kind & K_ON) ? L":  ON" : L":  OFF";
+        COLORREF c = dis ? kOff : (hot || focus || down) ? kAccent : kText;
+        RECT tr = {S(50), 0, w - S(140), h};   // centred left of the stickers on the decks' right ends
+        if (down) OffsetRect(&tr, S(4), S(4));
+        SelectObject(dc, g_boardFont);
+        auto sub = g_sub.find(GetDlgCtrlID(di->hwndItem));
+        if (sub != g_sub.end() && !sub->second.empty()) {
+            RECT t1 = tr, t2 = tr;
+            t1.bottom = tr.top + h * 64 / 100;
+            t2.top = t1.bottom + S(4);
+            OutlinedText(dc, label, t1, DT_SINGLELINE | DT_BOTTOM | DT_CENTER, c);
+            SelectObject(dc, g_subFont);
+            UINT ell = sub->second.find(L'\\') != std::wstring::npos ? DT_PATH_ELLIPSIS : DT_END_ELLIPSIS;
+            OutlinedText(dc, sub->second, t2, DT_SINGLELINE | DT_TOP | DT_CENTER | ell, dis ? kOff : kText);
+        } else {
+            OutlinedText(dc, label, tr, DT_SINGLELINE | DT_VCENTER | DT_CENTER, c);
         }
-        RECT tr = {r.left + b + S(14), r.top, r.right, r.bottom};
-        DrawTextW(dc, text, -1, &tr, DT_SINGLELINE | DT_VCENTER | DT_LEFT);
-    } else {          // push button
-        HBRUSH fill = CreateSolidBrush(dis ? RGB(18, 20, 26) : down ? RGB(120, 80, 30) : RGB(40, 34, 30));
-        HGDIOBJ ob = SelectObject(dc, fill);
-        RoundRect(dc, r.left + 1, r.top + 1, r.right - 1, r.bottom - 1, S(10), S(10));
-        SelectObject(dc, ob);
-        DeleteObject(fill);
-        DrawTextW(dc, text, -1, &r, DT_SINGLELINE | DT_VCENTER | DT_CENTER);
+    } else if (kind & K_CLOSE) {   // the X is in the art: only a hover ring
+        if (hot || down) {
+            HPEN pen = CreatePen(PS_SOLID, std::max(2, S(5)), kAccent);
+            HGDIOBJ op = SelectObject(dc, pen), ob = SelectObject(dc, GetStockObject(NULL_BRUSH));
+            RoundRect(dc, S(3), S(3), w - S(3), h - S(3), S(16), S(16));
+            SelectObject(dc, op); SelectObject(dc, ob);
+            DeleteObject(pen);
+        }
+    } else {
+        SelectObject(dc, (HFONT)SendMessageW(di->hwndItem, WM_GETFONT, 0, 0));
+        SetTextColor(dc, dis ? kDim : hot ? kAccent : kText);
+        HPEN pen = CreatePen(PS_SOLID, std::max(1, S(3)), focus || hot ? kAccent : kEdge);
+        HGDIOBJ op = SelectObject(dc, pen);
+        if (kind & K_TOGGLE) {   // box + label
+            int b = S(40), y0 = (h - b) / 2;
+            HBRUSH fill = CreateSolidBrush(kField);
+            HGDIOBJ ob = SelectObject(dc, fill);
+            Rectangle(dc, S(3), y0, S(3) + b, y0 + b);
+            SelectObject(dc, ob);
+            DeleteObject(fill);
+            if (kind & K_ON) {
+                RECT in = {S(3) + S(10), y0 + S(10), S(3) + b - S(10), y0 + b - S(10)};
+                HBRUSH on = CreateSolidBrush(kAccent);
+                FillRect(dc, &in, on);
+                DeleteObject(on);
+            }
+            RECT tr = {b + S(24), 0, w, h};
+            DrawTextW(dc, text, -1, &tr, DT_SINGLELINE | DT_VCENTER | DT_LEFT);
+        } else {                 // plain push button
+            HBRUSH fill = CreateSolidBrush(dis ? RGB(18, 20, 26) : down ? RGB(120, 80, 30) : RGB(40, 34, 30));
+            HGDIOBJ ob = SelectObject(dc, fill);
+            RoundRect(dc, 1, 1, w - 1, h - 1, S(16), S(16));
+            SelectObject(dc, ob);
+            DeleteObject(fill);
+            DrawTextW(dc, text, -1, &r, DT_SINGLELINE | DT_VCENTER | DT_CENTER);
+        }
+        SelectObject(dc, op);
+        DeleteObject(pen);
     }
-    SelectObject(dc, op);
-    DeleteObject(pen);
+    BitBlt(di->hDC, r.left, r.top, w, h, dc, 0, 0, SRCCOPY);
+    SelectObject(dc, oldBmp);
+    DeleteObject(bmp);
+    DeleteDC(dc);
 }
 static HWND MakeCheck(const wchar_t* text, int id, int x, int y, int w) {
-    return Make(L"BUTTON", text, BS_AUTOCHECKBOX | WS_TABSTOP, id, x, y, w, 34);
+    return Make(L"BUTTON", text, BS_AUTOCHECKBOX | WS_TABSTOP, id, x, y, w, 60);
 }
 
 static void BrowseIso() {
@@ -699,7 +790,7 @@ static void BrowseIso() {
     of.lpstrFile = file;
     of.nMaxFile = MAX_PATH;
     of.Flags = OFN_FILEMUSTEXIST | OFN_PATHMUSTEXIST;
-    if (GetOpenFileNameW(&of)) SetWindowTextW(g_iso, file);
+    if (GetOpenFileNameW(&of)) { g_isoPath = file; SetSub(ID_ISO_BROWSE, g_isoPath); }
 }
 static std::wstring BrowseFolder() {
     std::wstring r;
@@ -724,22 +815,44 @@ static void BrowseDir() {
     static const wchar_t kSub[] = L"Project Underground";
     const size_t n = wcslen(kSub);
     if (s.size() < n || _wcsicmp(s.c_str() + s.size() - n, kSub)) s += std::wstring(L"\\") + kSub;
-    SetWindowTextW(g_dir, s.c_str());
+    g_dirPath = s;
+    SetSub(ID_DIR_BROWSE, g_dirPath);
 }
 
+// installer boards that only make sense before the build starts
+static void EnableInputs(bool on) {
+    for (int id : {ID_DESKTOP, ID_STARTMENU}) EnableWindow(GetDlgItem(g_wnd, id), on);
+    if (!g_updating)
+        for (int id : {ID_ISO_BROWSE, ID_DIR_BROWSE}) EnableWindow(GetDlgItem(g_wnd, id), on);
+}
 static void Start() {
-    std::wstring iso = g_iso ? GetText(g_iso) : L"", dir = GetText(g_dir);
-    if (!g_updating && !Exists(iso)) { MessageBoxW(g_wnd, L"Choose your Tony Hawk's Underground disc image.", kAppName, MB_OK); return; }
-    if (dir.empty()) return;
+    if (!g_updating && !Exists(g_isoPath)) {
+        MessageBoxW(g_wnd, L"Choose your Tony Hawk's Underground disc image (the DISC IMAGE board).", kAppName, MB_OK);
+        return;
+    }
+    if (g_dirPath.empty()) return;
     g_running = true;
-    EnableWindow(g_install, FALSE);
+    EnableInputs(false);
+    SetBoard(g_install, L"BUILDING...", L"", false);
     bool desk = IsOn(ID_DESKTOP), sm = IsOn(ID_STARTMENU);
-    g_worker = std::thread(Work, iso, dir, desk, sm, g_updating);
+    g_worker = std::thread(Work, g_isoPath, g_dirPath, desk, sm, g_updating);
 }
 
 // After an install: open the launcher.
 static void Launch(const std::wstring& dir) {
     ShellExecuteW(nullptr, L"open", (dir + L"\\launcher.exe").c_str(), L"--launcher", dir.c_str(), SW_SHOWNORMAL);
+}
+
+// Launcher settings controls (shown on the panel over the art when the SETTINGS board is on).
+static HWND g_settingsBtn;
+static const int kSettingIds[] = {ID_FULLSCREEN, ID_FPS60, ID_VSYNC, ID_MONITOR, ID_SCALE, ID_PADS};
+static void ShowSettings(bool on) {
+    g_panel = on;
+    SelectObject(g_artDC, on ? g_artPanelBmp : g_artBmp);
+    g_artBrush = on ? g_panelBrush : g_plainBrush;
+    for (int id : kSettingIds) ShowWindow(GetDlgItem(g_wnd, id), on ? SW_SHOW : SW_HIDE);
+    SetWindowTextW(g_settingsBtn, on ? L"HIDE SETTINGS" : L"SETTINGS");
+    RedrawWindow(g_wnd, nullptr, nullptr, RDW_INVALIDATE | RDW_ERASE | RDW_ALLCHILDREN);
 }
 
 static bool LauncherCommand(HWND h, int id, int code) {
@@ -755,9 +868,12 @@ static bool LauncherCommand(HWND h, int id, int code) {
         if (PlayGame()) DestroyWindow(h);
         else MessageBoxW(h, (L"Could not start " + g_instDir + L"\\underground.exe.").c_str(), kAppName, MB_OK | MB_ICONERROR);
         return true;
+    case ID_SETTINGS:
+        ShowSettings(!g_panel);
+        return true;
     case ID_UPDATE:
         if (g_worker.joinable()) return true;
-        EnableWindow(g_updBtn, FALSE);
+        SetBoard(g_updBtn, L"UPDATING...", L"Downloading version " + Widen(g_upd.tag), false);
         SetWindowTextW(g_status, (L"Downloading version " + Widen(g_upd.tag) + L"...").c_str());
         g_worker = std::thread(DownloadUpdate);
         return true;
@@ -773,7 +889,7 @@ static bool LauncherCommand(HWND h, int id, int code) {
                            L"5-15 minutes.\n\nThen copy the APK to your phone and open it there to install it.",
                         kAppName, MB_OKCANCEL | MB_ICONQUESTION) != IDOK)
             return true;
-        EnableWindow(g_androidBtn, FALSE);
+        SetBoard(g_androidBtn, L"ANDROID", L"Building, see below...", false);
         SetWindowTextW(g_status, L"Android: starting...");
         g_worker = std::thread(BuildAndroid);
         return true;
@@ -799,6 +915,10 @@ static LRESULT CALLBACK WndProc(HWND h, UINT m, WPARAM wp, LPARAM lp) {
         return 0;
     }
     case WM_ERASEBKGND: return 1;
+    case WM_NCHITTEST: {   // borderless: drag the window by the art
+        LRESULT r = DefWindowProcW(h, m, wp, lp);
+        return r == HTCLIENT ? HTCAPTION : r;
+    }
     case WM_CTLCOLOREDIT:
     case WM_CTLCOLORLISTBOX:
         SetTextColor((HDC)wp, kText);
@@ -806,15 +926,19 @@ static LRESULT CALLBACK WndProc(HWND h, UINT m, WPARAM wp, LPARAM lp) {
         return (LRESULT)g_fieldBrush;
     case WM_CTLCOLORSTATIC:
     case WM_CTLCOLORBTN:
-        SetTextColor((HDC)wp, (HWND)lp == g_status ? kDim : kText);
+        SetTextColor((HDC)wp, kText);
         SetBkMode((HDC)wp, TRANSPARENT);
         return (LRESULT)ArtBrushFor((HDC)wp, (HWND)lp);
     case WM_DRAWITEM: DrawButton((const DRAWITEMSTRUCT*)lp); return TRUE;
     case WM_COMMAND:
         if ((HIWORD(wp) == BN_CLICKED || HIWORD(wp) == BN_DOUBLECLICKED) && lp &&
-            (GetWindowLongPtrW((HWND)lp, GWLP_USERDATA) & 2)) {
+            (GetWindowLongPtrW((HWND)lp, GWLP_USERDATA) & K_TOGGLE)) {
             SetOn(LOWORD(wp), !IsOn(LOWORD(wp)));
             wp = MAKEWPARAM(LOWORD(wp), BN_CLICKED);
+        }
+        if (LOWORD(wp) == ID_CLOSE || LOWORD(wp) == ID_QUIT || LOWORD(wp) == IDCANCEL) {   // the art's X, QUIT, Esc
+            PostMessageW(h, WM_CLOSE, 0, 0);
+            return 0;
         }
         if (g_launcher && LauncherCommand(h, LOWORD(wp), HIWORD(wp))) return 0;
         switch (LOWORD(wp)) {
@@ -838,16 +962,16 @@ static LRESULT CALLBACK WndProc(HWND h, UINT m, WPARAM wp, LPARAM lp) {
         if (wp) {
             SetWindowTextW(g_status, (L"Version " + Widen(g_upd.tag) + L" is available (you have " + kVersion +
                                       L"). Update rebuilds the game in a few minutes; saves are kept.").c_str());
-            ShowWindow(g_updBtn, SW_SHOW);
-            EnableWindow(g_updBtn, TRUE);
+            SetBoard(g_updBtn, L"UPDATE TO " + Widen(g_upd.tag), L"Saves and settings are kept", true);
         } else {
             SetWindowTextW(g_status, lp ? (std::wstring(L"Up to date (version ") + kVersion + L").").c_str()
                                         : L"Could not check for updates (offline?).");
+            SetBoard(g_updBtn, lp ? L"UP TO DATE" : L"NO UPDATE CHECK", lp ? L"" : L"Offline?", false);
         }
         return 0;
     case WM_APP_ANDROID:
         if (g_worker.joinable()) g_worker.join();
-        EnableWindow(g_androidBtn, TRUE);
+        SetBoard(g_androidBtn, L"ANDROID", L"Build an APK for your phone", true);
         if (wp) {
             SetWindowTextW(g_status, (L"Android APK ready: " + g_apk).c_str());
             ShellExecuteW(h, nullptr, L"explorer.exe", (L"/select,\"" + g_apk + L"\"").c_str(), nullptr, SW_SHOWNORMAL);
@@ -860,21 +984,22 @@ static LRESULT CALLBACK WndProc(HWND h, UINT m, WPARAM wp, LPARAM lp) {
         if (g_worker.joinable()) g_worker.join();
         if (wp) { DestroyWindow(h); return 0; }
         SetWindowTextW(g_status, L"The update could not be downloaded. Try again later.");
-        EnableWindow(g_updBtn, TRUE);
+        SetBoard(g_updBtn, L"UPDATE TO " + Widen(g_upd.tag), L"Download failed: try again", true);
         return 0;
     case WM_APP_DONE:
         if (g_worker.joinable()) g_worker.join();
         g_running = false;
         if (wp) {
             SetWindowTextW(g_status, (std::wstring(g_updating ? L"Updated to version " : L"Installed version ") + kVersion +
-                                      L" in " + g_doneDir + L". Play opens the launcher (display settings).").c_str());
-            SetWindowTextW(g_install, L"Play");
-            EnableWindow(g_install, TRUE);
+                                      L" in " + g_doneDir + L".").c_str());
+            SetBoard(g_install, L"PLAY", L"Opens the launcher", true);
+            SetFocus(g_install);
         } else {
             g_doneDir.clear();
             SetWindowTextW(g_status, L"Failed. See the message.");
             MessageBoxW(h, g_error.c_str(), kAppName, MB_OK | MB_ICONERROR);
-            EnableWindow(g_install, TRUE);
+            EnableInputs(true);
+            SetBoard(g_install, g_updating ? L"UPDATE" : L"INSTALL", L"Try again", true);
         }
         return 0;
     case WM_CLOSE:
@@ -893,27 +1018,42 @@ static std::wstring DefaultDir() {
 }
 
 static void MakeCombo(int id, const Choice* c, int n, int x, int y, int w, HFONT font = nullptr) {
-    HWND cb = Make(L"COMBOBOX", L"", CBS_DROPDOWNLIST | WS_VSCROLL | WS_TABSTOP, id, x, y, w, 300, font);
+    HWND cb = Make(L"COMBOBOX", L"", CBS_DROPDOWNLIST | WS_VSCROLL | WS_TABSTOP, id, x, y, w, 520, font);
     SetWindowTheme(cb, L"", L"");
     for (int i = 0; i < n; i++) SendMessageW(cb, CB_ADDSTRING, 0, (LPARAM)c[i].label);
 }
 
+static void MakeStatusBar(const wchar_t* text, bool progress) {
+    if (progress) {
+        g_progress = MakeAt(PROGRESS_CLASSW, L"", PBS_SMOOTH, ID_PROGRESS, kBar);
+        SetWindowTheme(g_progress, L"", L"");   // unthemed, so the colours below apply
+        SendMessageW(g_progress, PBM_SETRANGE, 0, MAKELPARAM(0, 100));
+        SendMessageW(g_progress, PBM_SETBARCOLOR, 0, kAccent);
+        SendMessageW(g_progress, PBM_SETBKCOLOR, 0, kField);
+    }
+    g_status = MakeAt(L"STATIC", text, SS_LEFT | SS_CENTERIMAGE | SS_ENDELLIPSIS | SS_NOPREFIX, ID_STATUS, kStatus,
+                      g_smallFont);
+}
+
 static void CreateLauncherControls() {
     InitMonitors();
-    int x = kPanel.left + 30, t = kPanel.top, fw = kPanel.right - kPanel.left - 60, cx = x + 260, cw = fw - 260;
-    HWND play = Make(L"BUTTON", L"Play", BS_DEFPUSHBUTTON | WS_TABSTOP, ID_PLAY, x, t + 130, 240, 64, g_titleFont);
-    g_updBtn = Make(L"BUTTON", L"Update", BS_PUSHBUTTON | WS_TABSTOP, ID_UPDATE, x + 260, t + 130, 200, 64);
-    ShowWindow(g_updBtn, SW_HIDE);
-    g_status = Make(L"STATIC", L"Checking for updates...", SS_LEFT, ID_STATUS, x, t + 205, fw, 50, g_smallFont);
-    MakeCheck(L"Fullscreen", ID_FULLSCREEN, x, t + 296, 220);
-    MakeCheck(L"60 fps", ID_FPS60, x + 240, t + 296, 160);
-    MakeCheck(L"VSync", ID_VSYNC, x + 420, t + 296, 160);
-    MakeCombo(ID_MONITOR, kMonitor, g_nMonitors, cx, t + 366, cw);
-    MakeCombo(ID_SCALE, kScale, 6, cx, t + 402, cw);
-    MakeCombo(ID_PADS, kPads, 4, cx, t + 438, cw);
-    Make(L"BUTTON", L"Logs", BS_PUSHBUTTON | WS_TABSTOP, ID_LOGS, x + fw - 350, t + 560, 170, 36, g_smallFont);
-    Make(L"BUTTON", L"Uninstall", BS_PUSHBUTTON | WS_TABSTOP, ID_UNINSTALL, x + fw - 170, t + 560, 170, 36, g_smallFont);
-    g_androidBtn = Make(L"BUTTON", L"Android...", BS_PUSHBUTTON | WS_TABSTOP, ID_ANDROID, x, t + 560, 200, 36, g_smallFont);
+    HWND play = MakeBoard(0, L"PLAY", ID_PLAY);
+    g_settingsBtn = MakeBoard(1, L"SETTINGS", ID_SETTINGS);
+    g_updBtn = MakeBoard(2, L"UPDATE", ID_UPDATE);
+    SetBoard(g_updBtn, L"UPDATE", L"Checking...", false);
+    g_androidBtn = MakeBoard(3, L"ANDROID", ID_ANDROID);
+    SetSub(ID_ANDROID, L"Build an APK for your phone");
+    MakeBoard(4, L"LOGS", ID_LOGS);
+    MakeBoard(5, L"UNINSTALL", ID_UNINSTALL);
+    SetSub(ID_UNINSTALL, g_instDir);
+    MakeStatusBar(L"Checking for updates...", false);
+    MakeCheck(L"Fullscreen", ID_FULLSCREEN, 260, 780, 380);
+    MakeCheck(L"60 fps", ID_FPS60, 700, 780, 300);
+    MakeCheck(L"VSync", ID_VSYNC, 1060, 780, 300);
+    MakeCombo(ID_MONITOR, kMonitor, g_nMonitors, 720, 880, 780);
+    MakeCombo(ID_SCALE, kScale, 6, 720, 970, 780);
+    MakeCombo(ID_PADS, kPads, 4, 720, 1060, 780);
+    for (int id : kSettingIds) ShowWindow(GetDlgItem(g_wnd, id), SW_HIDE);
     LoadSettings();
     SetFocus(play);
 }
@@ -942,7 +1082,6 @@ int WINAPI wWinMain(HINSTANCE inst, HINSTANCE, PWSTR, int) {
             return 1;
         }
         g_launcher = true;
-        kPanel = {60, 50, 800, 690};
     }
     std::wstring dir = dirArg.empty() ? DefaultDir() : dirArg;
     if (uninstall) return Uninstall(dir);
@@ -961,58 +1100,64 @@ int WINAPI wWinMain(HINSTANCE inst, HINSTANCE, PWSTR, int) {
     }
     g_updating = update;
 
-    // window sized to the art, scaled to ~70% of the work area
+    // borderless window the shape of the art, ~70% of the work area, centred
     RECT wa;
     SystemParametersInfoW(SPI_GETWORKAREA, 0, &wa, 0);
     g_scale = std::min((wa.right - wa.left) * 0.7 / kArtW, (wa.bottom - wa.top) * 0.8 / kArtH);
     int w = S(kArtW), h = S(kArtH);
-    g_font = CreateFontW(-S(22), 0, 0, 0, FW_NORMAL, 0, 0, 0, DEFAULT_CHARSET, 0, 0, CLEARTYPE_QUALITY, 0, L"Segoe UI");
-    g_smallFont = CreateFontW(-S(18), 0, 0, 0, FW_NORMAL, 0, 0, 0, DEFAULT_CHARSET, 0, 0, CLEARTYPE_QUALITY, 0, L"Segoe UI");
-    g_titleFont = CreateFontW(-S(44), 0, 0, 0, FW_BOLD, 0, 0, 0, DEFAULT_CHARSET, 0, 0, CLEARTYPE_QUALITY, 0, L"Segoe UI");
+    auto font = [](int px, int weight, const wchar_t* face) {
+        return CreateFontW(-S(px), 0, 0, 0, weight, 0, 0, 0, DEFAULT_CHARSET, 0, 0, CLEARTYPE_QUALITY, 0, face);
+    };
+    g_font = font(38, FW_NORMAL, L"Segoe UI");
+    g_smallFont = font(32, FW_NORMAL, L"Segoe UI");
+    g_subFont = font(32, FW_SEMIBOLD, L"Segoe UI");
+    g_titleFont = font(76, FW_NORMAL, L"Impact");
+    g_boardFont = font(84, FW_NORMAL, L"Impact");
     g_fieldBrush = CreateSolidBrush(kField);
     BuildArt(w, h);
-    g_artBrush = CreatePatternBrush(g_artBmp);
+    g_artBrush = g_plainBrush = CreatePatternBrush(g_artBmp);
+    g_panelBrush = CreatePatternBrush(g_artPanelBmp);
 
     WNDCLASSW wc = {};
+    wc.style = CS_DROPSHADOW;
     wc.lpfnWndProc = WndProc;
     wc.hInstance = inst;
     wc.hIcon = LoadIconW(inst, MAKEINTRESOURCEW(IDI_APP));
     wc.hCursor = LoadCursorW(nullptr, IDC_ARROW);
     wc.lpszClassName = L"ProjectUndergroundSetup";
     RegisterClassW(&wc);
-    DWORD style = WS_OVERLAPPED | WS_CAPTION | WS_SYSMENU | WS_MINIMIZEBOX;
-    RECT r = {0, 0, w, h};
-    AdjustWindowRect(&r, style, FALSE);
-    g_wnd = CreateWindowW(wc.lpszClassName, launcher ? L"Project Underground" : L"Project Underground Setup", style,
-                          CW_USEDEFAULT, CW_USEDEFAULT, r.right - r.left, r.bottom - r.top, nullptr, nullptr, inst, nullptr);
+    g_wnd = CreateWindowExW(WS_EX_APPWINDOW, wc.lpszClassName,
+                            launcher ? L"Project Underground" : L"Project Underground Setup",
+                            WS_POPUP | WS_SYSMENU | WS_MINIMIZEBOX, wa.left + (wa.right - wa.left - w) / 2,
+                            wa.top + (wa.bottom - wa.top - h) / 2, w, h, nullptr, nullptr, inst, nullptr);
+    SetWindowLongPtrW(MakeAt(L"BUTTON", L"", BS_PUSHBUTTON, ID_CLOSE, kClose), GWLP_USERDATA, K_CLOSE);
     if (launcher) {
         CreateLauncherControls();
         ShowWindow(g_wnd, SW_SHOW);
         g_worker = std::thread(CheckUpdates);
     } else {
-        int x = kPanel.left + 30, t = kPanel.top, fw = kPanel.right - kPanel.left - 60;
-        if (!update) {
-            g_iso = Make(L"EDIT", L"", ES_AUTOHSCROLL | WS_BORDER, ID_ISO_EDIT, x, t + 165, fw - 130, 38);
-            Make(L"BUTTON", L"Browse...", BS_PUSHBUTTON, ID_ISO_BROWSE, x + fw - 120, t + 165, 120, 38);
-        }
-        g_dir = Make(L"EDIT", dir.c_str(), ES_AUTOHSCROLL | WS_BORDER | (update ? ES_READONLY : 0), ID_DIR_EDIT, x,
-                     t + 265, fw - 130, 38);
-        if (!update) Make(L"BUTTON", L"Browse...", BS_PUSHBUTTON, ID_DIR_BROWSE, x + fw - 120, t + 265, 120, 38);
-        MakeCheck(L"Desktop shortcut", ID_DESKTOP, x, t + 335, 260);
-        MakeCheck(L"Start menu shortcut", ID_STARTMENU, x + 280, t + 335, 280);
+        g_isoPath = isoArg;
+        g_dirPath = dir;
+        MakeBoard(0, L"DISC IMAGE", ID_ISO_BROWSE);
+        SetSub(ID_ISO_BROWSE, update ? L"Not needed for an update"
+                              : isoArg.empty() ? L"Click to choose your Xbox (USA) disc image" : isoArg);
+        MakeBoard(1, L"INSTALL FOLDER", ID_DIR_BROWSE);
+        SetSub(ID_DIR_BROWSE, dir);
+        MakeBoard(2, L"DESKTOP ICON", ID_DESKTOP, true);
+        MakeBoard(3, L"START MENU", ID_STARTMENU, true);
         SetOn(ID_DESKTOP, !update);
         SetOn(ID_STARTMENU, !update);
-        g_install = Make(L"BUTTON", update ? L"Update" : L"Install", BS_DEFPUSHBUTTON, ID_INSTALL, x, t + 390, 200, 52);
-        g_progress = Make(PROGRESS_CLASSW, L"", PBS_SMOOTH, ID_PROGRESS, x, t + 465, fw, 20);
-        SendMessageW(g_progress, PBM_SETRANGE, 0, MAKELPARAM(0, 100));
-        SendMessageW(g_progress, PBM_SETBARCOLOR, 0, kAccent);
-        SendMessageW(g_progress, PBM_SETBKCOLOR, 0, kField);
-        g_status = Make(L"STATIC", update ? L"Ready to update. Your game data, settings and saves are kept."
-                                           : L"The game is built on this PC from your disc image (a few minutes; the first "
-                                             L"install also downloads the compiler, about 190 MB).",
-                        SS_LEFT, ID_STATUS, x, t + 500, fw, 80);
+        g_install = MakeBoard(4, update ? L"UPDATE" : L"INSTALL", ID_INSTALL);
+        SetSub(ID_INSTALL, update ? L"Keeps game data, settings and saves" : L"Builds the game on this PC");
+        MakeBoard(5, L"QUIT", ID_QUIT);
+        if (update)   // an update rebuilds the installed game in place: no disc image, same folder
+            for (int id : {ID_ISO_BROWSE, ID_DIR_BROWSE}) EnableWindow(GetDlgItem(g_wnd, id), FALSE);
+        MakeStatusBar(update ? L"Ready to update. Your game data, settings and saves are kept."
+                             : L"The game is built on this PC from your disc image: a few minutes (the first install "
+                               L"also downloads the compiler, about 190 MB).",
+                      true);
         ShowWindow(g_wnd, SW_SHOW);
-        if (g_iso && !isoArg.empty()) SetWindowTextW(g_iso, isoArg.c_str());
+        SetFocus(g_install);
         // started by the game's updater (--update --dir) or with --iso: go straight away
         if ((update && !dirArg.empty()) || (!update && !isoArg.empty())) Start();
     }

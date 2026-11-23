@@ -97,6 +97,15 @@ static DWORD WINAPI window_thread(LPVOID ev) {
     wc.hCursor = LoadCursor(NULL, IDC_ARROW);
     wc.hbrBackground = (HBRUSH)GetStockObject(BLACK_BRUSH);
     wc.lpszClassName = L"UndergroundRecomp";
+    {   /* window/taskbar icon: underground.ico, which the installer puts next to the exe (dev runs have none) */
+        wchar_t ico[MAX_PATH];
+        DWORD n = GetModuleFileNameW(NULL, ico, MAX_PATH);
+        while (n && ico[n - 1] != L'\\') n--;
+        if (n && n + 16 < MAX_PATH) {
+            wcscpy(ico + n, L"underground.ico");
+            wc.hIcon = (HICON)LoadImageW(NULL, ico, IMAGE_ICON, 0, 0, LR_LOADFROMFILE | LR_DEFAULTSIZE);
+        }
+    }
     RegisterClassW(&wc);
     const char *me = getenv("UG_MONITOR");
     int dev_run = GetConsoleWindow() != NULL;

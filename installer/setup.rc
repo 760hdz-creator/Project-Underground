@@ -2,7 +2,7 @@
 #include <winresrc.h>
 
 IDI_APP          ICON   "res/app.ico"
-IDR_INSTALLER_BG RCDATA "res/installer_bg.png"
+IDR_INSTALLER_BG RCDATA "art/src/background.jpg"
 IDR_SETUP_ICON   RCDATA "res/app.ico"
 IDR_PAYLOAD      RCDATA "../dist/payload.zip"
 
