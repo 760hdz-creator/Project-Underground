@@ -44,9 +44,14 @@ A static recompilation by 8gram Labs: the original x86 game code is translated t
   programs and register combiners run as shader interpreters, with shadow maps, fog and texture generation. No
   Direct3D, no DXVK.
 - **High resolution.** The game renders at a multiple of the Xbox's 480 lines: 2x (960 lines) by default, up to 6x.
-- **60 fps.** Frames are paced at 60 fps (the launcher can switch to 30), with VSync on or off.
-- **Launcher.** Play, display settings (fullscreen, monitor, render scale, players), updates, logs, the Android
-  build and uninstall, all on one screen.
+- **60 fps.** Frames are paced at a steady 60 fps (the launcher can switch to 30), with VSync on or off. The game
+  times its logic from real clocks, so it runs at the right speed.
+- **Widescreen.** The game's own 16:9 mode is on by default (the Xbox widescreen setting): a wider view of the
+  level. The original 4:3 is one click away.
+- **Window settings.** Windowed or borderless fullscreen (F11 or Alt+Enter), any monitor, window size presets,
+  keep-aspect or stretch, and sharp output at any Windows display scaling.
+- **Launcher.** Play, display settings (fullscreen, monitor, window size, widescreen, picture fit, render scale,
+  60 fps, VSync, players), updates, logs, the Android build and uninstall, all on one screen.
 - **Builds on your PC, no Visual Studio.** The setup fetches its own compiler (llvm-mingw, about 190 MB, once) and
   builds the game in about a minute. No admin rights needed.
 - **Linux.** The same renderer on Vulkan, SDL3 for the window, sound and controllers, and a `setup.sh` installer
@@ -73,7 +78,8 @@ rebuild the game in place and keep your saves and settings.
 | Saves, loading, cutscene streaming | Working |
 | Sound, music, movies | Working (DirectSound mixed in software) |
 | Renderer: textures, combiners, fog, shadow maps, texgen, depth clamp, polygon offset | Working |
-| Other levels | Not checked yet: renderer gaps (FF lighting, cube maps, some texgen modes, widescreen) may show up |
+| Widescreen 16:9 (the game's own mode), window size, monitor, fullscreen | Working |
+| Other levels | Not checked yet: renderer gaps (FF lighting, cube maps, some texgen modes) may show up |
 | Installer, launcher, updates, uninstall (Windows) | Install, update and uninstall tested |
 | Linux | Boots to New Jersey gameplay; install, update, uninstall and the updater tested (Ubuntu 24.04, WSL) |
 | Android | APK builds and signs on Windows and Linux; not yet run on a phone |

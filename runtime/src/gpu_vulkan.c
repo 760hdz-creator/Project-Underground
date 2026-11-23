@@ -43,6 +43,7 @@ static uint32_t frame_no;
 
 #ifdef _WIN32
 
+static volatile int g_creating;
 static void toggle_fullscreen(HWND h) {
     static WINDOWPLACEMENT saved = {sizeof saved};
     LONG st = GetWindowLongW(h, GWL_STYLE);
@@ -71,6 +72,12 @@ static LRESULT CALLBACK wndproc(HWND h, UINT m, WPARAM w, LPARAM l) {
         if (w == VK_RETURN && (l & (1 << 29))) { toggle_fullscreen(h); return 0; }
         break;
     case WM_SYSCHAR: if (w == VK_RETURN) return 0; break;
+    case 0x02E0: {   /* WM_DPICHANGED (moved to a monitor with another scale): take Windows' suggested rect */
+        const RECT *s = (const RECT *)l;
+        if (!g_creating && !(GetWindowLongW(h, GWL_STYLE) & WS_POPUP))
+            SetWindowPos(h, NULL, s->left, s->top, s->right - s->left, s->bottom - s->top, SWP_NOZORDER | SWP_NOACTIVATE);
+        return 0;
+    }
     default: break;
     }
     return DefWindowProcW(h, m, w, l);
@@ -91,6 +98,16 @@ static BOOL CALLBACK mon_enum(HMONITOR m, HDC dc, LPRECT rc, LPARAM lp) {
 }
 
 static DWORD WINAPI window_thread(LPVOID ev) {
+    {   /* per-monitor DPI aware: else Windows scales a smaller swapchain up (blurry at 125-200% display scaling) and
+         * UG_WINDOW sizes would be in scaled units, not pixels */
+        typedef BOOL(WINAPI * SetCtx)(HANDLE);
+        SetCtx f = (SetCtx)(void *)GetProcAddress(GetModuleHandleW(L"user32.dll"), "SetProcessDpiAwarenessContext");
+        if (f && !f((HANDLE)-4)) LOG("[gpu] DPI awareness not set (error %lu)\n", GetLastError());   /* PER_MONITOR_AWARE_V2 */
+        /* this thread already exists: it keeps the old context unless it is set for the thread too */
+        typedef HANDLE(WINAPI * SetThr)(HANDLE);
+        SetThr t = (SetThr)(void *)GetProcAddress(GetModuleHandleW(L"user32.dll"), "SetThreadDpiAwarenessContext");
+        if (t) t((HANDLE)-4);
+    }
     WNDCLASSW wc = {0};
     wc.lpfnWndProc = wndproc;
     wc.hInstance = GetModuleHandleW(NULL);
@@ -115,13 +132,30 @@ static DWORD WINAPI window_thread(LPVOID ev) {
     HMONITOR hm = mp.found ? MonitorFromRect(&mp.pick, MONITOR_DEFAULTTONEAREST) : MonitorFromPoint(origin, MONITOR_DEFAULTTOPRIMARY);
     MONITORINFO mi = {sizeof mi};
     GetMonitorInfoW(hm, &mi);
+    /* client size: UG_WINDOW=WxH, else 2/3 of the monitor's height at the game's aspect; centred on the monitor */
     int mh = mi.rcMonitor.bottom - mi.rcMonitor.top;
-    int wh = mh * 2 / 3, ww = wh * 4 / 3;
+    int wh = mh * 2 / 3, ww = ug_widescreen() ? wh * 16 / 9 : wh * 4 / 3;
+    const char *wsz = getenv("UG_WINDOW");
+    int qw = 0, qh = 0;
+    if (wsz && sscanf(wsz, "%dx%d", &qw, &qh) == 2 && qw >= 320 && qh >= 240) { ww = qw; wh = qh; }
+    /* the frame at the monitor's own DPI (per-monitor aware: sizes are physical pixels) */
     RECT r = {0, 0, ww, wh};
-    AdjustWindowRect(&r, WS_OVERLAPPEDWINDOW, FALSE);
-    int x = mi.rcWork.left + 32, y = mi.rcWork.top + 32;
+    typedef BOOL(WINAPI * AdjForDpi)(RECT *, DWORD, BOOL, DWORD, UINT);
+    typedef HRESULT(WINAPI * MonDpi)(HMONITOR, int, UINT *, UINT *);
+    AdjForDpi adj = (AdjForDpi)(void *)GetProcAddress(GetModuleHandleW(L"user32.dll"), "AdjustWindowRectExForDpi");
+    HMODULE shc = LoadLibraryW(L"shcore.dll");
+    MonDpi mdpi = shc ? (MonDpi)(void *)GetProcAddress(shc, "GetDpiForMonitor") : NULL;
+    UINT dx = 96, dy = 96;
+    if (adj && mdpi && mdpi(hm, 0, &dx, &dy) == 0) adj(&r, WS_OVERLAPPEDWINDOW, FALSE, 0, dx);
+    else AdjustWindowRect(&r, WS_OVERLAPPEDWINDOW, FALSE);
+    int fw = r.right - r.left, fh = r.bottom - r.top;
+    int fx = (int)(mi.rcWork.right - mi.rcWork.left - fw) / 2, fy = (int)(mi.rcWork.bottom - mi.rcWork.top - fh) / 2;
+    int x = mi.rcWork.left + (fx > 0 ? fx : 0), y = mi.rcWork.top + (fy > 0 ? fy : 0);
+    g_creating = 1;   /* the WM_DPICHANGED sent while the window lands on its monitor must not rescale it */
     g_hwnd = CreateWindowExW(0, wc.lpszClassName, L"Tony Hawk's Underground (recomp)", WS_OVERLAPPEDWINDOW,
-                             x, y, r.right - r.left, r.bottom - r.top, NULL, NULL, wc.hInstance, NULL);
+                             x, y, fw, fh, NULL, NULL, wc.hInstance, NULL);
+    SetWindowPos(g_hwnd, NULL, x, y, fw, fh, SWP_NOZORDER | SWP_NOACTIVATE);
+    g_creating = 0;
     if (dev_run) ShowWindow(g_hwnd, SW_SHOWNOACTIVATE);
     else { ShowWindow(g_hwnd, SW_SHOW); SetForegroundWindow(g_hwnd); }
     if (getenv("UG_FULLSCREEN") && *getenv("UG_FULLSCREEN") == '1') toggle_fullscreen(g_hwnd);
@@ -1679,10 +1713,14 @@ static void submit_and_present(Surface *s) {
         vkCmdClearColorImage(cb, sc_img[img], VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, &black, 1, &rg);
         if (s) {
             barrier(cb, &s->color, VK_IMAGE_ASPECT_COLOR_BIT, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL);
-            /* letterbox the guest surface's aspect into the window */
-            float sa = (float)s->w / s->h, wa = (float)sc_ext.width / sc_ext.height;
+            /* letterbox the guest surface's aspect into the window; widescreen frames are 16:9 anamorphic (4/3 wider
+             * than their pixels); UG_ASPECT=stretch fills the window */
+            static int stretch = -1;
+            if (stretch < 0) { const char *e = getenv("UG_ASPECT"); stretch = e && !strcmp(e, "stretch"); }
+            float sa = (float)s->w / s->h * (ug_widescreen() ? 4.0f / 3.0f : 1.0f), wa = (float)sc_ext.width / sc_ext.height;
             int dw = (int)sc_ext.width, dh = (int)sc_ext.height;
-            if (wa > sa) dw = (int)(dh * sa + 0.5f); else dh = (int)(dw / sa + 0.5f);
+            if (stretch) {}
+            else if (wa > sa) dw = (int)(dh * sa + 0.5f); else dh = (int)(dw / sa + 0.5f);
             int dx = ((int)sc_ext.width - dw) / 2, dy = ((int)sc_ext.height - dh) / 2;
             VkImageBlit bl = {{VK_IMAGE_ASPECT_COLOR_BIT, 0, 0, 1}, {{0, 0, 0}, {s->hw, s->hh, 1}},
                               {VK_IMAGE_ASPECT_COLOR_BIT, 0, 0, 1}, {{dx, dy, 0}, {dx + dw, dy + dh, 1}}};

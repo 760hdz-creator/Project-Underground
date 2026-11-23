@@ -75,6 +75,7 @@ void x86_cpuid(uint32_t *eax, uint32_t *ebx, uint32_t *ecx, uint32_t *edx) {
     }
 }
 uint64_t x86_rdtsc(X86Context *c) { (void)c; return sched_now_100ns() * 733 / 10; /* 733 MHz */ }
+int ug_widescreen(void) { const char *e = getenv("UG_WIDESCREEN"); return !(e && *e == '0'); }
 
 double x87_load80(uint32_t a) {
     uint64_t mant = RD64(a);

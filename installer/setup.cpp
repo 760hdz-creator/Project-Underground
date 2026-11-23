@@ -52,7 +52,7 @@ static const wchar_t kShortcut[] = L"Project Underground.lnk";
 
 enum { ID_ISO_BROWSE = 200, ID_DIR_BROWSE, ID_DESKTOP, ID_STARTMENU, ID_INSTALL, ID_PROGRESS,
        ID_STATUS, ID_PLAY, ID_UPDATE, ID_UNINSTALL, ID_FULLSCREEN, ID_SCALE, ID_PADS, ID_FPS60, ID_VSYNC, ID_LOGS,
-       ID_MONITOR, ID_ANDROID, ID_SETTINGS, ID_QUIT, ID_CLOSE };
+       ID_MONITOR, ID_ANDROID, ID_SETTINGS, ID_QUIT, ID_CLOSE, ID_WINSIZE, ID_SCREEN, ID_FIT };
 #define WM_APP_STATUS (WM_APP + 1)
 #define WM_APP_PROGRESS (WM_APP + 2)
 #define WM_APP_DONE (WM_APP + 3)
@@ -466,6 +466,14 @@ struct Choice { const wchar_t* label; const wchar_t* value; };   // value nullpt
 static const Choice kScale[] = {{L"2x  (960 lines, default)", nullptr}, {L"1x  (480 lines)", L"1"}, {L"3x  (1440 lines)", L"3"},
                                 {L"4x  (1920 lines)", L"4"}, {L"5x  (2400 lines)", L"5"}, {L"6x  (2880 lines)", L"6"}};
 static const Choice kPads[] = {{L"1 (default)", nullptr}, {L"2", L"2"}, {L"3", L"3"}, {L"4", L"4"}};
+// UG_WINDOW: windowed client size (default: 2/3 of the monitor's height at the game's aspect)
+static const Choice kWinSize[] = {{L"Auto (2/3 of the monitor, default)", nullptr}, {L"1280 x 720", L"1280x720"},
+                                  {L"1600 x 900", L"1600x900"}, {L"1920 x 1080", L"1920x1080"},
+                                  {L"2560 x 1440", L"2560x1440"}, {L"3840 x 2160", L"3840x2160"},
+                                  {L"960 x 720  (4:3)", L"960x720"}, {L"1440 x 1080  (4:3)", L"1440x1080"}};
+// UG_WIDESCREEN: the game's own 16:9 mode (Xbox widescreen flag), on by default; UG_ASPECT=stretch fills the window
+static const Choice kScreen[] = {{L"16:9 widescreen (default)", nullptr}, {L"4:3 original", L"0"}};
+static const Choice kFit[] = {{L"Keep aspect, black bars (default)", nullptr}, {L"Stretch to the window", L"stretch"}};
 // Monitors in EnumDisplayMonitors order (the game's UG_MONITOR uses the same order); filled by InitMonitors.
 static Choice kMonitor[10] = {{L"Main monitor (default)", nullptr}};
 static std::wstring g_monLabels[9];
@@ -484,8 +492,9 @@ static BOOL CALLBACK MonEnum(HMONITOR m, HDC, LPRECT, LPARAM) {
     return TRUE;
 }
 struct ComboSetting { int id; const wchar_t* key; const Choice* c; int n; };
-static ComboSetting kCombos[] = {{ID_MONITOR, L"UG_MONITOR", kMonitor, 1}, {ID_SCALE, L"UG_SCALE", kScale, 6},
-                                 {ID_PADS, L"UG_PADS", kPads, 4}};
+static ComboSetting kCombos[] = {{ID_MONITOR, L"UG_MONITOR", kMonitor, 1}, {ID_WINSIZE, L"UG_WINDOW", kWinSize, 8},
+                                 {ID_SCREEN, L"UG_WIDESCREEN", kScreen, 2}, {ID_FIT, L"UG_ASPECT", kFit, 2},
+                                 {ID_SCALE, L"UG_SCALE", kScale, 6}, {ID_PADS, L"UG_PADS", kPads, 4}};
 static void InitMonitors() {
     EnumDisplayMonitors(nullptr, nullptr, MonEnum, 0);
     for (auto& cs : kCombos) if (cs.id == ID_MONITOR) cs.n = g_nMonitors;
@@ -618,10 +627,11 @@ static void BuildArt(int w, int h) {
         SelectObject(pd, op); SelectObject(pd, ob);
         DeleteObject(pen);
         ArtText(pd, {260, 665, 1500, 755}, g_titleFont, kAccent, L"SETTINGS", DT_SINGLELINE | DT_VCENTER);
-        ArtText(pd, {260, 875, 700, 935}, g_font, kText, L"Monitor", DT_SINGLELINE | DT_VCENTER);
-        ArtText(pd, {260, 965, 700, 1025}, g_font, kText, L"Render scale", DT_SINGLELINE | DT_VCENTER);
-        ArtText(pd, {260, 1055, 700, 1115}, g_font, kText, L"Players (gamepads)", DT_SINGLELINE | DT_VCENTER);
-        ArtText(pd, {260, 1300, 1500, 1380}, g_smallFont, kDim,
+        static const wchar_t* rows[] = {L"Monitor", L"Window size", L"Screen", L"Picture", L"Render scale",
+                                        L"Players (gamepads)"};
+        for (int i = 0; i < 6; i++)
+            ArtText(pd, {260, 855 + 75 * i, 700, 915 + 75 * i}, g_font, kText, rows[i], DT_SINGLELINE | DT_VCENTER);
+        ArtText(pd, {260, 1310, 1500, 1390}, g_smallFont, kDim,
                 L"Saved at once to settings.ini in the install folder.", DT_SINGLELINE | DT_VCENTER);
     }
     DeleteDC(pd);
@@ -845,7 +855,8 @@ static void Launch(const std::wstring& dir) {
 
 // Launcher settings controls (shown on the panel over the art when the SETTINGS board is on).
 static HWND g_settingsBtn;
-static const int kSettingIds[] = {ID_FULLSCREEN, ID_FPS60, ID_VSYNC, ID_MONITOR, ID_SCALE, ID_PADS};
+static const int kSettingIds[] = {ID_FULLSCREEN, ID_FPS60, ID_VSYNC, ID_MONITOR, ID_WINSIZE, ID_SCREEN, ID_FIT, ID_SCALE,
+                                  ID_PADS};
 static void ShowSettings(bool on) {
     g_panel = on;
     SelectObject(g_artDC, on ? g_artPanelBmp : g_artBmp);
@@ -896,7 +907,7 @@ static bool LauncherCommand(HWND h, int id, int code) {
     case ID_FULLSCREEN: case ID_FPS60: case ID_VSYNC:
         if (code == BN_CLICKED) SaveSettings();
         return true;
-    case ID_SCALE: case ID_PADS: case ID_MONITOR:
+    case ID_SCALE: case ID_PADS: case ID_MONITOR: case ID_WINSIZE: case ID_SCREEN: case ID_FIT:
         if (code == CBN_SELCHANGE) SaveSettings();
         return true;
     }
@@ -1047,12 +1058,15 @@ static void CreateLauncherControls() {
     MakeBoard(5, L"UNINSTALL", ID_UNINSTALL);
     SetSub(ID_UNINSTALL, g_instDir);
     MakeStatusBar(L"Checking for updates...", false);
-    MakeCheck(L"Fullscreen", ID_FULLSCREEN, 260, 780, 380);
-    MakeCheck(L"60 fps", ID_FPS60, 700, 780, 300);
-    MakeCheck(L"VSync", ID_VSYNC, 1060, 780, 300);
-    MakeCombo(ID_MONITOR, kMonitor, g_nMonitors, 720, 880, 780);
-    MakeCombo(ID_SCALE, kScale, 6, 720, 970, 780);
-    MakeCombo(ID_PADS, kPads, 4, 720, 1060, 780);
+    MakeCheck(L"Fullscreen", ID_FULLSCREEN, 260, 772, 380);
+    MakeCheck(L"60 fps", ID_FPS60, 700, 772, 300);
+    MakeCheck(L"VSync", ID_VSYNC, 1060, 772, 300);
+    MakeCombo(ID_MONITOR, kMonitor, g_nMonitors, 720, 860, 780);
+    MakeCombo(ID_WINSIZE, kWinSize, 8, 720, 935, 780);
+    MakeCombo(ID_SCREEN, kScreen, 2, 720, 1010, 780);
+    MakeCombo(ID_FIT, kFit, 2, 720, 1085, 780);
+    MakeCombo(ID_SCALE, kScale, 6, 720, 1160, 780);
+    MakeCombo(ID_PADS, kPads, 4, 720, 1235, 780);
     for (int id : kSettingIds) ShowWindow(GetDlgItem(g_wnd, id), SW_HIDE);
     LoadSettings();
     SetFocus(play);

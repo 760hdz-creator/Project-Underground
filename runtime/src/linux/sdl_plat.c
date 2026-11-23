@@ -7,6 +7,7 @@
 #ifdef __ANDROID__
 void touch_event(uint32_t type, uint64_t id, float nx, float ny);   /* touch.c */
 #endif
+int ug_widescreen(void);   /* main.c (rt.h is not included here) */
 
 #define LOG(...) do { fprintf(stderr, __VA_ARGS__); fflush(stderr); } while (0)
 
@@ -58,9 +59,12 @@ HWND linux_create_window(void) {
     SDL_free(ids);
     SDL_Rect r = {0, 0, 1920, 1080};
     SDL_GetDisplayBounds(pick, &r);
-    const char *ws = getenv("UG_WIDESCREEN");
+    /* UG_WINDOW=WxH, else 2/3 of the display's height at the game's aspect (16:9 widescreen or 4:3) */
     int wh = r.h * 2 / 3;
-    int ww = ws && *ws == '0' ? wh * 4 / 3 : (int)((double)wh * r.w / r.h);
+    int ww = ug_widescreen() ? wh * 16 / 9 : wh * 4 / 3;
+    const char *wsz = getenv("UG_WINDOW");
+    int qw = 0, qh = 0;
+    if (wsz && sscanf(wsz, "%dx%d", &qw, &qh) == 2 && qw >= 320 && qh >= 240) { ww = qw; wh = qh; }
     SDL_PropertiesID p = SDL_CreateProperties();
     SDL_SetStringProperty(p, SDL_PROP_WINDOW_CREATE_TITLE_STRING, "Tony Hawk's Underground (recomp)");
     SDL_SetNumberProperty(p, SDL_PROP_WINDOW_CREATE_X_NUMBER, SDL_WINDOWPOS_CENTERED_DISPLAY(pick));

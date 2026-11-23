@@ -29,8 +29,12 @@ Gauntlet's installer (G:\Project Gauntlet\docs\installer.md) without its Visual 
     Start menu / Install / Quit; launcher = Play / Settings (panel over the left art) / Update / Android / Logs /
     Uninstall. Status, progress and version sit on the bottom metal bar. The game window loads underground.ico.
 - Launcher: Play (UG_NOUPDATE=1), update check, settings to `settings.ini [settings]` (UG_FULLSCREEN, UG_FPS=30 when
-  60 fps is off, UG_VSYNC=0 when VSync is off, UG_MONITOR, UG_SCALE, UG_PADS; a default deletes the key; the game's
-  main.c load_settings applies keys not already in the environment), Logs, Uninstall.
+  60 fps is off, UG_VSYNC=0 when VSync is off, UG_MONITOR, UG_WINDOW=WxH (windowed client size in pixels; default 2/3
+  of the monitor's height at the game's aspect, centred), UG_WIDESCREEN=0 (4:3; default on: the Xbox widescreen video
+  flag, the game renders 16:9 anamorphic and the frame is shown at 16:9), UG_ASPECT=stretch (fill the window), UG_SCALE,
+  UG_PADS; a default deletes the key; the game's main.c load_settings applies keys not already in the environment),
+  Logs, Uninstall. The game window is per-monitor DPI aware (sizes are physical pixels; no blurry upscale at 125-200%
+  display scaling). F11 / Alt+Enter toggle borderless fullscreen on the window's monitor.
 - Game updater (`runtime/src/updater.c`): installed builds GET forge `8gramlabs/Project-Underground` releases/latest;
   a newer tag asks, downloads `ProjectUnderground-Setup-*.exe`, runs `--update --dir <install>`. Off for dev builds,
   UG_INPUT runs, UG_NOUPDATE=1. Test overrides UG_UPDATE_REPO / UG_UPDATE_ASSET / UG_UPDATE_API.

@@ -598,7 +598,10 @@ K(24, ExQueryNonVolatileSetting) {
     uint32_t idx = ARG(0), v = 0;
     switch (idx) {
     case 7: v = 1; break;            /* XC_LANGUAGE: English */
-    case 8: v = 0x00400000; break;   /* XC_VIDEO: widescreen off, 480p allowed */
+    case 8:                          /* XC_VIDEO: 0x00400000 = 60 Hz; | 0x00010000 = widescreen (ug_widescreen: the
+                                      * game then renders 16:9 anamorphic, gpu_vulkan.c presents it at 16:9) */
+        v = 0x00400000 | (ug_widescreen() ? 0x00010000 : 0);
+        break;
     case 9: v = 0; break;            /* XC_AUDIO */
     case 0x103: v = 1; break;        /* XC_FACTORY_GAME_REGION: NA */
     case 0x104: v = 0x00400100; break; /* XC_FACTORY_AV_REGION: NTSC-M */

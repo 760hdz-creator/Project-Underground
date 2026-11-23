@@ -25,6 +25,10 @@ extern int g_log_kernel;
 #define LOG(...) do { fprintf(stderr, __VA_ARGS__); fflush(stderr); } while (0)
 _Noreturn void rt_fatal(const char *fmt, ...);
 
+/* display settings (main.c): UG_WIDESCREEN (default on, "0" = the original 4:3) sets the Xbox widescreen video flag,
+ * so the game renders 16:9 anamorphic and the frame is presented at 16:9 */
+int ug_widescreen(void);
+
 /* host gamepads (pad_sdl.c): XINPUT_STATE layout; 0 = ok, 1167 = not connected */
 typedef struct {
     uint16_t wButtons; uint8_t bLeftTrigger, bRightTrigger; int16_t sThumbLX, sThumbLY, sThumbRX, sThumbRY;
