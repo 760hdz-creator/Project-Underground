@@ -1,0 +1,4 @@
+1EA6E0 bink_setup
+1EAB60 bink_blit
+1EA650 bink_tune
+1EAE0C bink_copy

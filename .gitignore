@@ -4,3 +4,5 @@
 /out/
 /toolchain/
 /extracted/
+/game
+__pycache__/

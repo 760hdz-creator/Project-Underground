@@ -1,0 +1,39 @@
+# Guest functions replaced by host implementations: <va> <name>
+# XDK 5659 addresses found with tools/oovpa_scan.py (byte signatures); the runtime dispatches
+# x86_hle(c, va) on the VA (runtime/src/hle.c, dsound.c).
+
+# XPP (USB input). THUG polls XInputOpen per port; it never calls XGetDevices / XGetDeviceChanges.
+200AF3 XInitDevices
+201592 XInputOpen
+2015E8 XInputClose
+2015F4 XInputGetState
+201667 XInputSetState
+
+# DSOUND C API (runtime/src/dsound.c). These are every DSOUND function the game and Bink call
+# directly; the rest of DSOUND stays lifted (only reachable from these or from CRT static init).
+1C087D DirectSoundCreate
+1C08C4 DirectSoundCreateBuffer
+1C091B DirectSoundCreateStream
+1BF5E8 DirectSoundDoWork
+1BE541 IDirectSound_Release
+1BF482 IDirectSound_DownloadEffectsImage
+1C0693 IDirectSound_CreateSoundBuffer
+1C06B7 IDirectSound_SetI3DL2Listener
+1BE55C IDirectSoundBuffer_Release
+1BE557 IDirectSoundBuffer_Unlock
+1BF4A9 IDirectSoundBuffer_SetVolume
+1BF4C5 IDirectSoundBuffer_SetHeadroom
+1BF4E1 IDirectSoundBuffer_SetMixBinVolumes
+1BF4FD IDirectSoundBuffer_Play
+1BF521 IDirectSoundBuffer_Stop
+1BF539 IDirectSoundBuffer_GetStatus
+1BF555 IDirectSoundBuffer_GetCurrentPosition
+1BF575 IDirectSoundBuffer_SetCurrentPosition
+1BF591 IDirectSoundBuffer_Lock
+1BF9F5 IDirectSoundBuffer_SetFrequency
+1BFA11 IDirectSoundBuffer_SetMixBins
+1BFF68 IDirectSoundBuffer_SetBufferData
+1BF5C1 IDirectSoundStream_SetVolume
+1BF5C6 IDirectSoundStream_SetMixBins
+1BF5CB IDirectSoundStream_Pause
+1BF5D0 IDirectSoundStream_FlushEx
