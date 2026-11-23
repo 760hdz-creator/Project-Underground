@@ -190,7 +190,7 @@ print(','.join(ev))")" UG_SHOT=1200 ./out/underground.exe   (NJ level by ~frame 
 - INSTALLER ART (2026-11-23, user's art): background.jpg + icon (installer/art/src). Borderless skateboard-button UI
   in setup.cpp (docs/installer.md "UI"); previews checked (setup, launcher, settings panel) and a full --iso install
   ran OK with it. Game window icon = underground.ico. TODO before release: rebuild the Android kit in WSL
-  (tools/build_android.sh) so template.apk carries the new ic_launcher.png, copy to dist\_cachendroid-kit, and
+  (tools/build_android.sh) so template.apk carries the new ic_launcher.png, copy to dist\_cache\android-kit, and
   the Linux package (icon.png changed). Launcher hover/clicks by hand still untested.
 - Not pushed since the initial commits (user rule: push only when asked).
 - Repos: origin gitlab.com/octagram-labs-group/Project-Underground, forge 8gramlabs/Project-Underground (both public).
