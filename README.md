@@ -80,7 +80,8 @@ How it works: the pack names its files by PS2 texture hashes. The Xbox version k
   used only when it is clearly the same picture, and flat or ambiguous textures keep the original. In New Jersey
   about 600 of 870 detailed textures find their HD version.
 
-The pack was made from the lower-resolution PS2 textures, so the gain over the Xbox originals is modest.
+The pack's textures have up to 4x the resolution: road surfaces, grass, wood and walls are visibly sharper up close.
+Anisotropic filtering (16x, `UG_ANISO`) keeps that detail on surfaces seen at an angle.
 
 ## The installer and launcher
 

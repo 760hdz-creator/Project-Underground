@@ -213,7 +213,7 @@ print(','.join(ev))")" UG_SHOT=1200 ./out/underground.exe   (NJ level by ~frame 
   (git-ignored). I8 textures: exact PS2 TEX0 hash as in Gauntlet (NJ 79/83). DXT: PS2 GS hashes can't be rebuilt
   -> picture matching (runtime/src/hdtex.c,
   docs/installer.md "HD texture packs"): UG_HDTEX=<folder>, F10 toggle, UG_SHOTAB A/B shots, UG_HDLOG. NJ: 597
-  matched / 272 skipped, 60 fps, A/B correct; gain modest (pack is upscaled PS2 art). Launcher "HD texture pack" row,
+  matched / 272 skipped, 60 fps, A/B correct (after the UG_SHOTAB off-by-one fix 9782935: earlier A/B pairs were HD vs HD); visibly sharper roads/grass/wood. UG_ANISO (16x default) added. Launcher "HD texture pack" row,
   Linux setup.sh --hd. Not done: Android (pack not in the APK), other levels' A/B.
 - Pushed to both remotes 2026-11-23 (README, avatars, display settings, level cheat). HD textures: local commit,
   push when the user says. No release until all three ports are ready.
