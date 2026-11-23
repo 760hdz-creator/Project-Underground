@@ -79,9 +79,20 @@ print(','.join(ev))")" UG_SHOT=1200 ./out/underground.exe   (NJ level by ~frame 
     sky in view. A/B runs inconclusive (UG_SKIPMODE=2, UG_SKIPTEXMAT=1: the sky dome itself uses texture matrices, so
     skipping texmat draws removes the sky). Not texgen (no draw sets TEXGEN 0x3C0..). stage_tex divides by q per
     fragment. Left for later.
-  - LEAD: texmat draws bind stage 1 = colour format 0x2E (linear depth texture: the shadow map; tex fmt 00012E29).
-    tex_format() has no 0x2E -> stage unbound -> skater/ped shadows missing. Implement depth-texture sampling with
-    the NV2A shadow compare (TEX_CONTROL0 / shadow func), sampling the depth RT surface.
+  - DONE 2026-11-23: shadow maps. Depth formats 0x2A/0x2C/0x2E/0x30 sample the host depth surface at that address
+    (ZSurface.dview, depth-only view); shader stage mode 2 (3D projective) on a depth format = shadow stage (tmode 4).
+    Compare is STORED op REF (func 0x1E6C, D3D order never/less/eq/le/gt/ne/ge/always), ref = r/q / zmax clamped to
+    [0,1]. THUG: skater rendered into a 256x256 depth surface (035B7000 CAS, 03311000 levels), receivers multiply dst by
+    0.75 + 0.25*shadow (skater self-shadow) or t1 + 0.6 (world sectors, only some sectors, e.g. alleys).
+    Also fixed: depth clamp enabled (NV2A does not clip z; receivers were clipped), polygon offset implemented
+    (fill enable 0x0338, factor 0x0384, units 0x0388; receivers use -2/-4), TF_DEPTH sorts after DXT (size path).
+  - OPEN: one shot showed a hard-edged darker rectangle on a pool floor (receiver sector darkened as a whole: ref >= 1
+    outside the light frustum?). Check with UG_DBGCOLOR=7 there. Debug: UG_DBGCOLOR=6 (r = fract(ref*16), g = stored
+    depth < 1, b = ref > stored), 7 (uv, ref/4 of shadow draws; other draws white), UG_SHADOWNOZ=1 (no z test/cull on
+    shadow draws). Draw log now prints all 4 stage modes, shader prog, z func and polygon offset.
+  - PERF NOTE: during the intro cutscene the 02778000/02AFC000 targets flip between 640x480 and 640x420 every frame
+    (~3000 recreations, each clears; zeta recreation now does vkDeviceWaitIdle for its depth view). Key surfaces by
+    address with the max size and render the clip size as a sub-rect instead.
   - Debug env added: UG_SKIPFMT=<hex>, UG_SKIPMODE=<m>, UG_SKIPTEXMAT=1 (both drop draws in windows where
     ((frame+150)/300) is odd; shot N shows frame N-1), UG_DRAWLOG prints fog, texgen, texmat-stage formats, pos range.
 - Oracle (all leaves): 2228 pass, 17 fail, 887 skip. Explained: ret imm16 sign (unicorn bug: 19430, 224EF, 3DC24,
@@ -89,7 +100,8 @@ print(','.join(ev))")" UG_SHOT=1200 ./out/underground.exe   (NJ level by ~frame 
   6A330, 78820/1C5395 (st0 nan vs inf), 1945D0 (x87 top), 1C5FA7, 1F8A78.
 
 ## Next
-1. Shadow-map depth texture (fmt 0x2E, above). Then FF lighting (0x0314), texgen, cube maps; sky wedge (cosmetic).
+1. Surface size thrash (perf note above). FF lighting (0x0314), texgen (stage-1 texgen 0x8512 reflection map seen on
+   texmat draws: env mapping, not implemented), cube maps; sky wedge (cosmetic); pool-floor rectangle.
 2. Renderer gaps: shader stage modes other than 2D/pass-through (mode 2 seen), cube maps, fixed-function lighting
    (0x0314 = 1 seen), fog, MSAA, widescreen, CPU-drawn loading bar (writes guest framebuffer RAM directly).
 3. Oracle fails above. Unimplemented lifter sites (46: enter, segment movs, fnsave/frstor).

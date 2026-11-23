@@ -45,6 +45,9 @@ extern uint32_t g_kreg[0x800];
 #define K_BLEND_COLOR      0x034C
 #define K_BLEND_EQUATION   0x0350
 #define K_DEPTH_FUNC       0x0354
+#define K_POLY_OFFSET_FILL 0x0338
+#define K_POLY_OFFSET_FACTOR 0x0384
+#define K_POLY_OFFSET_UNITS 0x0388
 #define K_COLOR_MASK       0x0358
 #define K_DEPTH_MASK       0x035C
 #define K_STENCIL_MASK     0x0360
@@ -85,6 +88,7 @@ extern uint32_t g_kreg[0x800];
 #define K_COMB_COLOR_OCW   0x1E40   /* [8] */
 #define K_COMB_CONTROL     0x1E60
 #define K_SHADER_STAGE_PROG 0x1E70
+#define K_SHADOW_FUNC      0x1E6C   /* SET_SHADOW_COMPARE_FUNC: 0 never, 1 less, 2 equal, 3 lequal, 4 greater, 5 notequal, 6 gequal, 7 always */
 #define K_SHADER_OTHER_IN  0x1E78
 #define K_TRANSFORM_MODE   0x1E94   /* bits 1:0: 0 fixed function, 2 vertex program */
 #define K_CLIP_MIN         0x0394   /* float: depth range min (Z-buffer units) */

@@ -23,6 +23,7 @@
 #define XXH_INLINE_ALL
 #include "xxhash.h"
 
+static int has_depth_clamp;
 static int g_scale = 2;   /* UG_SCALE=1..8: host render-target scale over the guest resolution */
 
 static HWND g_hwnd;
@@ -352,7 +353,7 @@ typedef struct {
     Img color;
     uint32_t last_frame;
 } Surface;
-typedef struct { uint32_t addr; int w, h; Img depth; } ZSurface;
+typedef struct { uint32_t addr; int w, h; Img depth; VkImageView dview; } ZSurface;   /* dview: depth aspect only (shadow maps) */
 static Surface rts[16]; static int n_rts;
 static ZSurface zss[8]; static int n_zss;
 static Surface *cur_rt;
@@ -436,11 +437,15 @@ static ZSurface *get_zs(uint32_t addr, int w, int h) {
     ZSurface *z = NULL;
     for (int i = 0; i < n_zss; i++) if (zss[i].addr == addr) z = &zss[i];
     if (!z) z = n_zss < 8 ? &zss[n_zss++] : &zss[0];
+    if (z->dview) { vkDeviceWaitIdle(dev); vkDestroyImageView(dev, z->dview, 0); z->dview = 0; }   /* rare: size change */
     img_destroy_later(&z->depth);
     z->addr = addr; z->w = w; z->h = h;
     if (!img_create(&z->depth, w * g_scale, h * g_scale, 1, depth_fmt,
-                    VK_IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT | VK_IMAGE_USAGE_TRANSFER_DST_BIT,
+                    VK_IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT | VK_IMAGE_USAGE_TRANSFER_DST_BIT | VK_IMAGE_USAGE_SAMPLED_BIT,
                     VK_IMAGE_ASPECT_DEPTH_BIT | VK_IMAGE_ASPECT_STENCIL_BIT)) return NULL;
+    VkImageViewCreateInfo dvi = {VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO, 0, 0, z->depth.img, VK_IMAGE_VIEW_TYPE_2D, depth_fmt,
+                                 {0}, {VK_IMAGE_ASPECT_DEPTH_BIT, 0, 1, 0, 1}};
+    VKC(vkCreateImageView(dev, &dvi, 0, &z->dview));
     clear_image(&z->depth, VK_IMAGE_ASPECT_DEPTH_BIT | VK_IMAGE_ASPECT_STENCIL_BIT);
     LOG("[gpu] depth surface %08X %dx%d\n", addr, w, h);
     return z;
@@ -499,7 +504,7 @@ static void swizzle_tables(int w, int h, uint32_t *xs, uint32_t *ys) {
 }
 
 enum { TF_NONE, TF_Y8, TF_AY8, TF_A8, TF_A8Y8, TF_1555, TF_X555, TF_4444, TF_565, TF_8888, TF_X888, TF_I8,
-       TF_ABGR, TF_BGRA, TF_RGBA, TF_DXT1, TF_DXT3, TF_DXT5 };
+       TF_ABGR, TF_BGRA, TF_RGBA, TF_DXT1, TF_DXT3, TF_DXT5, TF_DEPTH };
 typedef struct { int kind, bpp, swizzled; } TexFmt;
 
 static TexFmt tex_format(uint32_t c) {
@@ -529,6 +534,10 @@ static TexFmt tex_format(uint32_t c) {
     case 0x1E: f.kind = TF_X888; f.bpp = 4; f.swizzled = 0; break;
     case 0x1F: f.kind = TF_A8; f.bpp = 1; f.swizzled = 0; break;
     case 0x20: f.kind = TF_A8Y8; f.bpp = 2; f.swizzled = 0; break;
+    case 0x2A: f.kind = TF_DEPTH; f.bpp = 4; break;                   /* depth X8_Y24 fixed (shadow maps) */
+    case 0x2C: f.kind = TF_DEPTH; f.bpp = 2; break;                   /* depth Y16 fixed */
+    case 0x2E: f.kind = TF_DEPTH; f.bpp = 4; f.swizzled = 0; break;
+    case 0x30: f.kind = TF_DEPTH; f.bpp = 2; f.swizzled = 0; break;
     case 0x3A: f.kind = TF_ABGR; f.bpp = 4; break;
     case 0x3B: f.kind = TF_BGRA; f.bpp = 4; break;
     case 0x3C: f.kind = TF_RGBA; f.bpp = 4; break;
@@ -655,7 +664,13 @@ static int create_texture(TexEntry *e, TexFmt f, int levels, const uint32_t *pal
 }
 
 /* stage i -> image view (or 0); *rect = linear texture (unnormalized coordinates) */
-static VkImageView get_texture(int i, int *rect, int *tw, int *th) {
+static ZSurface *find_zs(uint32_t addr) {
+    for (int i = 0; i < n_zss; i++) if (zss[i].addr == addr && zss[i].depth.img) return &zss[i];
+    return NULL;
+}
+
+/* stage i -> image view (or 0); *rect = linear texture (unnormalized coordinates); *zmax > 0: depth texture */
+static VkImageView get_texture(int i, int *rect, int *tw, int *th, float *zmax) {
     uint32_t fmtw = KREG(K_TEX_FORMAT(i));
     uint32_t dma = KREG((fmtw & 3) == 2 ? K_DMA_B : K_DMA_A);
     uint32_t addr = (nv2a_dma_base(dma) + KREG(K_TEX_OFFSET(i))) & 0x03FFFFFF;
@@ -676,7 +691,7 @@ static VkImageView get_texture(int i, int *rect, int *tw, int *th) {
     }
     int w, h, levels;
     uint32_t pitch = 0;
-    if (f.swizzled || f.kind >= TF_DXT1) {
+    if (f.swizzled || (f.kind >= TF_DXT1 && f.kind <= TF_DXT5)) {
         w = 1 << ((fmtw >> 20) & 15); h = 1 << ((fmtw >> 24) & 15);
         levels = (fmtw >> 16) & 15;
         if (levels < 1) levels = 1;
@@ -688,6 +703,24 @@ static VkImageView get_texture(int i, int *rect, int *tw, int *th) {
     }
     if (w <= 0 || h <= 0 || w > 4096 || h > 4096) return 0;
     *tw = w; *th = h;
+    if (f.kind == TF_DEPTH) {   /* shadow map: sample the host depth surface at this address */
+        ZSurface *z = find_zs(addr);
+        {
+            static uint32_t seen[8]; static int ns;
+            int k = 0;
+            while (k < ns && seen[k] != addr) k++;
+            if (k == ns && ns < 8) { seen[ns++] = addr; LOG("[gpu] depth texture %08X -> %s\n", addr, z ? "host depth surface" : "none"); }
+        }
+        if (!z || z == cur_zs) {
+            static int warned;
+            if (!warned++) LOG("[gpu] depth texture %08X has no host depth surface (or is bound)\n", addr);
+            return 0;
+        }
+        end_rendering();
+        barrier(CMD(), &z->depth, VK_IMAGE_ASPECT_DEPTH_BIT | VK_IMAGE_ASPECT_STENCIL_BIT, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
+        *zmax = f.bpp == 2 ? 65535.0f : 16777215.0f;
+        return z->dview;
+    }
     /* render-to-texture: sample the host surface (not while it is the bound target) */
     Surface *s = find_rt(addr);
     if (s) {
@@ -752,7 +785,7 @@ static VkImageView get_texture(int i, int *rect, int *tw, int *th) {
 /* ---- samplers ---- */
 typedef struct { uint32_t address, filter, border; VkSampler s; } SamplerEntry;
 static SamplerEntry samplers[128]; static int n_samplers;
-static VkSampler blit_sampler;
+static VkSampler blit_sampler, depth_sampler;
 
 static VkSamplerAddressMode addr_mode(uint32_t m) {
     switch (m) {
@@ -848,7 +881,7 @@ static VkPipeline get_pipeline(const PipeKey *k) {
                   k->topo == KTOPO_LINES ? VK_PRIMITIVE_TOPOLOGY_LINE_LIST : VK_PRIMITIVE_TOPOLOGY_POINT_LIST;
     VkPipelineViewportStateCreateInfo vp = {VK_STRUCTURE_TYPE_PIPELINE_VIEWPORT_STATE_CREATE_INFO, 0, 0, 1, 0, 1, 0};
     VkPipelineRasterizationStateCreateInfo rs = {VK_STRUCTURE_TYPE_PIPELINE_RASTERIZATION_STATE_CREATE_INFO};
-    rs.polygonMode = VK_POLYGON_MODE_FILL; rs.lineWidth = 1.0f;
+    rs.polygonMode = VK_POLYGON_MODE_FILL; rs.lineWidth = 1.0f; rs.depthClampEnable = has_depth_clamp;
     VkPipelineMultisampleStateCreateInfo ms = {VK_STRUCTURE_TYPE_PIPELINE_MULTISAMPLE_STATE_CREATE_INFO};
     ms.rasterizationSamples = VK_SAMPLE_COUNT_1_BIT;
     VkPipelineDepthStencilStateCreateInfo ds = {VK_STRUCTURE_TYPE_PIPELINE_DEPTH_STENCIL_STATE_CREATE_INFO};
@@ -866,7 +899,8 @@ static VkPipeline get_pipeline(const PipeKey *k) {
                             VK_DYNAMIC_STATE_FRONT_FACE, VK_DYNAMIC_STATE_DEPTH_TEST_ENABLE, VK_DYNAMIC_STATE_DEPTH_WRITE_ENABLE,
                             VK_DYNAMIC_STATE_DEPTH_COMPARE_OP, VK_DYNAMIC_STATE_STENCIL_TEST_ENABLE, VK_DYNAMIC_STATE_STENCIL_OP,
                             VK_DYNAMIC_STATE_STENCIL_COMPARE_MASK, VK_DYNAMIC_STATE_STENCIL_WRITE_MASK,
-                            VK_DYNAMIC_STATE_STENCIL_REFERENCE, VK_DYNAMIC_STATE_BLEND_CONSTANTS};
+                            VK_DYNAMIC_STATE_STENCIL_REFERENCE, VK_DYNAMIC_STATE_BLEND_CONSTANTS,
+                            VK_DYNAMIC_STATE_DEPTH_BIAS, VK_DYNAMIC_STATE_DEPTH_BIAS_ENABLE};
     VkPipelineDynamicStateCreateInfo dy = {VK_STRUCTURE_TYPE_PIPELINE_DYNAMIC_STATE_CREATE_INFO, 0, 0,
                                            sizeof dyn / sizeof dyn[0], dyn};
     VkFormat cf = VK_FORMAT_R8G8B8A8_UNORM;
@@ -964,6 +998,12 @@ static int vk_init(void) {
     VkPhysicalDeviceVulkan13Features f13 = {VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_1_3_FEATURES};
     f13.dynamicRendering = VK_TRUE; f13.synchronization2 = VK_TRUE;
     VkPhysicalDeviceFeatures2 f2 = {VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_FEATURES_2, &f13};
+    {   /* NV2A does not clip against the depth range (xemu enables depth clamp too) */
+        VkPhysicalDeviceFeatures have;
+        vkGetPhysicalDeviceFeatures(pdev, &have);
+        f2.features.depthClamp = have.depthClamp;
+        has_depth_clamp = have.depthClamp;
+    }
     float prio = 1.0f;
     VkDeviceQueueCreateInfo qci = {VK_STRUCTURE_TYPE_DEVICE_QUEUE_CREATE_INFO, 0, 0, qfam, 1, &prio};
     const char *dexts[] = {VK_KHR_SWAPCHAIN_EXTENSION_NAME};
@@ -1022,6 +1062,7 @@ static int vk_init(void) {
     sci2.magFilter = sci2.minFilter = VK_FILTER_NEAREST;
     sci2.addressModeU = sci2.addressModeV = sci2.addressModeW = VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE;
     VKC(vkCreateSampler(dev, &sci2, 0, &blit_sampler));
+    VKC(vkCreateSampler(dev, &sci2, 0, &depth_sampler));   /* nearest: the shadow compare runs in the shader */
     fi = 0;
     frame_begin();
     /* 1x1 white texture for unused stages */
@@ -1138,27 +1179,40 @@ static void draw_impl(int topo, const KVertex *v, uint32_t nv, const uint32_t *i
         uint32_t mode = (prog >> (t * 5)) & 31;
         if (!(KREG(K_TEX_CONTROL0(t)) & 0x40000000u) || mode == 0) continue;
         if (mode == 4) { u->tmode[t] = 3; continue; }
-        if (mode != 1) {
+        /* mode 2 (3D projective) on a depth format = shadow map; volume textures are not supported yet */
+        int depth_fmt_tex = tex_format((KREG(K_TEX_FORMAT(t)) >> 8) & 0xFF).kind == TF_DEPTH;
+        if (mode != 1 && !(mode == 2 && depth_fmt_tex)) {
             static uint32_t warned;
             if (!(warned & (1u << mode))) { warned |= 1u << mode; LOG("[gpu] shader stage mode %u not implemented\n", mode); }
             continue;
         }
         int rect = 0, tw = 1, th = 1;
-        VkImageView view = get_texture(t, &rect, &tw, &th);
+        float zmax = 0;
+        VkImageView view = get_texture(t, &rect, &tw, &th, &zmax);
         if (!view) continue;
         ii[t].imageView = view;
-        ii[t].sampler = get_sampler(t, rect);
-        u->tmode[t] = rect ? 2 : 1;
+        ii[t].sampler = zmax > 0 ? depth_sampler : get_sampler(t, rect);
+        u->tmode[t] = zmax > 0 ? 4 : rect ? 2 : 1;
         u->tsz[t][0] = 1.0f / tw; u->tsz[t][1] = 1.0f / th;
+        if (zmax > 0) {   /* shadow compare: tsz.z = 1/zmax (texcoord z is in Z-buffer units), tsz.w = compare func */
+            u->tsz[t][2] = 1.0f / zmax; u->tsz[t][3] = (float)(KREG(K_SHADOW_FUNC) & 7);
+            if (!rect) u->tsz[t][0] = u->tsz[t][1] = 1.0f;
+            static int logged;
+            if (logged++ < 4)
+                LOG("[gpu] shadow map stage %d: fmt %08X %dx%d rect %d zmax %g func %08X ctl0 %08X\n", t,
+                    KREG(K_TEX_FORMAT(t)), tw, th, rect, zmax, KREG(K_SHADOW_FUNC), KREG(K_TEX_CONTROL0(t)));
+        }
     }
 
     {   /* UG_DRAWLOG=N: log every draw of frame N (state, first vertices, vertex program) */
         static int dl = -1;
         if (dl < 0) { const char *e = getenv("UG_DRAWLOG"); dl = e ? atoi(e) : 0; }
         if (dl && (int)frame_no == dl) {
-            LOG("[draw] f%u topo %d nv %u ni %u mode %u start %u surf %dx%d clip %g..%g comb %X fcw %08X %08X tm %u/%u\n",
+            LOG("[draw] f%u topo %d nv %u ni %u mode %u start %u surf %dx%d clip %g..%g comb %X fcw %08X %08X tm %u/%u/%u/%u prog %05X\n",
                 frame_no, topo, nv, ni, u->mode[0], u->mode[1], cur_rt->w, cur_rt->h, u->zr[0], u->zr[1], ctl,
-                u->comb[0][1], u->comb[0][2], u->tmode[0], u->tmode[1]);
+                u->comb[0][1], u->comb[0][2], u->tmode[0], u->tmode[1], u->tmode[2], u->tmode[3], prog);
+            LOG("[draw]   zfunc %X polyoff fill %X factor %g units %g cull %X/%X\n", KREG(K_DEPTH_FUNC), KREG(K_POLY_OFFSET_FILL),
+                kf(K_POLY_OFFSET_FACTOR), kf(K_POLY_OFFSET_UNITS), KREG(K_CULL_EN), KREG(K_CULL_FACE));
             LOG("[draw]   blend %X %X/%X eq %X cmask %08X ztest %X zmask %X atest %X func %X ref %X tex0 fmt %08X ctl0 %08X filter %08X\n",
                 KREG(K_BLEND_EN), KREG(K_BLEND_SFACTOR), KREG(K_BLEND_DFACTOR), KREG(K_BLEND_EQUATION), KREG(K_COLOR_MASK),
                 KREG(K_DEPTH_TEST_EN), KREG(K_DEPTH_MASK), KREG(K_ALPHA_TEST_EN), KREG(K_ALPHA_FUNC), KREG(K_ALPHA_REF),
@@ -1239,8 +1293,20 @@ static void draw_impl(int topo, const KVertex *v, uint32_t nv, const uint32_t *i
     /* NV097 front face 0x900 = CW, 0x901 = CCW in screen space (y down); Vulkan's winding is in framebuffer space,
      * which is the same orientation here */
     vkCmdSetFrontFace(cb, ff == 0x901 ? VK_FRONT_FACE_COUNTER_CLOCKWISE : VK_FRONT_FACE_CLOCKWISE);
-    vkCmdSetDepthTestEnable(cb, has_z && (KREG(K_DEPTH_TEST_EN) & 1));
+    {   /* UG_SHADOWNOZ=1: shadow-map draws without depth test or culling (debug) */
+        static int snz = -1;
+        if (snz < 0) snz = getenv("UG_SHADOWNOZ") != NULL;
+        int sh = u->tmode[0] == 4 || u->tmode[1] == 4 || u->tmode[2] == 4 || u->tmode[3] == 4;
+        if (snz && sh) { vkCmdSetDepthTestEnable(cb, 0); vkCmdSetCullMode(cb, VK_CULL_MODE_NONE); }
+        else vkCmdSetDepthTestEnable(cb, has_z && (KREG(K_DEPTH_TEST_EN) & 1));
+    }
     vkCmdSetDepthWriteEnable(cb, has_z && (KREG(K_DEPTH_MASK) & 1));
+    {   /* polygon offset (fill only; triangles are all the game draws with it): units are Z-buffer units, which match
+         * Vulkan's minimum resolvable difference for D24; the slope term is per host pixel (UG_SCALE) */
+        int en = has_z && (KREG(K_POLY_OFFSET_FILL) & 1);
+        vkCmdSetDepthBiasEnable(cb, en);
+        if (en) vkCmdSetDepthBias(cb, kf(K_POLY_OFFSET_UNITS), 0.0f, kf(K_POLY_OFFSET_FACTOR) / (float)g_scale);
+    }
     vkCmdSetDepthCompareOp(cb, cmp_op(KREG(K_DEPTH_FUNC)));
     vkCmdSetStencilTestEnable(cb, has_z && (KREG(K_STENCIL_TEST_EN) & 1));
     vkCmdSetStencilOp(cb, VK_STENCIL_FACE_FRONT_AND_BACK, stencil_op(KREG(K_STENCIL_OP_FAIL)), stencil_op(KREG(K_STENCIL_OP_ZPASS)),

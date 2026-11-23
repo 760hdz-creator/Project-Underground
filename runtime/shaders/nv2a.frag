@@ -17,7 +17,7 @@ layout(std140, set = 0, binding = 0) uniform Draw {
     vec4 fogc;             // fog color rgb
     vec4 alpha;            // ref (0..255), func (0..7), test enable, output alpha scale
     vec4 tsz[4];           // 1/w, 1/h of linear (rect) textures
-    uvec4 tmode;           // per stage: 0 none, 1 2D, 2 2D rect (unnormalized coords), 3 pass-through
+    uvec4 tmode;           // per stage: 0 none, 1 2D, 2 2D rect (unnormalized coords), 3 pass-through, 4 shadow map
     vec4 sfac[2];          // final combiner c0, c1 (SET_SPECULAR_FOG_FACTOR)
     vec4 fogp;             // fog params 0, 1; function (0 off, 1 linear, 2 exp, 3 exp2); abs
 } D;
@@ -40,16 +40,24 @@ layout(location = 0) out vec4 o_color;
 // combiner registers: 0 zero, 1 c0, 2 c1, 3 fog, 4 v0, 5 v1, 6/7 zero, 8-11 t0-t3, 12 r0, 13 r1, 14 sum, 15 ef
 vec4 REG[16];
 
+vec2 g_shadow_dbg = vec2(-1.0);
+vec4 g_shadow_raw = vec4(-1.0);   // UG_DBGCOLOR=7: uv, raw ref / 4   // UG_DBGCOLOR=6: ref, stored depth of the last shadow stage
+
 vec4 stage_tex(int s, vec4 tc) {
     uint m = D.tmode[s];
     if (m == 0u) return vec4(0.0);
     if (m == 3u) return clamp(tc, 0.0, 1.0);
     vec2 uv = tc.xy / (tc.w != 0.0 ? tc.w : 1.0);
-    if (m == 2u) uv *= D.tsz[s].xy;
-    if (s == 0) return texture(tex0, uv);
-    if (s == 1) return texture(tex1, uv);
-    if (s == 2) return texture(tex2, uv);
-    return texture(tex3, uv);
+    if (m == 2u || m == 4u) uv *= D.tsz[s].xy;
+    vec4 t = s == 0 ? texture(tex0, uv) : s == 1 ? texture(tex1, uv) : s == 2 ? texture(tex2, uv) : texture(tex3, uv);
+    if (m != 4u) return t;
+    // shadow map: compare the texcoord depth (Z-buffer units, projected) with the stored depth -> 1 lit / 0 shadowed
+    float r = clamp(tc.z / (tc.w != 0.0 ? tc.w : 1.0) * D.tsz[s].z, 0.0, 1.0), d = t.r;   // fixed-point ref saturates
+    g_shadow_dbg = vec2(r, d);
+    g_shadow_raw = vec4(uv, tc.z / (tc.w != 0.0 ? tc.w : 1.0) * D.tsz[s].z, tc.w);
+    int f = int(D.tsz[s].w);
+    bool p = f == 1 ? d < r : f == 2 ? d == r : f == 3 ? d <= r : f == 4 ? d > r : f == 5 ? d != r : f == 6 ? d >= r : f == 7;   // stored OP ref
+    return vec4(p ? 1.0 : 0.0);
 }
 
 // input mapping (bits 7:5) of a combiner input byte; alpha_portion reads .b / .a instead of .rgb / .aaa
@@ -152,5 +160,7 @@ void main() {
     else if (D.mode.w == 3u) o = vec4(i_d0.rgb, 1.0);                   // UG_DBGCOLOR=3: diffuse
     else if (D.mode.w == 4u) o = vec4(REG[12].rgb, 1.0);                // UG_DBGCOLOR=4: r0 after the combiners
     else if (D.mode.w == 5u) o = vec4(o.rgb, 1.0);                      // UG_DBGCOLOR=5: final rgb, opaque
+    else if (D.mode.w == 6u && g_shadow_dbg.x >= -0.5) o = vec4(fract(g_shadow_dbg.x * 16.0), g_shadow_dbg.y < 0.9999 ? 1.0 : 0.0, g_shadow_dbg.x > g_shadow_dbg.y ? 1.0 : 0.0, 1.0);
+    else if (D.mode.w == 7u) o = g_shadow_raw.x > -0.5 ? vec4(fract(g_shadow_raw.x), fract(g_shadow_raw.y), clamp(g_shadow_raw.z * 0.25, 0.0, 1.0), 1.0) : vec4(1.0);
     o_color = o;
 }
