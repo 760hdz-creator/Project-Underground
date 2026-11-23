@@ -486,11 +486,34 @@ class Emitter:
 
     def goto(self, t):
         if t in self.f.insns:
-            return f"goto L_{t:08X};"
+            spin = "x86_spin(); " if t <= self.cur_va and self.spin_loop(t, self.cur_va) else ""
+            return f"{spin}goto L_{t:08X};"
         return self.tail(t)
+
+    def spin_loop(self, lo, hi):
+        """Short backward loop that only polls memory (no calls, no stores) and reads a global: a spin-wait on a
+        value another thread or an interrupt changes. Cooperative scheduling must yield there."""
+        body = [i for va, i in self.f.insns.items() if lo <= va <= hi]
+        if not body or len(body) > 24 or any(i is None for i in body):
+            return False
+        polls = False
+        for i in body:
+            if i.mnemonic in ("call", "ret") or i.mnemonic.startswith(("rep", "stos", "movs")):
+                return False
+            if i.mnemonic == "pause":
+                polls = True
+            for k, op in enumerate(i.operands):
+                if op.type != X.X86_OP_MEM:
+                    continue
+                if k == 0 and len(i.operands) > 1 and i.mnemonic not in ("cmp", "test"):
+                    return False   # a store: copy/fill loop, not a poll
+                if op.mem.base == 0 and op.mem.index == 0:
+                    polls = True
+        return polls
 
     # -- instructions --
     def insn(self, ins):
+        self.cur_va = ins.address
         m = ins.mnemonic
         ops = ins.operands
         va = ins.address

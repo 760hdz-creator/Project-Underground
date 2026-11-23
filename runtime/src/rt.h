@@ -7,6 +7,7 @@
 /* ---- guest memory map ---- */
 #define RAM_SIZE        0x04000000u   /* 64 MB, also mirrored at 0x80000000 (contiguous/physical alias) */
 #define RAM_ALIAS       0x80000000u
+#define RAM_ALIAS_WC    0xF0000000u   /* write-combined view D3D hands out for LockRect on surfaces */
 #define HEAP_BASE       0x00400000u   /* above the XBE image (THUG ends 0x382480; loader.c checks) */
 #define HEAP_END        0x03F00000u
 #define KAREA_BASE      0x8F000000u   /* kernel data exports, KPCRs, kernel objects */

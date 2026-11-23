@@ -139,8 +139,54 @@ static void obj_consume(uint32_t obj) {
     }
 }
 
+static uint32_t kernel_wait_inner(uint32_t *objects, int count, int wait_any, int64_t timeout, int has_timeout);
+
+/* UG_WAITDUMP=<s>: every s seconds, list guest threads blocked in a kernel wait for more than 2 s (deadlock hunting):
+ * thread, objects (type, signal state), and the guest return addresses on its stack. */
+typedef struct { uint32_t kthread, objs[4], n, esp; uint64_t since; int active; } WaitRec;
+static WaitRec waits[64];
+static void wait_dump(void) {
+    static int period = -1;
+    static uint64_t next;
+    if (period < 0) { const char *e = getenv("UG_WAITDUMP"); period = e ? atoi(e) : 0; }
+    if (!period) return;
+    uint64_t now = sched_now_100ns();
+    if (now < next) return;
+    next = now + (uint64_t)period * 10000000ull;
+    for (int i = 0; i < 64; i++) {
+        WaitRec *w = &waits[i];
+        if (!w->active || now - w->since < 20000000ull) continue;
+        char buf[512];
+        int k = snprintf(buf, sizeof buf, "[wait] thread %08X %.1f s:", w->kthread, (now - w->since) / 1e7);
+        for (uint32_t j = 0; j < w->n && j < 4; j++)
+            k += snprintf(buf + k, sizeof buf - k, " %08X(t%u s%d)", w->objs[j], RD8(w->objs[j]), (int32_t)RD32(w->objs[j] + 4));
+        k += snprintf(buf + k, sizeof buf - k, " stack");
+        for (uint32_t a = w->esp, m = 0; a < w->esp + 0x400 && m < 10; a += 4) {
+            uint32_t v = RD32(a);
+            if (v >= 0x11000 && v < 0x205000 && g_mem[v - 5] == 0xE8) { k += snprintf(buf + k, sizeof buf - k, " %X", v); m++; }
+        }
+        LOG("%s\n", buf);
+    }
+}
+
 /* Returns STATUS_WAIT_0 + index, or STATUS_TIMEOUT. timeout_100ns: relative (<0) or absolute (>=0). */
 uint32_t kernel_wait(uint32_t *objects, int count, int wait_any, int64_t timeout, int has_timeout) {
+    WaitRec *wr = NULL;
+    if (sched_current()) {
+        uint32_t kt = sched_thread_object(sched_current());
+        for (int i = 0; i < 64 && !wr; i++) if (waits[i].kthread == kt || !waits[i].kthread) wr = &waits[i];
+        if (wr) {
+            wr->kthread = kt; wr->n = (uint32_t)count; wr->since = sched_now_100ns(); wr->active = 1;
+            wr->esp = ((X86Context *)sched_current())->esp;
+            for (int j = 0; j < count && j < 4; j++) wr->objs[j] = objects[j];
+        }
+    }
+    uint32_t r = kernel_wait_inner(objects, count, wait_any, timeout, has_timeout);
+    if (wr) wr->active = 0;
+    return r;
+}
+
+static uint32_t kernel_wait_inner(uint32_t *objects, int count, int wait_any, int64_t timeout, int has_timeout) {
     uint64_t deadline = 0;
     if (has_timeout) {
         deadline = timeout < 0 ? sched_now_100ns() + (uint64_t)(-timeout) : (uint64_t)timeout; /* absolute ~ boot time */
@@ -162,6 +208,7 @@ uint32_t kernel_wait(uint32_t *objects, int count, int wait_any, int64_t timeout
             }
         }
         if (has_timeout && sched_now_100ns() >= deadline) return STATUS_TIMEOUT;
+        wait_dump();
         ug_sched_yield();
     }
 }

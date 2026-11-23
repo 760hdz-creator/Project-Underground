@@ -23,6 +23,8 @@ static GuestFunc lookup(uint32_t va) {
     return (lo < g_functable_count && g_functable[lo].va == va) ? g_functable[lo].fn : NULL;
 }
 
+void x86_spin(void) { sched_maybe_yield(); }
+
 void x86_unimpl(X86Context *c, uint32_t va, const char *what) {
     rt_fatal("unimplemented at %08X: %s (esp %08X, [esp] %08X)", va, what, c->esp, RD32(c->esp));
 }
@@ -125,8 +127,8 @@ static HANDLE g_main_thread;
 
 static DWORD WINAPI watchdog(void *p) {
     DWORD secs = (DWORD)(uintptr_t)p;
-    for (int sample = 0; sample < 3; sample++) {
-        Sleep(sample ? 300 : secs * 1000);
+    for (int sample = 0; sample < 60; sample++) {   /* 60 samples, 50 ms apart */
+        Sleep(sample ? 50 : secs * 1000);
         SuspendThread(g_main_thread);
         CONTEXT ctx = {.ContextFlags = CONTEXT_FULL};
         GetThreadContext(g_main_thread, &ctx);

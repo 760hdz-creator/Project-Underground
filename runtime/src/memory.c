@@ -1,4 +1,4 @@
-/* Guest address space: 4 GB reserved; RAM mapped twice (0 and 0x80000000) from one section. */
+/* Guest address space: 4 GB reserved; RAM mapped three times (0, 0x80000000 and the write-combined 0xF0000000) from one section. */
 #ifndef _WIN32
 #include <errno.h>
 #include <sys/mman.h>
@@ -37,11 +37,13 @@ void mem_init(void) {
         VirtualFree(base, 0, MEM_RELEASE);
         void *a = MapViewOfFileEx(sec, FILE_MAP_ALL_ACCESS, 0, 0, RAM_SIZE, base);
         void *b = MapViewOfFileEx(sec, FILE_MAP_ALL_ACCESS, 0, 0, RAM_SIZE, base + RAM_ALIAS);
-        if (a == base && b == base + RAM_ALIAS) {
+        void *wc = MapViewOfFileEx(sec, FILE_MAP_ALL_ACCESS, 0, 0, RAM_SIZE, base + RAM_ALIAS_WC);
+        if (a == base && b == base + RAM_ALIAS && wc == base + RAM_ALIAS_WC) {
             g_mem = base;
         } else {
             if (a) UnmapViewOfFile(a);
             if (b) UnmapViewOfFile(b);
+            if (wc) UnmapViewOfFile(wc);
         }
     }
     if (!g_mem) rt_fatal("cannot map guest RAM");
@@ -62,7 +64,8 @@ void mem_init(void) {
     uint8_t *base = mmap(NULL, 1ull << 32, PROT_NONE, MAP_PRIVATE | MAP_ANONYMOUS | MAP_NORESERVE, -1, 0);
     if (base == MAP_FAILED) rt_fatal("cannot reserve 4 GB");
     if (mmap(base, RAM_SIZE, PROT_READ | PROT_WRITE, MAP_SHARED | MAP_FIXED, fd, 0) == MAP_FAILED ||
-        mmap(base + RAM_ALIAS, RAM_SIZE, PROT_READ | PROT_WRITE, MAP_SHARED | MAP_FIXED, fd, 0) == MAP_FAILED)
+        mmap(base + RAM_ALIAS, RAM_SIZE, PROT_READ | PROT_WRITE, MAP_SHARED | MAP_FIXED, fd, 0) == MAP_FAILED ||
+        mmap(base + RAM_ALIAS_WC, RAM_SIZE, PROT_READ | PROT_WRITE, MAP_SHARED | MAP_FIXED, fd, 0) == MAP_FAILED)
         rt_fatal("cannot map guest RAM (%d)", errno);
     close(fd);
     g_mem = base;
@@ -105,6 +108,7 @@ uint32_t mem_alloc(uint32_t size, uint32_t align) {
 
 static int find_block(uint32_t va) {
     if (va >= RAM_ALIAS && va < RAM_ALIAS + RAM_SIZE) va -= RAM_ALIAS;
+    if (va >= RAM_ALIAS_WC && va < RAM_ALIAS_WC + RAM_SIZE) va -= RAM_ALIAS_WC;
     int lo = 0, hi = nblocks;
     while (lo < hi) {
         int mid = (lo + hi) / 2;

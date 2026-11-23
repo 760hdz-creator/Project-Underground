@@ -9,6 +9,7 @@
 
 uint8_t *g_mem;
 void ug_fncount(uint32_t va) { (void)va; }
+void x86_spin(void) {}
 
 typedef struct { uint32_t va; GuestFunc fn; } FuncEntry;
 extern const FuncEntry g_functable[];

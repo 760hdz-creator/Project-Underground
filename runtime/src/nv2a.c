@@ -373,6 +373,18 @@ static void pgraph_method(uint32_t subch, uint32_t method, uint32_t data) {
     case 0x012C:                                                        /* FLIP_INCREMENT_WRITE */
         /* XDK Swap: 1D8C (scratch) holds the surface offset just completed */
         gpu_flip((nv2a_dma_base(KREG(K_DMA_COLOR)) + KREG(K_ZSTENCIL_CLEAR)) & 0x03FFFFFF);
+        {   /* The NV2A flips at vblank: pace flips to UG_FPS (default 60; 0 = unlimited). Only this guest thread waits
+             * (sched_sleep_until runs the others). */
+            static int fps = -1;
+            static uint64_t next;
+            if (fps < 0) { const char *e = getenv("UG_FPS"); fps = e ? atoi(e) : 60; }
+            if (fps > 0) {
+                uint64_t period = 10000000ull / (uint64_t)fps, now = sched_now_100ns();
+                if (!next || now > next + 4 * period) next = now;   /* first flip or a long stall: restart */
+                next += period;
+                if (next > now) sched_sleep_until(next);
+            }
+        }
         break;
     case 0x01A4: k_dma_semaphore = data; break;                         /* SET_CONTEXT_DMA_SEMAPHORE */
     case 0x1E9C: vp_load = data * 4; break;                             /* SET_TRANSFORM_PROGRAM_LOAD */

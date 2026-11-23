@@ -40,7 +40,8 @@ extern uint32_t x86_eflags_id;
 /* Guest function replaced by a host implementation (recomp/hle.txt). Pops its own return address and args. */
 void x86_hle(X86Context *c, uint32_t va);
 void x86_hook(X86Context *c, uint32_t va);   /* entry hook for recomp/hooks.txt functions */
-void ug_fncount(uint32_t va);  /* debug lifts (UG_LIFT_FNCOUNT=1): count calls per function */
+void ug_fncount(uint32_t va);
+void x86_spin(void);           /* back-edge of a polling loop (lift.py spin_loop): lets other guest threads run */  /* debug lifts (UG_LIFT_FNCOUNT=1): count calls per function */
 
 /* ---- memory ---- */
 static inline uint8_t RD8(uint32_t a) { return g_mem[a]; }

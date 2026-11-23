@@ -73,6 +73,38 @@ static void fill_state(uint32_t dst, int port) {
         if (key('J')) h.rx = -32767;
         if (key('L')) h.rx = 32767;
     }
+    if (port == 0) {   /* UG_INPUT=<s>:<button>[:<dur s>],... scripted pad 0 input (guest seconds; default 0.15 s) */
+        static struct { double t, d; int btn; } ev[256];
+        static int nev = -1;
+        if (nev < 0) {
+            nev = 0;
+            static const char *names[] = {"UP", "DOWN", "LEFT", "RIGHT", "START", "BACK", "LS", "RS",
+                                          "A", "B", "X", "Y", "BLACK", "WHITE", "LT", "RT",
+                                          "LUP", "LDOWN", "LLEFT", "LRIGHT"};
+            const char *e = getenv("UG_INPUT");
+            char buf[4096];
+            snprintf(buf, sizeof buf, "%s", e ? e : "");
+            for (char *tok = strtok(buf, ","); tok && nev < 256; tok = strtok(NULL, ",")) {
+                char name[16] = {0};
+                double t = 0, d = 0.15;
+                if (sscanf(tok, "%lf:%15[A-Z]:%lf", &t, name, &d) < 2) continue;
+                for (int k = 0; k < 20; k++)
+                    if (!strcmp(name, names[k])) { ev[nev].t = t; ev[nev].d = d; ev[nev].btn = k; nev++; break; }
+            }
+            if (nev) LOG("[input] %d scripted events\n", nev);
+        }
+        double now = sched_now_100ns() / 1e7;
+        for (int i = 0; i < nev; i++) {
+            if (now < ev[i].t || now >= ev[i].t + ev[i].d) continue;
+            int k = ev[i].btn;
+            if (k < 8) buttons |= 1u << k;
+            else if (k < 16) analog[k - 8] = 255;
+            else if (k == 16) h.ly = 32767;
+            else if (k == 17) h.ly = -32767;
+            else if (k == 18) h.lx = -32767;
+            else h.lx = 32767;
+        }
+    }
     WR32(dst, ++packet);
     WR16(dst + 4, buttons);
     memcpy(g_mem + dst + 6, analog, 8);
@@ -101,6 +133,7 @@ void x86_hook(X86Context *c, uint32_t va) {
     if (on < 0) on = getenv("UG_HOOKLOG") != NULL;
     if (on) LOG("[hook] %06X eax %08X ecx %08X edx %08X ebx %08X | %08X %08X %08X %08X %08X\n", va, c->eax, c->ecx,
                 c->edx, c->ebx, RD32(c->esp), RD32(c->esp + 4), RD32(c->esp + 8), RD32(c->esp + 12), RD32(c->esp + 16));
+    if (on && c->ecx < RAM_SIZE) LOG("[hook]   [ecx] %08X [ecx+4] %08X\n", RD32(c->ecx), RD32(c->ecx + 4));
 }
 void script_file_event(const char *path) { (void)path; }
 

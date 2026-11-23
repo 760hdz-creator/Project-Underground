@@ -45,10 +45,38 @@ Sibling of Project Gauntlet (G:\Project Gauntlet): its x86->C lifter, runtime an
   movies play through (no renderer: nothing visible; gpu_null.c). Runs 120 s without a fatal.
   nv2a.c warns: "[pb] INLINE_ARRAY not implemented", "[pb] DMA handle 9 base 0".
 
+- 2026-11-22 (later): native Vulkan renderer works. Bink intro, title menus, difficulty select render correctly
+  (screens checked with UG_SHOT). See runtime/src/gpu_vulkan.c header comment for the design.
+  - Shaders: runtime/shaders/nv2a.vert (NV2A vertex program interpreter + fixed-function composite path) and nv2a.frag
+    (register combiner interpreter). `python -I tools/shaders.py` -> runtime/src/shaders_spv.h (committed; needs
+    `python -I tools/bootstrap.py --dev` for glslang 16.6.0, user approved the download 2026-11-22).
+  - Pre-transformed vertices with rhw = 0 give oPos.w = inf: treated as w = 1 (else nothing draws).
+  - XDK 5659 swap does not name the front buffer: flip presents the last render target.
+  - Flip pacing: UG_FPS (default 60) via sched_sleep_until in nv2a.c 0x012C. Menus run 60 fps, 205 draws, 30k verts.
+  - Texture cache: in-place re-upload for rewritten textures (Bink), eviction after 600 idle frames.
+  - Debug env: UG_SHOT=N (out/shot_<frame>.ppm), UG_DRAWLOG=<frame>, UG_DBGCOLOR=1..5, UG_HEADLESS=1,
+    UG_PBSTATS=<s>, UG_WAITDUMP=<s>, UG_INPUT="<s>:<BUTTON>[:<dur>],..." (A B X Y START BACK UP DOWN LEFT RIGHT
+    LT RT BLACK WHITE LS RS LUP LDOWN LLEFT LRIGHT), UG_WATCHDOG=<s> (60 host stack samples, 50 ms apart).
+    NOTE: UG_NVLOG logs only the first write of each register, whatever its value.
+  - Lifter: polling loops (short, call-free, store-free, reading a global) get x86_spin() on the back-edge (49 sites).
+  - Memory: RAM also mapped at 0xF0000000 (write-combined view D3D's LockRect returns; loading-bar timer callback).
+- CURRENT BLOCKER (story mode): after Difficulty -> the game opens data/cutscenes/Intro_01.cut.Xbx and then loops in
+  the cutscene loader 106EE0: { call 33660 (stream update), call 31C40 (ready?), call 174090 (wait one vblank) }.
+  31C40 -> 34760 -> 358C0: the stream object (ptr at [0x24E7DC] / [0x24E7E0]) is "ready" when [+0xA0] == 1 and
+  [+0x98] >= [+0x9C] + 0x2000 (bytes buffered). [+0x98] is written at 337E5, 33BD3, 35768, 35850: find which path
+  should advance it (async file read completion? DSOUND stream callback? NtReadFile returns at once, no APCs seen).
+  The vblank callback (173E90, via D3D's ISR) does run. Repro:
+  `UG_INPUT=$(python -c "print(','.join(f'{t}:A' for t in range(6,240,3)))") ./out/underground.exe`.
+- Oracle (all leaves): 2228 pass, 17 fail, 887 skip. Explained: ret imm16 sign (unicorn bug: 19430, 224EF, 3DC24,
+  168D83, 181B68 are junk starts), rdtsc/cpuid stubs (173E80, 18A9D0, 1975F0, 182300). Unexamined: 11980, 48D63,
+  6A330, 78820/1C5395 (st0 nan vs inf), 1945D0 (x87 top), 1C5FA7, 1F8A78.
+
 ## Next
-1. Vulkan renderer (runtime/src/gpu_vulkan.c) behind the kelvin.h gpu_* interface; window + swapchain; draw what nv2a.c
-   decodes (Gauntlet's gpu_d3d11.c is the reference for state translation). Implement INLINE_ARRAY in nv2a.c.
-2. Look at the oracle fails.
-3. Then menus/gameplay, installer (llvm-mingw fetched on the player PC), Linux, HD textures.
+1. Fix the Intro_01 cutscene stream stall (above), reach gameplay.
+2. Renderer gaps: shader stage modes other than 2D/pass-through (mode 2 seen), cube maps, fixed-function lighting
+   (0x0314 = 1 seen), fog, MSAA, widescreen, CPU-drawn loading bar (writes guest framebuffer RAM directly).
+3. Oracle fails above. Unimplemented lifter sites (46: enter, segment movs, fnsave/frstor).
+4. Installer (llvm-mingw fetched on the player PC, build like Gauntlet's gt_build.py), Linux port, PS2 HD textures.
+- Not pushed since the initial commits (user rule: push only when asked).
 - Repos: origin gitlab.com/octagram-labs-group/Project-Underground, forge 8gramlabs/Project-Underground (both public).
   Homepage card live (placeholder image landing/img/thug.jpg: replace with a screenshot later). release-sync REPOS updated.
