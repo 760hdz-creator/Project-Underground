@@ -8,7 +8,7 @@ Players never need it: the SPIR-V is committed as C arrays (runtime/src/shaders/
 import hashlib, os, sys, urllib.request, zipfile
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-TC = os.path.join(ROOT, "toolchain")
+TC = os.environ.get("UG_TOOLCHAIN_DIR") or os.path.join(ROOT, "toolchain")   # ug_build.py: <install>/toolchain
 
 LLVM_MINGW_VER = "20261104"
 LLVM_MINGW_ZIP = f"llvm-mingw-{LLVM_MINGW_VER}-ucrt-x86_64.zip"

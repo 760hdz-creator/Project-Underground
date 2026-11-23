@@ -71,8 +71,12 @@ def lift(jobs):
                 f.write(va + "\n")
         os.remove(missed)
         print(f"seeds: +{len(new)} from missed_targets.txt")
-    code, out = run([sys.executable, "-I", os.path.join(ROOT, "recomp", "lift.py"),
-                     os.path.join(ROOT, "game", "default.xbe"), LIFTED])
+    lift_only(os.path.join(ROOT, "game", "default.xbe"), LIFTED)
+
+
+def lift_only(xbe, out_dir):
+    """recomp/lift.py with the committed seeds only (ug_build.py calls this directly)."""
+    code, out = run([sys.executable, "-I", os.path.join(ROOT, "recomp", "lift.py"), xbe, out_dir])
     print(out[-600:])
     if code:
         sys.exit("ERROR: lift failed")
@@ -98,20 +102,22 @@ RT_OBJ = os.path.join(OUT, "rt")
 RT_LIBS = ["-lwinmm", "-luser32", "-lgdi32", "-lshlwapi", "-lshell32", "-ladvapi32", "-lole32"]
 
 
-def build_runtime(jobs):
+def build_runtime(jobs, exe=None, defines=(), gui=False):
+    """Compile the runtime and link it with LIFTED/*.o. ug_build.py (player build) passes its own exe path,
+    -DUG_VERSION and gui=True (no console window); RT_OBJ/LIFTED are module globals it repoints."""
     os.makedirs(RT_OBJ, exist_ok=True)
-    flags = ["-O2", "-g", "-c", "-I" + INC, "-I" + RT_SRC, "-I" + os.path.join(ROOT, "third_party", "vulkan"),
+    flags = list(defines) + ["-O2", "-g", "-c", "-I" + INC, "-I" + RT_SRC, "-I" + os.path.join(ROOT, "third_party", "vulkan"),
              "-I" + os.path.join(ROOT, "third_party", "vulkan", "include"), "-D_CRT_SECURE_NO_WARNINGS", "-DVK_USE_PLATFORM_WIN32_KHR",
              "-Wall", "-Wno-unused-function", "-Wno-missing-braces"]
     srcs = sorted(glob.glob(os.path.join(RT_SRC, "*.c"))) + [os.path.join(ROOT, "third_party", "vulkan", "volk.c")]
     compile_all([(f, os.path.join(RT_OBJ, os.path.basename(f)[:-2] + ".o"), flags) for f in srcs], jobs)
     objs = [os.path.join(RT_OBJ, os.path.basename(f)[:-2] + ".o") for f in srcs]
     objs += sorted(glob.glob(os.path.join(LIFTED, "*.o")))
-    exe = os.path.join(OUT, "underground.exe")
-    code, out = run([CC, "-static", "-g", "-o", exe] + objs + RT_LIBS)
+    exe = exe or os.path.join(OUT, "underground.exe")
+    code, out = run([CC, "-static", "-g", "-o", exe] + (["-mwindows"] if gui else []) + objs + RT_LIBS)
     if code:
         sys.exit("ERROR: link failed\n" + out[-4000:])
-    print("linked out/underground.exe")
+    print("linked " + exe)
 
 
 def main():

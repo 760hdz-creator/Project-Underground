@@ -115,7 +115,19 @@ print(','.join(ev))")" UG_SHOT=1200 ./out/underground.exe   (NJ level by ~frame 
 2. Renderer gaps (not seen in NJ so far: check other levels first): FF lighting, cube maps, eye/object-linear and
    sphere texgen, MSAA, widescreen, CPU-drawn loading bar (writes guest framebuffer RAM directly).
 3. Unimplemented lifter sites (46: enter, segment movs, fnsave/frstor).
-4. Installer (llvm-mingw fetched on the player PC, build like Gauntlet's gt_build.py), Linux port, PS2 HD textures.
+4. INSTALLER (in progress 2026-11-23; port of G:\Project Gauntlet docs/installer.md, minus its VS/admin toolchain path).
+   Slices, in order:
+   a. tools/ug_build.py --root D [--iso img] [--version V]: extract -> D/game, xbe SHA-256 check, llvm-mingw into
+      D/toolchain (bootstrap with a dir parameter), lift with committed seeds only -> D/build/lifted (must be
+      byte-identical to out/lifted), compile + link with build.py's flags (import, never copy) -> D/underground.exe
+      (-mwindows, -DUG_VERSION). Test dir G:\ug_test (delete by hand later); run from another cwd to the menus.
+   b. main.c: cwd = exe dir when game\default.xbe missing; LOG -> out\underground.log without a console; settings.ini.
+   c. tools/package.py -> dist/payload.zip (SHIP allowlist, THUG FORBIDDEN list, embedded CPython + capstone at the
+      dev version, licenses: Vulkan-Headers, volk, xxhash, CPython, capstone).
+   d. installer/setup.cpp port built with llvm-mingw (-static, -municode, llvm-rc), neutral placeholder art (user
+      art wanted; never Activision art), launcher + updater (forge releases/latest).
+   e. Bump VERSION locally only. No tag/push/release until the user says push.
+   Then: Linux port, PS2 HD textures.
 - Not pushed since the initial commits (user rule: push only when asked).
 - Repos: origin gitlab.com/octagram-labs-group/Project-Underground, forge 8gramlabs/Project-Underground (both public).
   Homepage card live (placeholder image landing/img/thug.jpg: replace with a screenshot later). release-sync REPOS updated.
