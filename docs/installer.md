@@ -29,6 +29,26 @@ Gauntlet's installer (G:\Project Gauntlet\docs\installer.md) without its Visual 
   a newer tag asks, downloads `ProjectUnderground-Setup-*.exe`, runs `--update --dir <install>`. Off for dev builds,
   UG_INPUT runs, UG_NOUPDATE=1. Test overrides UG_UPDATE_REPO / UG_UPDATE_ASSET / UG_UPDATE_API.
 
+## Linux
+- Runtime on Linux: runtime/src/linux (win32.c Win32 subset on POSIX, sdl_plat.c window/keyboard/monitors on
+  SDL3, pad_sdl.c gamepads; include/windows.h builds on DXVK Native's include/native/windows headers, build time
+  only). gpu_vulkan.c takes its instance extensions and surface from SDL. volk dlopens libvulkan.so.1.
+- `tools/build_linux.sh <dir> [--version V] [--lifted <dir>]`: libugrt.a + lib/libSDL3.so.0 (+ the game).
+  Deps (built once by the TTT2 Linux port): ~/ttt2-deps/sdl3/install (UG_SDL3), DXVK Native source (UG_WINHDR).
+- `tools/package_linux.sh` (WSL, from a clean clone so files are LF) -> dist/ProjectUnderground-Linux-<ver>.tar.gz
+  (~4 MB): setup.sh, README-Linux.txt, kit/ (SHIP files, tools/pyrun.py, pylib/capstone 5.0.7 manylinux wheel,
+  linux/libugrt.a + lib/ + include/ + gamecontrollerdb.txt + icon.png, licenses). FORBIDDEN check as on Windows.
+- `ug_build.py` on Linux: lift through pyrun.py (byte-identical to the Windows lift apart from CRLF), compile with
+  build.py's LIFT_FLAGS using the system clang/gcc, link libugrt.a + lib/*.so, rpath $ORIGIN/lib -> <root>/underground.
+- `setup.sh --iso <img> [--dir D] [--play] [--no-gui]`, `--update --dir D`, `--uninstall --dir D` (keeps out/ and
+  settings.ini). Default D = ~/.local/share/project-underground. Menu entry + icon; underground.sh sets UG_INSTALLED=1.
+  Needs glibc >= 2.38, python3 >= 3.9, clang or gcc, libvulkan.so.1 (setup.sh checks each).
+- Updater (updater.c Linux part): curl GETs forge releases/latest, asset ProjectUnderground-Linux*.tar.gz, zenity or
+  kdialog asks, download + extract to /tmp, `setup.sh --update --dir <cwd> --play`, exit.
+- Verified 2026-11-23 in WSL Ubuntu 24.04 (llvmpipe): install from the ISO in 72 s, launch, --update, --uninstall,
+  and the updater loop against a local release JSON (UG_UPDATE_API, fake zenity): prompt, download, rebuild, relaunch.
+  Scripted route reaches NJ gameplay. Not tested: a real GPU on Linux, real controllers, Wayland desktop sessions.
+
 ## Release steps (only when the user says push)
 1. Bump `VERSION`; `git add` new tracked files (package.py stages from `git ls-files`).
 2. `python -I installer\build.py`.
@@ -36,6 +56,8 @@ Gauntlet's installer (G:\Project Gauntlet\docs\installer.md) without its Visual 
 4. Tag `v<ver>`, push origin + forge, then `tea release create --login forge --repo 8gramlabs/Project-Underground
    --tag v<ver> --title v<ver> --note "<notes>" --asset dist/ProjectUnderground-Setup-<ver>.exe` and
    `glab release create v<ver> dist/ProjectUnderground-Setup-<ver>.exe`.
+   Linux: `bash tools/package_linux.sh` in WSL from a fresh clone, attach dist/ProjectUnderground-Linux-<ver>.tar.gz
+   to both releases too. Release gate: Windows + Linux + Android together.
 
 ## Verified (2026-11-23, dev box; toolchain junctioned, so the llvm-mingw download itself was not re-run)
 - `--iso` into an empty folder (~53 s): all steps, launcher, shortcuts, registry. Installed game run from another

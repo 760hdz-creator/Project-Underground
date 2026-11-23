@@ -161,8 +161,12 @@ print(','.join(ev))")" UG_SHOT=1200 ./out/underground.exe   (NJ level by ~frame 
    declaration etc.). Test data on ext4: ~/ug-run/game (copy of extracted/), ~/ug-run/underground -> ~/ug-linux.
    RESULT: boots, reboot relaunch, Bink intro, scripted route reaches NJ gameplay (out/linux/route.sh; shots in
    out/linux). WSL GPU = llvmpipe (~9 fps in 3D, 30 in Bink): correctness only. pgrep name after relaunch: "exe".
-   NEXT (Linux): lift under WSL python3 byte-identical (needs capstone), tools/ug_build.py Linux branch,
-   installer/linux/setup.sh + README-Linux.txt, tools/package_linux.sh, updater asset ProjectUnderground-Linux*.
+   LINUX PACKAGE DONE (docs/installer.md "Linux"): package_linux.sh -> ProjectUnderground-Linux-0.1.0.tar.gz
+   (3.7 MB; build in WSL from a fresh clone: `git clone "/mnt/g/Project Underground" ~/ug-src`). setup.sh install
+   (72 s), launch, --update, --uninstall and the in-game updater loop all verified in WSL. Lift on Linux matches the
+   Windows lift (CRLF only). WSL test dirs: ~/ug-run, ~/ug-linux, ~/ug-lifted, ~/ug-lift-test, ~/ug-inst, ~/ug-src,
+   ~/ug-dist (safe to delete). Not tested: real Linux GPU, real pads, Wayland desktop.
+   NEXT: Android port (Gauntlet tools/build_android.sh, gt_android.py, android/, linux/touch.c as models).
 - Not pushed since the initial commits (user rule: push only when asked).
 - Repos: origin gitlab.com/octagram-labs-group/Project-Underground, forge 8gramlabs/Project-Underground (both public).
   Homepage card live (placeholder image landing/img/thug.jpg: replace with a screenshot later). release-sync REPOS updated.
