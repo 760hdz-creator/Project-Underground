@@ -895,6 +895,18 @@ static VkImageView get_texture(int i, int *rect, int *tw, int *th, float *zmax) 
         if (e->last_frame < v->last_frame) v = e;
     }
     img_destroy_later(&v->im);
+    {   /* UG_TEXDUMP=<format word, hex>: write each new texture of that format to out/tex_<addr>_<fmt>.bin (raw guest
+         * bytes, all levels; debug) */
+        static int td = -1;
+        static uint32_t td_fmt;
+        if (td < 0) { const char *e = getenv("UG_TEXDUMP"); td = e != NULL; if (e) td_fmt = (uint32_t)strtoul(e, NULL, 16); }
+        if (td && (td_fmt <= 0xFFFFu ? (fmtw & 0xFFFFu) == td_fmt : fmtw == td_fmt)) {   /* <= 4 digits: low bits */
+            char fn[64];
+            snprintf(fn, sizeof fn, "out/tex_%08X_%08X.bin", addr, fmtw);
+            FILE *fo = fopen(fn, "wb");
+            if (fo) { fwrite(g_mem + addr, 1, nbytes, fo); fclose(fo); }
+        }
+    }
     if (pal_len)
         for (uint32_t k = 0; k < 256; k++) {
             uint32_t c = k < pal_len ? RD32(pal_addr + k * 4) : 0;   /* A8R8G8B8 */
@@ -1386,8 +1398,9 @@ static void draw_impl(int topo, const KVertex *v, uint32_t nv, const uint32_t *i
             LOG("[draw] f%u topo %d nv %u ni %u mode %u start %u surf %dx%d clip %g..%g comb %X fcw %08X %08X tm %u/%u/%u/%u prog %05X\n",
                 frame_no, topo, nv, ni, u->mode[0], u->mode[1], cur_rt->w, cur_rt->h, u->zr[0], u->zr[1], ctl,
                 u->comb[0][1], u->comb[0][2], u->tmode[0], u->tmode[1], u->tmode[2], u->tmode[3], prog);
-            LOG("[draw]   zfunc %X polyoff fill %X factor %g units %g cull %X/%X\n", KREG(K_DEPTH_FUNC), KREG(K_POLY_OFFSET_FILL),
-                kf(K_POLY_OFFSET_FACTOR), kf(K_POLY_OFFSET_UNITS), KREG(K_CULL_EN), KREG(K_CULL_FACE));
+            LOG("[draw]   zfunc %X polyoff fill %X factor %g units %g cull %X/%X tex0 off %08X addr %08X\n", KREG(K_DEPTH_FUNC),
+                KREG(K_POLY_OFFSET_FILL), kf(K_POLY_OFFSET_FACTOR), kf(K_POLY_OFFSET_UNITS), KREG(K_CULL_EN), KREG(K_CULL_FACE),
+                KREG(K_TEX_OFFSET(0)), KREG(K_TEX_ADDRESS(0)));
             LOG("[draw]   blend %X %X/%X eq %X cmask %08X ztest %X zmask %X atest %X func %X ref %X tex0 fmt %08X ctl0 %08X filter %08X\n",
                 KREG(K_BLEND_EN), KREG(K_BLEND_SFACTOR), KREG(K_BLEND_DFACTOR), KREG(K_BLEND_EQUATION), KREG(K_COLOR_MASK),
                 KREG(K_DEPTH_TEST_EN), KREG(K_DEPTH_MASK), KREG(K_ALPHA_TEST_EN), KREG(K_ALPHA_FUNC), KREG(K_ALPHA_REF),

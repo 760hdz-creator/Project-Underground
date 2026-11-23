@@ -198,8 +198,18 @@ print(','.join(ev))")" UG_SHOT=1200 ./out/underground.exe   (NJ level by ~frame 
   creation-time WM_DPICHANGED is ignored). Launcher: Window size / Screen / Picture combos.
   FPS: the game does not cap itself (UG_FPS=0 -> 240 fps = monitor vsync); all clocks (rdtsc, QPC, KeTickCount) are
   real-time. 60 fps paced = native rate. Above 60 untested (logic speed unverified at high rates).
-  NOTE: the first README push (2f72b39) had docs/images/installer.jpg showing a C:\Users\<name> path; replaced in
-  b6894d0. Still in history: rewrite only if the user asks (force push needs their OK).
-- Pushed to both remotes 2026-11-23 (README, avatars, display settings). No release until all three ports are ready.
+  LEAK FIXED 2026-11-23 (user asked): history rewritten (filter-branch swapped the installer.jpg blob showing a
+  C:\Users\<name> path for the clean one), force-pushed both remotes (GitLab main unprotected for force push, then
+  re-protected), GitLab housekeeping prune + forge `git gc --prune=now` in the container: old commit/blob 404 on both.
+- LEVEL CHEAT + ALL-LEVELS SWEEP (2026-11-23): ChangeLevel 0xF1D60 hook (recomp/hooks.txt, hle.c change_level_hook),
+  UG_LEVEL=<code>, launcher "Level (test cheat)". out/levels/sweep.sh -> out/levels/<lv>/ (shots, run.log),
+  out/levels/all_levels.png. All 17 load without a fatal: 14 good at 57-60 fps; SC sky shows hard seams between panels
+  (sky draws 177-192: opaque, zmask 0, cap textures 128x64 DXT1 + side 256x128; decoded with UG_TEXDUMP: separate
+  cloud photos that do not match -> most likely the original art; no hardware reference to confirm). SP: SPscn.prx
+  never loads (empty level, cut content). testlevel: "problem with the disc" (Green_Sky.tex.Xbx not on the disc).
+  Debug added: UG_TEXDUMP=<fmt hex | low 4 digits> (raw texture bytes to out/tex_<addr>_<fmt>.bin), draw log prints
+  tex0 offset/address.
+- Pushed to both remotes 2026-11-23 (README, avatars, display settings, level cheat). No release until all three
+  ports are ready.
 - Repos: origin gitlab.com/octagram-labs-group/Project-Underground, forge 8gramlabs/Project-Underground (both public).
   Homepage card live (placeholder image landing/img/thug.jpg: replace with a screenshot later). release-sync REPOS updated.
