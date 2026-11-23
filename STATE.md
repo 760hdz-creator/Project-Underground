@@ -147,10 +147,13 @@ print(','.join(ev))")" UG_SHOT=1200 ./out/underground.exe   (NJ level by ~frame 
       keys and shortcuts itself; only G:\ug_inst\out remains. Still delete by hand: G:\ug_inst, and G:\ug_test +
       G:\ug_test2 (rmdir their toolchain junctions FIRST).
       UNTESTED: launcher clicks (Play/Logs/Update), settings.ini writes, real llvm-mingw download, clean PC / Sandbox.
-   USER RULE 2026-11-23: release NO installer until all ports (Windows, Linux, ...) are ready. "push" = git push
+   USER RULE 2026-11-23: release NO installer until all ports (Windows, Linux, Android) are ready. "push" = git push
    to both remotes only, no tag/release, until then.
    e. Bump VERSION locally only. No tag/push/release until the user says push.
-   Then: Linux port, PS2 HD textures.
+   Then: Linux port (WSL Ubuntu-24.04, same Vulkan backend; Gauntlet docs/installer.md "Linux" + tools/
+   build_linux.sh, package_linux.sh as models), Android port (Gauntlet tools/build_android.sh, gt_android.py,
+   android/ as models; Vulkan), then the first release of all three together. PS2 HD textures last.
+   NOTE: main.c already has #ifndef _WIN32 / __ANDROID__ branches from the Gauntlet port (sdl_plat.c referenced).
 - Not pushed since the initial commits (user rule: push only when asked).
 - Repos: origin gitlab.com/octagram-labs-group/Project-Underground, forge 8gramlabs/Project-Underground (both public).
   Homepage card live (placeholder image landing/img/thug.jpg: replace with a screenshot later). release-sync REPOS updated.
