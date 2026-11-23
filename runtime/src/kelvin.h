@@ -60,7 +60,11 @@ extern uint32_t g_kreg[0x800];
 #define K_CULL_FACE        0x039C
 #define K_FRONT_FACE       0x03A0
 #define K_TEXMAT_EN        0x0420   /* [4] */
+#define K_MODELVIEW        0x0480   /* [4][16] floats (skinning matrices 1..3) */
+#define K_INV_MODELVIEW    0x0580   /* [4][16] floats */
 #define K_COMPOSITE        0x0680   /* [16] floats */
+#define K_TEXGEN(s, c)     (0x03C0 + (s) * 16 + (c) * 4)   /* GL enums: 0x2400 eye/0x2401 object linear, 0x2402 sphere, 0x8511 normal, 0x8512 reflection map */
+#define K_SKIN_MODE        0x0328
 #define K_TEXTURE_MATRIX   0x06C0   /* [4][16] floats */
 #define K_SPECFOG_FACTOR0  0x1E20   /* final combiner constants c0, c1 */
 #define K_SPECFOG_FACTOR1  0x1E24

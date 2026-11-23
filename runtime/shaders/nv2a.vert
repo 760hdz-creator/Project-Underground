@@ -24,6 +24,9 @@ layout(std140, set = 0, binding = 0) uniform Draw {
     uvec4 tmode;
     vec4 sfac[2];          // final combiner c0, c1 (SET_SPECULAR_FOG_FACTOR)
     vec4 fogp;             // fog params 0, 1; function (0 off, 1 linear, 2 exp, 3 exp2); abs
+    vec4 mv[4];            // fixed function model-view 0 (rows = output components, as comp)
+    vec4 imv[4];           // its inverse
+    uvec4 tgen;            // texgen per stage, a byte per s/t/r/q: 0 off, 4 normal map, 5 reflection map
 } D;
 
 layout(location = 0) out vec4 o_d0;
@@ -144,6 +147,19 @@ void run_program() {
     }
 }
 
+vec3 g_en, g_refl;
+
+vec4 texgen(int s, vec4 t) {
+    uint g = D.tgen[s];
+    if (g == 0u) return t;
+    for (int c = 0; c < 4; c++) {
+        uint m = (g >> uint(c * 8)) & 255u;
+        if (m == 5u && c < 3) t[c] = g_refl[c];
+        else if (m == 4u && c < 3) t[c] = g_en[c];
+    }
+    return t;
+}
+
 vec4 texmat(int s, vec4 t) {
     if ((D.mode.z & (1u << uint(s))) == 0u) return t;
     return vec4(dot(D.texm[s * 4 + 0], t), dot(D.texm[s * 4 + 1], t), dot(D.texm[s * 4 + 2], t), dot(D.texm[s * 4 + 3], t));
@@ -172,7 +188,18 @@ void main() {
         float sx = c.x + D.vpo.x * c.w, sy = c.y + D.vpo.y * c.w;
         pos = vec4(sx * D.surf.z * 2.0 - c.w, sy * D.surf.w * 2.0 - c.w, c.z * D.zr.z, c.w);
         o_d0 = V(3); o_d1 = V(4);
-        o_t0 = texmat(0, V(9)); o_t1 = texmat(1, V(10)); o_t2 = texmat(2, V(11)); o_t3 = texmat(3, V(12));
+        if ((D.tgen.x | D.tgen.y | D.tgen.z | D.tgen.w) != 0u) {
+            // eye-space position and normal (normal through the inverse model-view, as D3D/xemu), GL reflection map
+            vec4 ep = vec4(dot(D.mv[0], p), dot(D.mv[1], p), dot(D.mv[2], p), dot(D.mv[3], p));
+            vec4 n4 = vec4(V(2).xyz, 0.0);
+            vec3 en = vec3(dot(D.imv[0], n4), dot(D.imv[1], n4), dot(D.imv[2], n4));
+            g_en = dot(en, en) > 0.0 ? normalize(en) : en;
+            vec3 e = ep.xyz / (ep.w != 0.0 ? ep.w : 1.0);
+            vec3 u = dot(e, e) > 0.0 ? normalize(e) : vec3(0.0, 0.0, 1.0);
+            g_refl = u - 2.0 * dot(g_en, u) * g_en;
+        }
+        o_t0 = texmat(0, texgen(0, V(9))); o_t1 = texmat(1, texgen(1, V(10)));
+        o_t2 = texmat(2, texgen(2, V(11))); o_t3 = texmat(3, texgen(3, V(12)));
         o_fog = V(5).x;
     }
     if (D.fogp.z != 0.0) {   // NV2A fog function (xemu's formulas), result clamped by the rasterizer

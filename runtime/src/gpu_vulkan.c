@@ -14,6 +14,7 @@
 #include <windows.h>
 #define VK_USE_PLATFORM_WIN32_KHR
 #include "volk.h"
+#include <math.h>
 #include <stdarg.h>
 #include <stdlib.h>
 #include <string.h>
@@ -943,6 +944,8 @@ typedef struct {
     uint32_t tmode[4];
     float sfac[2][4];            /* final combiner c0, c1 (SET_SPECULAR_FOG_FACTOR) */
     float fogp[4];               /* fog params 0, 1; function (0 off, 1 linear, 2 exp, 3 exp2); abs */
+    float mv[4][4], imv[4][4];   /* fixed function: model-view 0 and its inverse (texgen) */
+    uint32_t tgen[4];            /* texgen per stage, 8 bits per s/t/r/q: 0 off, 4 normal map, 5 reflection map */
 } DrawUBO;
 
 #define VTX_RING (96ull << 20)
@@ -1165,6 +1168,22 @@ static void draw_impl(int topo, const KVertex *v, uint32_t nv, const uint32_t *i
     }
     argb_to_f4(KREG(K_SPECFOG_FACTOR0), u->sfac[0]);
     argb_to_f4(KREG(K_SPECFOG_FACTOR1), u->sfac[1]);
+    for (int i = 0; i < 16; i++) {
+        u->mv[i / 4][i % 4] = kf(K_MODELVIEW + i * 4);
+        u->imv[i / 4][i % 4] = kf(K_INV_MODELVIEW + i * 4);
+    }
+    for (int st = 0; st < 4; st++) {
+        u->tgen[st] = 0;
+        if (u->mode[0] == 2) continue;
+        for (int c = 0; c < 4; c++) {
+            uint32_t g = KREG(K_TEXGEN(st, c)), code = 0;
+            if (g == 0x8512) code = 5;
+            else if (g == 0x8511) code = 4;
+            else if (g) { static uint32_t seen; if (!(seen & (1u << (g & 31)))) { seen |= 1u << (g & 31); LOG("[gpu] texgen mode %X not implemented\n", g); } }
+            u->tgen[st] |= code << (c * 8);
+        }
+    }
+    if (u->mode[0] != 2 && (KREG(K_SKIN_MODE) & 0xF)) { static int w; if (!w++) LOG("[gpu] fixed-function skinning (mode %X) not implemented\n", KREG(K_SKIN_MODE)); }
     {   /* fog function (as xemu): FOG_MODE 0x2601 linear, 0x800 exp, 0x801 exp2, 0x802/0x803 abs, 0x804 linear abs */
         uint32_t fm = KREG(K_FOG_MODE);
         memcpy(&u->fogp[0], &g_kreg[(K_FOG_PARAMS >> 2) + 0], 4);
@@ -1241,6 +1260,16 @@ static void draw_impl(int topo, const KVertex *v, uint32_t nv, const uint32_t *i
                     g_kreg[0x3D4 >> 2], g_kreg[0x3D8 >> 2], g_kreg[0x3DC >> 2], KREG(K_TEX_CONTROL0(0)) >> 30 & 1,
                     KREG(K_TEX_CONTROL0(1)) >> 30 & 1, KREG(K_TEX_CONTROL0(2)) >> 30 & 1, KREG(K_TEX_CONTROL0(3)) >> 30 & 1,
                     u->mode[2], g_kreg[0x314 >> 2]);
+                if (u->tgen[0] | u->tgen[1] | u->tgen[2] | u->tgen[3]) {
+                    /* the driver writes the inverse-transpose 3x3 of MV into IMV (translation row/col zero), same
+                     * row layout as MV: eye normal j = dot(imv[j], n) */
+                    LOG("[draw]   texgen %08X %08X %08X %08X vfmt2 %08X n0 %g %g %g\n", u->tgen[0], u->tgen[1],
+                        u->tgen[2], u->tgen[3], KREG(K_VTX_FORMAT + 8), v[0].a[2][0], v[0].a[2][1], v[0].a[2][2]);
+                    for (int i = 0; i < 4; i++)
+                        LOG("[draw]   mv %g %g %g %g | imv %g %g %g %g | comp %g %g %g %g\n", u->mv[i][0], u->mv[i][1], u->mv[i][2],
+                            u->mv[i][3], u->imv[i][0], u->imv[i][1], u->imv[i][2], u->imv[i][3], u->comp[i][0], u->comp[i][1],
+                            u->comp[i][2], u->comp[i][3]);
+                }
                 if (u->mode[2])
                     LOG("[draw]   texmat draw: tex fmt %08X %08X %08X %08X\n", KREG(K_TEX_FORMAT(0)), KREG(K_TEX_FORMAT(1)),
                         KREG(K_TEX_FORMAT(2)), KREG(K_TEX_FORMAT(3)));

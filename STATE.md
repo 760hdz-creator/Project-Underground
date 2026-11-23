@@ -95,15 +95,19 @@ print(','.join(ev))")" UG_SHOT=1200 ./out/underground.exe   (NJ level by ~frame 
     render target uses the allocated size.
   - Debug env added: UG_SKIPFMT=<hex>, UG_SKIPMODE=<m>, UG_SKIPTEXMAT=1 (both drop draws in windows where
     ((frame+150)/300) is odd; shot N shows frame N-1), UG_DRAWLOG prints fog, texgen, texmat-stage formats, pos range.
+- DONE 2026-11-23: fixed-function texgen. Gameplay draw survey (run_shadow4/run_texgen logs): lighting (0x0314) is
+  never on, no texture has the cube-map bit, only texgen seen is 0x8512 reflection map (also 0x8511 normal map
+  implemented). FF path computes eye pos (MV 0x480) and eye normal (IMV 0x580 = inverse-transpose 3x3, same row
+  layout: n_eye.j = dot(imv[j], n), checked against dumped matrices), r = u - 2(n.u)n, then texture matrix. Other
+  texgen modes and FF skinning (0x0328) log once. Most texgen draws have the stage disabled (stale state).
 - Oracle (all leaves): 2228 pass, 17 fail, 887 skip. Explained: ret imm16 sign (unicorn bug: 19430, 224EF, 3DC24,
   168D83, 181B68 are junk starts), rdtsc/cpuid stubs (173E80, 18A9D0, 1975F0, 182300). Unexamined: 11980, 48D63,
   6A330, 78820/1C5395 (st0 nan vs inf), 1945D0 (x87 top), 1C5FA7, 1F8A78.
 
 ## Next
-1. FF lighting (0x0314), texgen (stage-1 texgen 0x8512 reflection map seen on
-   texmat draws: env mapping, not implemented), cube maps; sky wedge (cosmetic); pool-floor rectangle.
-2. Renderer gaps: shader stage modes other than 2D/pass-through (mode 2 seen), cube maps, fixed-function lighting
-   (0x0314 = 1 seen), fog, MSAA, widescreen, CPU-drawn loading bar (writes guest framebuffer RAM directly).
+1. Sky wedge (cosmetic); pool-floor rectangle (UG_DBGCOLOR=7).
+2. Renderer gaps (not seen in NJ so far: check other levels first): FF lighting, cube maps, eye/object-linear and
+   sphere texgen, MSAA, widescreen, CPU-drawn loading bar (writes guest framebuffer RAM directly).
 3. Oracle fails above. Unimplemented lifter sites (46: enter, segment movs, fnsave/frstor).
 4. Installer (llvm-mingw fetched on the player PC, build like Gauntlet's gt_build.py), Linux port, PS2 HD textures.
 - Not pushed since the initial commits (user rule: push only when asked).
