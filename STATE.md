@@ -154,6 +154,15 @@ print(','.join(ev))")" UG_SHOT=1200 ./out/underground.exe   (NJ level by ~frame 
    build_linux.sh, package_linux.sh as models), Android port (Gauntlet tools/build_android.sh, gt_android.py,
    android/ as models; Vulkan), then the first release of all three together. PS2 HD textures last.
    NOTE: main.c already has #ifndef _WIN32 / __ANDROID__ branches from the Gauntlet port (sdl_plat.c referenced).
+   LINUX PORT (2026-11-23): runtime/src/linux (win32.c, sdl_plat.c, pad_sdl.c, include/windows.h from Gauntlet;
+   windows.h sits on DXVK Native's include/native/windows headers, build time only). gpu_vulkan.c: SDL instance
+   extensions + SDL_Vulkan_CreateSurface on Linux. `bash tools/build_linux.sh ~/ug-linux --lifted ~/ug-lifted`
+   in WSL (libugrt.a + lib/libSDL3.so.0; lifted flags = build.py LIFT_FLAGS; runtime -Werror=implicit-function-
+   declaration etc.). Test data on ext4: ~/ug-run/game (copy of extracted/), ~/ug-run/underground -> ~/ug-linux.
+   RESULT: boots, reboot relaunch, Bink intro, scripted route reaches NJ gameplay (out/linux/route.sh; shots in
+   out/linux). WSL GPU = llvmpipe (~9 fps in 3D, 30 in Bink): correctness only. pgrep name after relaunch: "exe".
+   NEXT (Linux): lift under WSL python3 byte-identical (needs capstone), tools/ug_build.py Linux branch,
+   installer/linux/setup.sh + README-Linux.txt, tools/package_linux.sh, updater asset ProjectUnderground-Linux*.
 - Not pushed since the initial commits (user rule: push only when asked).
 - Repos: origin gitlab.com/octagram-labs-group/Project-Underground, forge 8gramlabs/Project-Underground (both public).
   Homepage card live (placeholder image landing/img/thug.jpg: replace with a screenshot later). release-sync REPOS updated.
