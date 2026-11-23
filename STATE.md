@@ -183,7 +183,8 @@ print(','.join(ev))")" UG_SHOT=1200 ./out/underground.exe   (NJ level by ~frame 
      with the payload python against G:\ug_test: OK (NDK in G:\ug_test\android\ndk, APK 3.4 GB there: delete with
      the other test dirs). Installer rebuilt with the kit (20.1 MB); the launcher shows "Android...".
    - Windows payload needs dist\_cache\android-kit (copy of WSL ~/uga/build/android-kit).
-   NEXT: phone test (connect it on adb): install the player APK, first-start unpack (3.2 GB), relaunch via
+   PAUSED (user away from the Galaxy S26 Ultra, 2026-11-23): resume when they are home. Meanwhile work on Next 1-2
+   (renderer gaps in other levels). Phone test (connect it on adb): install the player APK, first-start unpack (3.2 GB), relaunch via
    RestartActivity, intro, menus, touch controls, background/resume, swapchain transform (log line
    "transform X"), fps. Then the release (user says push).
 - Not pushed since the initial commits (user rule: push only when asked).
