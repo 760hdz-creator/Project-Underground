@@ -12,8 +12,14 @@
  */
 #define WIN32_LEAN_AND_MEAN
 #include <windows.h>
+#ifdef _WIN32
 #define VK_USE_PLATFORM_WIN32_KHR
+#endif
 #include "volk.h"
+#ifndef _WIN32
+#include <SDL3/SDL.h>
+#include <SDL3/SDL_vulkan.h>
+#endif
 #include <math.h>
 #include <stdarg.h>
 #include <stdlib.h>
@@ -32,6 +38,8 @@ static int gpu_ok;
 static uint32_t frame_no;
 
 /* ================================================================ window */
+
+#ifdef _WIN32
 
 static void toggle_fullscreen(HWND h) {
     static WINDOWPLACEMENT saved = {sizeof saved};
@@ -111,6 +119,7 @@ static DWORD WINAPI window_thread(LPVOID ev) {
     while (GetMessageW(&msg, NULL, 0, 0) > 0) { TranslateMessage(&msg); DispatchMessageW(&msg); }
     return 0;
 }
+#endif   /* Linux: linux/sdl_plat.c makes the window; sched_run pumps its events on the main thread */
 
 /* ================================================================ Vulkan core */
 
@@ -315,6 +324,12 @@ static int swapchain_create(void) {
         if (fmts[i].format == VK_FORMAT_B8G8R8A8_UNORM || fmts[i].format == VK_FORMAT_R8G8B8A8_UNORM) { pick = fmts[i]; break; }
     sc_fmt = pick.format;
     sc_ext = caps.currentExtent;
+    if (sc_ext.width == UINT32_MAX) {   /* Wayland: the surface takes the swapchain's size; use the window's */
+        RECT cr;
+        GetClientRect(g_hwnd, &cr);
+        sc_ext.width = (uint32_t)(cr.right > 0 ? cr.right : 640);
+        sc_ext.height = (uint32_t)(cr.bottom > 0 ? cr.bottom : 480);
+    }
     uint32_t want = caps.minImageCount + 1;
     if (caps.maxImageCount && want > caps.maxImageCount) want = caps.maxImageCount;
     VkPresentModeKHR modes[8];
@@ -971,16 +986,31 @@ static void frame_begin(void) {
 }
 
 static int vk_init(void) {
+#ifdef _WIN32
     if (volkInitialize() != VK_SUCCESS) { LOG("[gpu] no Vulkan loader (vulkan-1.dll): install a GPU driver with Vulkan\n"); return 0; }
-    VkApplicationInfo app = {VK_STRUCTURE_TYPE_APPLICATION_INFO, 0, "Project Underground", 1, "underground", 1, VK_API_VERSION_1_3};
     const char *exts[] = {VK_KHR_SURFACE_EXTENSION_NAME, VK_KHR_WIN32_SURFACE_EXTENSION_NAME};
-    VkInstanceCreateInfo ici = {VK_STRUCTURE_TYPE_INSTANCE_CREATE_INFO, 0, 0, &app, 0, 0, 2, exts};
+    uint32_t n_exts = 2;
+#else
+    if (volkInitialize() != VK_SUCCESS) { LOG("[gpu] no Vulkan loader (libvulkan.so.1): install your GPU's Vulkan driver\n"); return 0; }
+    Uint32 n_exts = 0;
+    const char *const *exts = SDL_Vulkan_GetInstanceExtensions(&n_exts);
+    if (!exts) { LOG("[gpu] SDL_Vulkan_GetInstanceExtensions: %s\n", SDL_GetError()); return 0; }
+#endif
+    VkApplicationInfo app = {VK_STRUCTURE_TYPE_APPLICATION_INFO, 0, "Project Underground", 1, "underground", 1, VK_API_VERSION_1_3};
+    VkInstanceCreateInfo ici = {VK_STRUCTURE_TYPE_INSTANCE_CREATE_INFO, 0, 0, &app, 0, 0, n_exts, exts};
     const char *layer = "VK_LAYER_KHRONOS_validation";
     if (getenv("UG_VKDEBUG")) { ici.enabledLayerCount = 1; ici.ppEnabledLayerNames = &layer; }
     VKC(vkCreateInstance(&ici, 0, &inst));
     volkLoadInstance(inst);
+#ifdef _WIN32
     VkWin32SurfaceCreateInfoKHR sci = {VK_STRUCTURE_TYPE_WIN32_SURFACE_CREATE_INFO_KHR, 0, 0, GetModuleHandleW(NULL), g_hwnd};
     VKC(vkCreateWin32SurfaceKHR(inst, &sci, 0, &surface));
+#else
+    if (!SDL_Vulkan_CreateSurface((SDL_Window *)g_hwnd, inst, NULL, &surface)) {
+        LOG("[gpu] SDL_Vulkan_CreateSurface: %s\n", SDL_GetError());
+        return 0;
+    }
+#endif
     /* device: prefer discrete GPUs with Vulkan 1.3 and a graphics queue that can present */
     uint32_t n = 8;
     VkPhysicalDevice pds[8];
@@ -1095,10 +1125,15 @@ void gpu_init(void) {
     gpu_ok = -1;
     if (getenv("UG_HEADLESS") && *getenv("UG_HEADLESS") == '1') { LOG("[gpu] headless: no window, nothing drawn\n"); return; }
     if (getenv("UG_SCALE")) { g_scale = atoi(getenv("UG_SCALE")); if (g_scale < 1) g_scale = 1; if (g_scale > 8) g_scale = 8; }
+#ifdef _WIN32
     HANDLE ev = CreateEventW(NULL, TRUE, FALSE, NULL);
     CreateThread(NULL, 0, window_thread, ev, 0, NULL);
     WaitForSingleObject(ev, INFINITE);
     CloseHandle(ev);
+#else
+    g_hwnd = linux_create_window();
+    if (!g_hwnd) return;
+#endif
     if (vk_init()) gpu_ok = 1;
 }
 

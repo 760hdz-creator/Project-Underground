@@ -20,6 +20,13 @@ static DWORD (WINAPI *host_set_state)(DWORD, void *);
 static void host_xinput_init(void) {
     static int done;
     if (done++) return;
+#ifndef _WIN32
+    if (pad_sdl_init()) {   /* Linux: SDL3 gamepads (pad_sdl.c), same XINPUT_STATE layout */
+        host_get_state = (void *)pad_sdl_get_state;
+        host_set_state = (void *)pad_sdl_set_state;
+        return;
+    }
+#endif
     HMODULE m = LoadLibraryA("xinput1_4.dll");
     if (!m) m = LoadLibraryA("xinput9_1_0.dll");
     if (m) host_get_state = (void *)GetProcAddress(m, "XInputGetState");
