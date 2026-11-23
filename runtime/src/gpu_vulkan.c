@@ -32,6 +32,7 @@
 #include "xxhash.h"
 
 static int has_depth_clamp;
+static float g_aniso;   /* max sampler anisotropy, 0 = off (UG_ANISO) */
 static int has_bc = 1;   /* textureCompressionBC: most Mali and older Adreno GPUs lack it (UG_NOBC=1 forces the CPU path) */
 static VkSurfaceTransformFlagBitsKHR sc_transform;
 static int g_scale = 2;   /* UG_SCALE=1..8: host render-target scale over the guest resolution */
@@ -936,7 +937,8 @@ volatile int g_hd_hidden;
 static int hd_shot_ab = -1, shot_every = -1;
 static VkImageView tex_view(TexEntry *e) {
     if (hd_shot_ab < 0) { const char *a = getenv("UG_SHOTAB"); hd_shot_ab = a && *a == '1'; }
-    int off = g_hd_hidden || (hd_shot_ab && shot_every > 0 && frame_no % (uint32_t)shot_every == 1);
+    /* frame_no counts flips: while frame N+1 is drawn, frame_no is still N */
+    int off = g_hd_hidden || (hd_shot_ab && shot_every > 0 && frame_no % (uint32_t)shot_every == 0);
     return e->hd > 0 && e->hdim.img && !off ? e->hdim.view : e->im.view;
 }
 
@@ -1105,6 +1107,10 @@ static VkSampler get_sampler(int i, int rect) {
     ci.mipmapMode = mip_lin ? VK_SAMPLER_MIPMAP_MODE_LINEAR : VK_SAMPLER_MIPMAP_MODE_NEAREST;
     ci.addressModeU = addr_mode(a & 0xF); ci.addressModeV = addr_mode((a >> 8) & 0xF); ci.addressModeW = addr_mode((a >> 16) & 0xF);
     ci.maxLod = mips && !rect ? 16.0f : 0.0f;
+    if (g_aniso > 0 && mips && min_lin && !rect) {
+        ci.anisotropyEnable = VK_TRUE;
+        ci.maxAnisotropy = g_aniso < pprops.limits.maxSamplerAnisotropy ? g_aniso : pprops.limits.maxSamplerAnisotropy;
+    }
     ci.borderColor = (b >> 24) < 0x80 ? VK_BORDER_COLOR_FLOAT_TRANSPARENT_BLACK :
                      (b & 0xFFFFFF) > 0x808080 ? VK_BORDER_COLOR_FLOAT_OPAQUE_WHITE : VK_BORDER_COLOR_FLOAT_OPAQUE_BLACK;
     VkSampler s = 0;
@@ -1317,6 +1323,12 @@ static int vk_init(void) {
         vkGetPhysicalDeviceFeatures(pdev, &have);
         f2.features.depthClamp = have.depthClamp;
         has_depth_clamp = have.depthClamp;
+        /* anisotropic filtering (UG_ANISO=1..16, default 16; 0/1 = off): ground and walls seen at an angle keep their
+         * detail instead of falling to small mips (the NV2A had none; matters most with UG_SCALE > 1 and HD packs) */
+        const char *an = getenv("UG_ANISO");
+        g_aniso = an ? (float)atof(an) : 16.0f;
+        if (!have.samplerAnisotropy || g_aniso < 1.5f) g_aniso = 0;
+        f2.features.samplerAnisotropy = g_aniso > 0;
         const char *nobc = getenv("UG_NOBC");
         has_bc = have.textureCompressionBC && !(nobc && *nobc == '1');
         f2.features.textureCompressionBC = (VkBool32)has_bc;
