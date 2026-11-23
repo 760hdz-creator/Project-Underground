@@ -143,8 +143,10 @@ print(','.join(ev))")" UG_SHOT=1200 ./out/underground.exe   (NJ level by ~frame 
       CLEANUP of that test (by hand): rmdir junction G:\ug_inst\toolchain FIRST, then delete G:\ug_inst, G:\ug_test,
       G:\ug_test2 (same junction rule); HKCU\Software\ProjectUnderground, HKCU\...\Uninstall\ProjectUnderground;
       shortcuts Desktop (OneDrive) and Start Menu "Project Underground.lnk".
-      UNTESTED: uninstall, launcher clicks (Play/Logs/Update), settings.ini writes, --update, real llvm-mingw download,
-      clean PC / Sandbox. docs/installer.md not written yet.
+      --update and --uninstall TESTED OK later (see docs/installer.md "Verified"); uninstall removed the registry
+      keys and shortcuts itself; only G:\ug_inst\out remains. Still delete by hand: G:\ug_inst, and G:\ug_test +
+      G:\ug_test2 (rmdir their toolchain junctions FIRST).
+      UNTESTED: launcher clicks (Play/Logs/Update), settings.ini writes, real llvm-mingw download, clean PC / Sandbox.
    e. Bump VERSION locally only. No tag/push/release until the user says push.
    Then: Linux port, PS2 HD textures.
 - Not pushed since the initial commits (user rule: push only when asked).
