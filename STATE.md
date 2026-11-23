@@ -133,6 +133,18 @@ print(','.join(ev))")" UG_SHOT=1200 ./out/underground.exe   (NJ level by ~frame 
       dev version, licenses: Vulkan-Headers, volk, xxhash, CPython, capstone).
    d. installer/setup.cpp port built with llvm-mingw (-static, -municode, llvm-rc), neutral placeholder art (user
       art wanted; never Activision art), launcher + updater (forge releases/latest).
+      Game-side updater DONE 73cca5c (runtime/src/updater.c from Gauntlet): ug_test build logged "no release
+      found" (own repo) and, with UG_UPDATE_REPO=8gramlabs/Project-Gauntlet UG_UPDATE_ASSET=ProjectGauntlet-Setup,
+      "v0.2.1 available (installed 0.1.0)" (prompt shown; download/run step untested).
+   d. DONE (setup.cpp ported by a subagent, reviewed): `python -I installer\build.py` -> dist\ProjectUnderground-
+      Setup-0.1.0.exe (15.8 MB, system DLLs only). Launcher settings: UG_FULLSCREEN, UG_FPS (30 when unticked),
+      UG_VSYNC (default on; unticked = 0, matches gpu_vulkan.c), UG_MONITOR, UG_SCALE, UG_PADS. Neutral placeholder
+      art from installer/art/*.py (user art welcome). `--iso ... --dir G:\ug_inst` test OK (~53 s).
+      CLEANUP of that test (by hand): rmdir junction G:\ug_inst\toolchain FIRST, then delete G:\ug_inst, G:\ug_test,
+      G:\ug_test2 (same junction rule); HKCU\Software\ProjectUnderground, HKCU\...\Uninstall\ProjectUnderground;
+      shortcuts Desktop (OneDrive) and Start Menu "Project Underground.lnk".
+      UNTESTED: uninstall, launcher clicks (Play/Logs/Update), settings.ini writes, --update, real llvm-mingw download,
+      clean PC / Sandbox. docs/installer.md not written yet.
    e. Bump VERSION locally only. No tag/push/release until the user says push.
    Then: Linux port, PS2 HD textures.
 - Not pushed since the initial commits (user rule: push only when asked).

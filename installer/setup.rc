@@ -1,0 +1,9 @@
+#include "resource.h"
+#include <winresrc.h>
+
+IDI_APP          ICON   "res/app.ico"
+IDR_INSTALLER_BG RCDATA "res/installer_bg.png"
+IDR_SETUP_ICON   RCDATA "res/app.ico"
+IDR_PAYLOAD      RCDATA "../dist/payload.zip"
+
+1 24 "setup.manifest"
