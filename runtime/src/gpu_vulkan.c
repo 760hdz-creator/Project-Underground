@@ -577,11 +577,13 @@ typedef struct {
     uint32_t addr, fmt, pitch, pal_addr, pal_len;
     uint64_t hash;
     uint32_t last_frame;
-    int w, h;
+    int w, h, levels;
     Img im;
 } TexEntry;
 #define TEX_CACHE 4096
 static TexEntry tcache[TEX_CACHE];
+#define ADDR_SLOTS 4096
+static TexEntry *addr_slot[ADDR_SLOTS];   /* latest entry per texture address (in-place re-upload) */
 static Img white_tex;
 static uint32_t st_draws, st_verts, st_newtex;
 
@@ -642,8 +644,8 @@ static int create_texture(TexEntry *e, TexFmt f, int levels, const uint32_t *pal
     }
     VkFormat vf = f.kind == TF_DXT1 ? VK_FORMAT_BC1_RGBA_UNORM_BLOCK : f.kind == TF_DXT3 ? VK_FORMAT_BC2_UNORM_BLOCK :
                   f.kind == TF_DXT5 ? VK_FORMAT_BC3_UNORM_BLOCK : VK_FORMAT_R8G8B8A8_UNORM;
-    if (!img_create(&e->im, w, h, nl, vf, VK_IMAGE_USAGE_SAMPLED_BIT | VK_IMAGE_USAGE_TRANSFER_DST_BIT,
-                    VK_IMAGE_ASPECT_COLOR_BIT)) return 0;
+    if (!e->im.img && !img_create(&e->im, w, h, nl, vf, VK_IMAGE_USAGE_SAMPLED_BIT | VK_IMAGE_USAGE_TRANSFER_DST_BIT,
+                                  VK_IMAGE_ASPECT_COLOR_BIT)) return 0;   /* an existing image is re-uploaded in place */
     barrier(fr->up, &e->im, VK_IMAGE_ASPECT_COLOR_BIT, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL);
     vkCmdCopyBufferToImage(fr->up, fr->stage.buf, e->im.img, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, nl, regions);
     barrier(fr->up, &e->im, VK_IMAGE_ASPECT_COLOR_BIT, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
@@ -712,6 +714,22 @@ static VkImageView get_texture(int i, int *rect, int *tw, int *th) {
             return e->im.view;
         }
     }
+    /* same texture slot rewritten (movie frames, render-to-memory): re-upload into the previous image, unless that
+     * image was already sampled this frame (the upload command buffer runs before this frame's draws) */
+    uint32_t aslot = ((addr * 0x9E3779B1u) ^ (fmtw * 0x85EBCA77u)) >> 20 & (ADDR_SLOTS - 1);
+    TexEntry *old_e = addr_slot[aslot];
+    if (old_e && old_e->im.img && old_e->addr == addr && old_e->fmt == fmtw && old_e->pitch == pitch && old_e->w == w &&
+        old_e->h == h && old_e->pal_addr == pal_addr && old_e->pal_len == pal_len && old_e->last_frame != frame_no &&
+        old_e->levels == levels) {
+        if (pal_len)
+            for (uint32_t k = 0; k < 256; k++) {
+                uint32_t c = k < pal_len ? RD32(pal_addr + k * 4) : 0;
+                palette[k] = ((c >> 16) & 0xFF) | (c & 0xFF00) | ((c & 0xFF) << 16) | (c & 0xFF000000u);
+            }
+        old_e->hash = hsh; old_e->last_frame = frame_no;
+        if (!create_texture(old_e, f, levels, palette)) return 0;
+        return old_e->im.view;
+    }
     TexEntry *v = &tcache[slot];
     for (int probe = 0; probe < 8; probe++) {
         TexEntry *e = &tcache[(slot + probe) % TEX_CACHE];
@@ -725,8 +743,9 @@ static VkImageView get_texture(int i, int *rect, int *tw, int *th) {
             palette[k] = ((c >> 16) & 0xFF) | (c & 0xFF00) | ((c & 0xFF) << 16) | (c & 0xFF000000u);
         }
     v->addr = addr; v->fmt = fmtw; v->pitch = pitch; v->w = w; v->h = h; v->pal_addr = pal_addr; v->pal_len = pal_len;
-    v->hash = hsh; v->last_frame = frame_no;
+    v->hash = hsh; v->last_frame = frame_no; v->levels = levels;
     if (!create_texture(v, f, levels, palette)) return 0;
+    addr_slot[aslot] = v;
     return v->im.view;
 }
 
@@ -1302,6 +1321,9 @@ static void submit_and_present(Surface *s) {
 static void flip_impl(uint32_t addr) {
     if (!ready()) return;
     frame_no++;
+    if (frame_no % 60 == 0)   /* evict textures idle for 10 s */
+        for (int i = 0; i < TEX_CACHE; i++)
+            if (tcache[i].im.img && frame_no - tcache[i].last_frame > 600) img_destroy_later(&tcache[i].im);
     /* XDK 5659 swaps without naming the front buffer (4242 left it in 1D8C): present the surface just rendered */
     Surface *s = find_rt(addr);
     if (!s) s = cur_rt;
