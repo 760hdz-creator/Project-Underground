@@ -49,6 +49,16 @@ Gauntlet's installer (G:\Project Gauntlet\docs\installer.md) without its Visual 
   and the updater loop against a local release JSON (UG_UPDATE_API, fake zenity): prompt, download, rebuild, relaunch.
   Scripted route reaches NJ gameplay. Not tested: a real GPU on Linux, real controllers, Wayland desktop sessions.
 
+## Android
+- Kit: `tools/build_android.sh <dir>` in WSL -> <dir>/android-kit (libugrt.a, include/, template.apk with SDL3 + our
+  Java, no game code). Windows payload: copy it to dist/_cache/android-kit before package.py. Linux package builds it.
+- Player: launcher "Android..." (Windows) or `setup.sh --android` (Linux) runs tools/ug_android.py: NDK r27c
+  downloaded once into <install>/android/ndk, lifted code -> libmain.so (LIFT_FLAGS + -fsigned-char), template +
+  game files as assets, APK Signature Scheme v2 with a per-PC key (<install>/android/signing-key.json, kept by
+  uninstall). APK ~3.4 GB; the app unpacks the files to Android/data/<pkg>/files/game on first start.
+- Verified 2026-11-23: Linux (WSL) and Windows (payload python, NDK download) both build a signed, aligned APK.
+  NOT yet run on a phone.
+
 ## Release steps (only when the user says push)
 1. Bump `VERSION`; `git add` new tracked files (package.py stages from `git ls-files`).
 2. `python -I installer\build.py`.

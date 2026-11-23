@@ -284,6 +284,35 @@ static void Work(std::wstring iso, std::wstring dir, bool desktop, bool startMen
     done(true);
 }
 
+// ---- Android: tools\ug_android.py builds an APK from this install (NDK downloaded once into <install>\android) ----
+static std::wstring g_apk;
+static HWND g_androidBtn;
+static void BuildAndroid() {
+    g_error.clear();
+    g_apk.clear();
+    std::wstring cmd = L"\"" + g_instDir + L"\\python\\python.exe\" -I \"" + g_instDir + L"\\tools\\ug_android.py\" --root \"" +
+                       g_instDir + L"\" --accept-ndk-license";
+    CreateDirectoryW((g_instDir + L"\\build").c_str(), nullptr);
+    HANDLE log = CreateFileW((g_instDir + L"\\build\\android.log").c_str(), GENERIC_WRITE, FILE_SHARE_READ, nullptr,
+                             CREATE_ALWAYS, 0, nullptr);
+    std::wstring err;
+    int code = RunLines(cmd, g_instDir, [&](const std::string& l) {
+        DWORD w;
+        if (log != INVALID_HANDLE_VALUE) { WriteFile(log, l.data(), (DWORD)l.size(), &w, nullptr); WriteFile(log, "\r\n", 2, &w, nullptr); }
+        if (!l.compare(0, 3, "## ")) PostStatus(L"Android: " + Widen(l.substr(3)) + L"...");
+        else if (!l.compare(0, 7, "ERROR: ")) err = Widen(l.substr(7));
+        else if (!l.compare(0, 5, "APK: ")) g_apk = Widen(l.substr(5));
+        else if (!l.compare(0, 9, "compiled ") || !l.compare(0, 11, "downloaded ") || !l.compare(0, 9, "unpacked ") ||
+                 !l.compare(0, 7, "packed ")) {
+            PostStatus(L"Android: " + Widen(l) + L"...");
+        }
+    });
+    if (log != INVALID_HANDLE_VALUE) CloseHandle(log);
+    bool ok = code == 0 && !g_apk.empty() && Exists(g_apk);
+    if (!ok) g_error = (err.empty() ? L"The Android build failed." : err) + L"\n\nLog: " + g_instDir + L"\\build\\android.log";
+    PostMessageW(g_wnd, WM_APP_ANDROID, ok, 0);
+}
+
 static int Uninstall(const std::wstring& dir) {
     if (dir.empty() || !Exists(dir + L"\\underground.ico")) {
         MessageBoxW(nullptr, L"Project Underground is not installed.", kAppName, MB_OK);
@@ -867,35 +896,6 @@ static void MakeCombo(int id, const Choice* c, int n, int x, int y, int w, HFONT
     HWND cb = Make(L"COMBOBOX", L"", CBS_DROPDOWNLIST | WS_VSCROLL | WS_TABSTOP, id, x, y, w, 300, font);
     SetWindowTheme(cb, L"", L"");
     for (int i = 0; i < n; i++) SendMessageW(cb, CB_ADDSTRING, 0, (LPARAM)c[i].label);
-}
-
-// ---- Android: tools\ug_android.py builds an APK from this install (NDK downloaded once into <install>\android) ----
-static std::wstring g_apk;
-static HWND g_androidBtn;
-static void BuildAndroid() {
-    g_error.clear();
-    g_apk.clear();
-    std::wstring cmd = L"\"" + g_instDir + L"\\python\\python.exe\" -I \"" + g_instDir + L"\\tools\\ug_android.py\" --root \"" +
-                       g_instDir + L"\" --accept-ndk-license";
-    CreateDirectoryW((g_instDir + L"\\build").c_str(), nullptr);
-    HANDLE log = CreateFileW((g_instDir + L"\\build\\android.log").c_str(), GENERIC_WRITE, FILE_SHARE_READ, nullptr,
-                             CREATE_ALWAYS, 0, nullptr);
-    std::wstring err;
-    int code = RunLines(cmd, g_instDir, [&](const std::string& l) {
-        DWORD w;
-        if (log != INVALID_HANDLE_VALUE) { WriteFile(log, l.data(), (DWORD)l.size(), &w, nullptr); WriteFile(log, "\r\n", 2, &w, nullptr); }
-        if (!l.compare(0, 3, "## ")) PostStatus(L"Android: " + Widen(l.substr(3)) + L"...");
-        else if (!l.compare(0, 7, "ERROR: ")) err = Widen(l.substr(7));
-        else if (!l.compare(0, 5, "APK: ")) g_apk = Widen(l.substr(5));
-        else if (!l.compare(0, 9, "compiled ") || !l.compare(0, 11, "downloaded ") || !l.compare(0, 9, "unpacked ") ||
-                 !l.compare(0, 7, "packed ")) {
-            PostStatus(L"Android: " + Widen(l) + L"...");
-        }
-    });
-    if (log != INVALID_HANDLE_VALUE) CloseHandle(log);
-    bool ok = code == 0 && !g_apk.empty() && Exists(g_apk);
-    if (!ok) g_error = (err.empty() ? L"The Android build failed." : err) + L"\n\nLog: " + g_instDir + L"\\build\\android.log";
-    PostMessageW(g_wnd, WM_APP_ANDROID, ok, 0);
 }
 
 static void CreateLauncherControls() {
