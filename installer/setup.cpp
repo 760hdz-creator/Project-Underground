@@ -52,7 +52,7 @@ static const wchar_t kShortcut[] = L"Project Underground.lnk";
 
 enum { ID_ISO_BROWSE = 200, ID_DIR_BROWSE, ID_DESKTOP, ID_STARTMENU, ID_INSTALL, ID_PROGRESS,
        ID_STATUS, ID_PLAY, ID_UPDATE, ID_UNINSTALL, ID_FULLSCREEN, ID_SCALE, ID_PADS, ID_FPS60, ID_VSYNC, ID_LOGS,
-       ID_MONITOR, ID_ANDROID, ID_SETTINGS, ID_QUIT, ID_CLOSE, ID_WINSIZE, ID_SCREEN, ID_FIT, ID_LEVEL };
+       ID_MONITOR, ID_ANDROID, ID_SETTINGS, ID_QUIT, ID_CLOSE, ID_WINSIZE, ID_SCREEN, ID_FIT, ID_LEVEL, ID_HD };
 #define WM_APP_STATUS (WM_APP + 1)
 #define WM_APP_PROGRESS (WM_APP + 2)
 #define WM_APP_DONE (WM_APP + 3)
@@ -635,9 +635,9 @@ static void BuildArt(int w, int h) {
         DeleteObject(pen);
         ArtText(pd, {260, 665, 1500, 755}, g_titleFont, kAccent, L"SETTINGS", DT_SINGLELINE | DT_VCENTER);
         static const wchar_t* rows[] = {L"Monitor", L"Window size", L"Screen", L"Picture", L"Render scale",
-                                        L"Players (gamepads)", L"Level (test cheat)"};
-        for (int i = 0; i < 7; i++)
-            ArtText(pd, {260, 855 + 75 * i, 700, 915 + 75 * i}, g_font, kText, rows[i], DT_SINGLELINE | DT_VCENTER);
+                                        L"Players (gamepads)", L"Level (test cheat)", L"HD texture pack"};
+        for (int i = 0; i < 8; i++)
+            ArtText(pd, {260, 840 + 68 * i, 700, 900 + 68 * i}, g_font, kText, rows[i], DT_SINGLELINE | DT_VCENTER);
         ArtText(pd, {700, 665, 1500, 755}, g_smallFont, kDim, L"Saved at once to settings.ini",
                 DT_SINGLELINE | DT_VCENTER | DT_RIGHT);
     }
@@ -863,7 +863,60 @@ static void Launch(const std::wstring& dir) {
 // Launcher settings controls (shown on the panel over the art when the SETTINGS board is on).
 static HWND g_settingsBtn;
 static const int kSettingIds[] = {ID_FULLSCREEN, ID_FPS60, ID_VSYNC, ID_MONITOR, ID_WINSIZE, ID_SCREEN, ID_FIT, ID_SCALE,
-                                  ID_PADS, ID_LEVEL};
+                                  ID_PADS, ID_LEVEL, ID_HD};
+// HD texture pack (UG_HDTEX=<folder>, runtime/src/hdtex.c): a PCSX2 replacement pack made for the PS2 version, used
+// where it is. Combo: Off / the folder / Choose folder... The folder is remembered in [launcher] HdFolder while off.
+static int CountDds(const std::wstring& dir, int depth = 0) {
+    if (depth > 6) return 0;
+    int n = 0;
+    WIN32_FIND_DATAW fd;
+    HANDLE h = FindFirstFileW((dir + L"\\*").c_str(), &fd);
+    if (h == INVALID_HANDLE_VALUE) return 0;
+    do {
+        if (fd.cFileName[0] == L'.') continue;
+        if (fd.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY) n += CountDds(dir + L"\\" + fd.cFileName, depth + 1);
+        else {
+            size_t l = wcslen(fd.cFileName);
+            if (l > 4 && !_wcsicmp(fd.cFileName + l - 4, L".dds")) n++;
+        }
+    } while (FindNextFileW(h, &fd));
+    FindClose(h);
+    return n;
+}
+static void FillHdCombo() {
+    HWND cb = GetDlgItem(g_wnd, ID_HD);
+    SendMessageW(cb, CB_RESETCONTENT, 0, 0);
+    std::wstring on = IniGet(g_instDir, L"settings", L"UG_HDTEX"), folder = on.empty() ? IniGet(g_instDir, L"launcher", L"HdFolder") : on;
+    SendMessageW(cb, CB_ADDSTRING, 0, (LPARAM)L"Off (original textures, default)");
+    if (!folder.empty()) SendMessageW(cb, CB_ADDSTRING, 0, (LPARAM)(L"On: " + folder).c_str());
+    SendMessageW(cb, CB_ADDSTRING, 0, (LPARAM)L"Choose pack folder...");
+    SendMessageW(cb, CB_SETCURSEL, on.empty() ? 0 : 1, 0);
+}
+static void HdComboChanged() {
+    HWND cb = GetDlgItem(g_wnd, ID_HD);
+    int sel = (int)SendMessageW(cb, CB_GETCURSEL, 0, 0), n = (int)SendMessageW(cb, CB_GETCOUNT, 0, 0);
+    std::wstring folder = IniGet(g_instDir, L"launcher", L"HdFolder");
+    if (sel == n - 1) {   // Choose pack folder...
+        std::wstring pick = BrowseFolder();
+        if (!pick.empty()) {
+            int dds = CountDds(pick);
+            if (!dds) {
+                MessageBoxW(g_wnd, L"No .dds textures in that folder. Pick the pack's \"replacements\" folder (or a folder "
+                                   L"above it), e.g. ...\\SLUS-20731\\replacements.", kAppName, MB_OK | MB_ICONWARNING);
+            } else {
+                folder = pick;
+                IniSet(g_instDir, L"launcher", L"HdFolder", folder);
+                IniSet(g_instDir, L"settings", L"UG_HDTEX", folder);
+                SetWindowTextW(g_status, (L"HD texture pack: " + std::to_wstring(dds) + L" textures. F10 in the game "
+                                          L"switches them on and off.").c_str());
+            }
+        }
+    } else {
+        IniSet(g_instDir, L"settings", L"UG_HDTEX", sel == 1 && !folder.empty() ? folder : L"");
+    }
+    FillHdCombo();
+}
+
 static void ShowSettings(bool on) {
     g_panel = on;
     SelectObject(g_artDC, on ? g_artPanelBmp : g_artBmp);
@@ -913,6 +966,9 @@ static bool LauncherCommand(HWND h, int id, int code) {
         return true;
     case ID_FULLSCREEN: case ID_FPS60: case ID_VSYNC:
         if (code == BN_CLICKED) SaveSettings();
+        return true;
+    case ID_HD:
+        if (code == CBN_SELCHANGE) HdComboChanged();
         return true;
     case ID_SCALE: case ID_PADS: case ID_MONITOR: case ID_WINSIZE: case ID_SCREEN: case ID_FIT: case ID_LEVEL:
         if (code == CBN_SELCHANGE) SaveSettings();
@@ -1068,13 +1124,15 @@ static void CreateLauncherControls() {
     MakeCheck(L"Fullscreen", ID_FULLSCREEN, 260, 772, 380);
     MakeCheck(L"60 fps", ID_FPS60, 700, 772, 300);
     MakeCheck(L"VSync", ID_VSYNC, 1060, 772, 300);
-    MakeCombo(ID_MONITOR, kMonitor, g_nMonitors, 720, 860, 780);
-    MakeCombo(ID_WINSIZE, kWinSize, 8, 720, 935, 780);
-    MakeCombo(ID_SCREEN, kScreen, 2, 720, 1010, 780);
-    MakeCombo(ID_FIT, kFit, 2, 720, 1085, 780);
-    MakeCombo(ID_SCALE, kScale, 6, 720, 1160, 780);
-    MakeCombo(ID_PADS, kPads, 4, 720, 1235, 780);
-    MakeCombo(ID_LEVEL, kLevel, 18, 720, 1310, 780);
+    MakeCombo(ID_MONITOR, kMonitor, g_nMonitors, 720, 845, 780);
+    MakeCombo(ID_WINSIZE, kWinSize, 8, 720, 913, 780);
+    MakeCombo(ID_SCREEN, kScreen, 2, 720, 981, 780);
+    MakeCombo(ID_FIT, kFit, 2, 720, 1049, 780);
+    MakeCombo(ID_SCALE, kScale, 6, 720, 1117, 780);
+    MakeCombo(ID_PADS, kPads, 4, 720, 1185, 780);
+    MakeCombo(ID_LEVEL, kLevel, 18, 720, 1253, 780);
+    MakeCombo(ID_HD, nullptr, 0, 720, 1321, 780);
+    FillHdCombo();
     for (int id : kSettingIds) ShowWindow(GetDlgItem(g_wnd, id), SW_HIDE);
     LoadSettings();
     SetFocus(play);

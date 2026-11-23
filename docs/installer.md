@@ -39,6 +39,19 @@ Gauntlet's installer (G:\Project Gauntlet\docs\installer.md) without its Visual 
   a newer tag asks, downloads `ProjectUnderground-Setup-*.exe`, runs `--update --dir <install>`. Off for dev builds,
   UG_INPUT runs, UG_NOUPDATE=1. Test overrides UG_UPDATE_REPO / UG_UPDATE_ASSET / UG_UPDATE_API.
 
+## HD texture packs
+- `UG_HDTEX=<folder>` (runtime/src/hdtex.c): every .dds below it (PCSX2 replacement pack for the PS2 version) gives a
+  thumbnail (its mip whose larger side is 16 px). gpu_vulkan.c matches each new guest texture (level 0 as RGBA, DXT or
+  swizzled; I8 not yet) against pack thumbnails of the same shape (mean abs RGB difference); taken when d < 6, or
+  d < 14 and the next different-looking candidate is > 2 d. Flat textures are skipped. Results are kept per content
+  hash. The HD image (BC1/2/3, or RGBA when the GPU has no BC) sits beside the original: F10 toggles, UG_SHOTAB=1
+  shoots frame N+1 without HD after each UG_SHOT frame N (A/B). Uploads capped at 24 MB per frame (the rest on later
+  frames), UG_HDVRAM MB budget (default 2048). UG_HDLOG=1 logs every match decision.
+- Launcher: Settings, "HD texture pack": Off / On: <folder> / Choose pack folder... (counts the .dds; the folder is
+  remembered in [launcher] HdFolder while off). Linux: setup.sh --hd <folder> writes UG_HDTEX.
+- Checked 2026-11-23 on the SLUS-20731 HD Remaster pack (8518 DXT5 .dds): New Jersey 597 matched / 272 skipped,
+  60 fps, A/B frames correct. Index scan of the pack at the first texture: a few seconds.
+
 ## Linux
 - Runtime on Linux: runtime/src/linux (win32.c Win32 subset on POSIX, sdl_plat.c window/keyboard/monitors on
   SDL3, pad_sdl.c gamepads; include/windows.h builds on DXVK Native's include/native/windows headers, build time

@@ -209,7 +209,12 @@ print(','.join(ev))")" UG_SHOT=1200 ./out/underground.exe   (NJ level by ~frame 
   never loads (empty level, cut content). testlevel: "problem with the disc" (Green_Sky.tex.Xbx not on the disc).
   Debug added: UG_TEXDUMP=<fmt hex | low 4 digits> (raw texture bytes to out/tex_<addr>_<fmt>.bin), draw log prints
   tex0 offset/address.
-- Pushed to both remotes 2026-11-23 (README, avatars, display settings, level cheat). No release until all three
-  ports are ready.
+- HD TEXTURES (2026-11-23): PS2 PCSX2 pack (SLUS-20731 HD Remaster .rar, 8518 DXT5 .dds) unpacked to hdpack/
+  (git-ignored). PS2 GS hashes can't be rebuilt from Xbox DXT data -> picture matching (runtime/src/hdtex.c,
+  docs/installer.md "HD texture packs"): UG_HDTEX=<folder>, F10 toggle, UG_SHOTAB A/B shots, UG_HDLOG. NJ: 597
+  matched / 272 skipped, 60 fps, A/B correct; gain modest (pack is upscaled PS2 art). Launcher "HD texture pack" row,
+  Linux setup.sh --hd. Not done: I8 (palettized) textures, Android (pack not in the APK), other levels' A/B.
+- Pushed to both remotes 2026-11-23 (README, avatars, display settings, level cheat). HD textures: local commit,
+  push when the user says. No release until all three ports are ready.
 - Repos: origin gitlab.com/octagram-labs-group/Project-Underground, forge 8gramlabs/Project-Underground (both public).
   Homepage card live (placeholder image landing/img/thug.jpg: replace with a screenshot later). release-sync REPOS updated.

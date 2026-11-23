@@ -2,7 +2,8 @@
 # Project Underground for Linux: install, update or uninstall (the Linux counterpart of ProjectUnderground-Setup.exe).
 # Nothing from Activision ships: the game is translated and compiled on this PC from your own disc image.
 #
-#   ./setup.sh [--iso <image.iso>] [--dir <folder>] [--play]
+#   ./setup.sh [--iso <image.iso>] [--dir <folder>] [--hd <pack folder>] [--play]
+#                                                   --hd: PCSX2 HD texture pack for the PS2 version (used in place)
 #   ./setup.sh --update --dir <folder> [--play]     rebuild with this package's kit (no disc needed)
 #   ./setup.sh --uninstall [--dir <folder>]         remove the game (keeps <folder>/out: saves, settings, log)
 #   ./setup.sh --android [--dir <folder>]           build the Android APK from the installed game (downloads the
@@ -13,7 +14,7 @@
 set -eu
 here=$(cd -- "$(dirname -- "$0")" && pwd)
 version=$(cat "$here/kit/VERSION" 2>/dev/null || echo 0.0.0)
-mode=install iso="" dir="" play=0 nogui=0
+mode=install iso="" dir="" play=0 nogui=0 hd=""
 while [ $# -gt 0 ]; do
     case $1 in
     --iso) iso=$2; shift 2 ;;
@@ -21,9 +22,10 @@ while [ $# -gt 0 ]; do
     --update) mode=update; shift ;;
     --uninstall) mode=uninstall; shift ;;
     --play) play=1; shift ;;
+    --hd) hd=$2; shift 2 ;;
     --no-gui) nogui=1; shift ;;
     --android) mode=android; shift ;;
-    -h|--help) sed -n '2,12p' "$0"; exit 0 ;;
+    -h|--help) sed -n '2,13p' "$0"; exit 0 ;;
     *) echo "unknown option: $1 (see --help)" >&2; exit 2 ;;
     esac
 done
@@ -185,7 +187,17 @@ if [ ! -f "$dir/settings.ini" ]; then
 ; UG_MONITOR=0           ; display number
 ; UG_PADS=2              ; gamepads in the game (1..4)
 ; UG_NOUPDATE=1          ; no update check at start
+; UG_WIDESCREEN=0       ; original 4:3 (default: the game's 16:9 mode)
+; UG_WINDOW=1920x1080    ; window size in pixels
+; UG_ASPECT=stretch      ; fill the window
+; UG_HDTEX=/path/to/SLUS-20731/replacements   ; HD texture pack (F10 in the game toggles it)
+; UG_LEVEL=ru            ; test cheat: story / free skate load this level
 EOF
+fi
+if [ -n "$hd" ]; then   # --hd: set (or replace) UG_HDTEX in [settings]
+    hd=$(cd -- "$hd" && pwd) || { echo "--hd: no such folder" >&2; exit 2; }
+    grep -v '^UG_HDTEX=' "$dir/settings.ini" > "$dir/settings.ini.new"
+    sed "/^\[settings\]/a UG_HDTEX=$hd" "$dir/settings.ini.new" > "$dir/settings.ini" && rm -f "$dir/settings.ini.new"
 fi
 desktop_entry
 if [ $play = 1 ]; then

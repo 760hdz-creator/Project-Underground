@@ -110,6 +110,10 @@ void linux_pump_events(void) {
             if (e.key.repeat) break;
             if (e.key.key == SDLK_ESCAPE) { LOG("[gpu] escape\n"); ExitProcess(0); }
             if (e.key.key == SDLK_F11 || (e.key.key == SDLK_RETURN && (e.key.mod & SDL_KMOD_ALT))) toggle_fullscreen();
+            if (e.key.key == SDLK_F10 && !e.key.repeat) {   /* HD texture pack on/off (gpu_vulkan.c) */
+                extern volatile int g_hd_hidden;
+                g_hd_hidden = !g_hd_hidden;
+            }
             break;
 #ifdef __ANDROID__
         case SDL_EVENT_FINGER_DOWN:

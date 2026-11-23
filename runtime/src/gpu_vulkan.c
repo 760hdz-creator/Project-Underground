@@ -25,6 +25,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include "rt.h"
+#include "hdtex.h"
 #include "kelvin.h"
 #include "shaders_spv.h"
 #define XXH_INLINE_ALL
@@ -70,6 +71,12 @@ static LRESULT CALLBACK wndproc(HWND h, UINT m, WPARAM w, LPARAM l) {
         break;
     case WM_SYSKEYDOWN:
         if (w == VK_RETURN && (l & (1 << 29))) { toggle_fullscreen(h); return 0; }
+        if (w == VK_F10) {   /* HD texture pack on/off (compare) */
+            extern volatile int g_hd_hidden;
+            g_hd_hidden = !g_hd_hidden;
+            LOG("[hdtex] HD textures %s (F10)\n", g_hd_hidden ? "off" : "on");
+            return 0;
+        }
         break;
     case WM_SYSCHAR: if (w == VK_RETURN) return 0; break;
     case 0x02E0: {   /* WM_DPICHANGED (moved to a monitor with another scale): take Windows' suggested rect */
@@ -698,6 +705,9 @@ typedef struct {
     uint64_t hash;
     uint32_t last_frame;
     int w, h, levels;
+    int hd;           /* HD pack texture: 1 + pack index once loaded, -(1 + index) while waiting for upload budget */
+    uint32_t hd_bytes;
+    Img hdim;         /* the HD image (im keeps the original: F10 / UG_SHOTAB compare them) */
     Img im;
 } TexEntry;
 #define TEX_CACHE 4096
@@ -787,6 +797,129 @@ static int create_texture(TexEntry *e, TexFmt f, int levels, const uint32_t *pal
     return 1;
 }
 
+/* ---- HD texture packs (hdtex.c): the guest texture's level 0 as RGBA8 is matched by picture; results are kept per
+ * content hash, so a texture seen again (other level, re-upload) costs nothing ---- */
+typedef struct { uint64_t hash; int idx; } HdMemo;   /* idx: pack index, -1 no match; hash 0 = empty slot */
+static HdMemo hd_memo[1 << 14];
+static int hd_match(const TexEntry *e, TexFmt f, uint64_t hsh) {
+    if (!hdtex_enabled() || (!f.swizzled && f.kind < TF_DXT1) || f.kind == TF_I8 || e->w < 32 || e->h < 32 ||
+        e->w > 4096 || e->h > 4096)
+        return -1;   /* palettized (I8): not matched yet */
+    uint32_t s = (uint32_t)(hsh ^ hsh >> 29) & ((1 << 14) - 1);
+    for (int p = 0; p < 16; p++) {
+        HdMemo *m = &hd_memo[(s + p) & ((1 << 14) - 1)];
+        if (m->hash == hsh) return m->idx;
+        if (!m->hash) break;
+    }
+    int w = e->w, h = e->h;
+    uint32_t *rgba = malloc((size_t)w * h * 4);
+    if (!rgba) return -1;
+    const uint8_t *base = g_mem + (e->addr & 0x03FFFFFF);
+    if (f.kind >= TF_DXT1) {
+        uint32_t bsz = f.kind == TF_DXT1 ? 8 : 16, bw = (uint32_t)w / 4, blk[16];
+        for (int by = 0; by < h / 4; by++)
+            for (int bx = 0; bx < w / 4; bx++) {
+                dxt_block(f.kind, base + (by * bw + bx) * bsz, blk);
+                for (int k = 0; k < 16; k++) rgba[(by * 4 + k / 4) * w + bx * 4 + k % 4] = blk[k];
+            }
+    } else {
+        uint32_t *xs = malloc(w * 4), *ys = malloc(h * 4);
+        swizzle_tables(w, h, xs, ys);
+        for (int y = 0; y < h; y++)
+            for (int x = 0; x < w; x++) rgba[y * w + x] = texel(f.kind, base + (xs[x] | ys[y]) * f.bpp, NULL);
+        free(xs); free(ys);
+    }
+    int idx = hdtex_find(rgba, w, h);
+    free(rgba);
+    for (int p = 0; p < 16; p++) {
+        HdMemo *m = &hd_memo[(s + p) & ((1 << 14) - 1)];
+        if (!m->hash || p == 15) { m->hash = hsh; m->idx = idx; break; }
+    }
+    return idx;
+}
+
+/* Replaces e's image with pack texture idx (all its levels down to 4x4). 0 = not now (this frame's HD upload budget
+ * is spent, or the file is unusable): the caller keeps the original texture. */
+static uint32_t hd_budget_frame, hd_budget_bytes;
+static uint64_t hd_vram;   /* bytes of HD images created (budget: UG_HDVRAM MB, default 2048) */
+static int create_hd(TexEntry *e, int idx) {
+    int w, h, levels;
+    uint32_t fourcc;
+    if (!hdtex_info(idx, &w, &h, &levels, &fourcc)) return 0;
+    int kind = fourcc == 0x31545844u ? TF_DXT1 : fourcc == 0x33545844u ? TF_DXT3 : TF_DXT5;
+    uint32_t bsz = kind == TF_DXT1 ? 8 : 16;
+    uint64_t total = 0;
+    for (int l = 0; l < levels && l < 16; l++) {
+        int lw = w >> l, lh = h >> l;
+        if (lw < 4 || lh < 4) break;
+        total += (uint64_t)(lw / 4) * (lh / 4) * (has_bc ? bsz : 64);
+    }
+    static uint64_t vram_cap;
+    if (!vram_cap) { const char *v = getenv("UG_HDVRAM"); vram_cap = (uint64_t)(v ? atoi(v) : 2048) << 20; }
+    if (hd_vram + total > vram_cap) return 0;
+    if (hd_budget_frame != frame_no) { hd_budget_frame = frame_no; hd_budget_bytes = 0; }
+    if (hd_budget_bytes + total > (24u << 20)) return 0;   /* rest next frame (the staging ring is 64 MB) */
+    size_t len;
+    uint8_t *file = hdtex_load(idx, &len);
+    if (!file) return 0;
+    Frame *fr = &frames[fi];
+    VkBufferImageCopy regions[16];
+    int nl = 0;
+    size_t src = 128;
+    for (int l = 0; l < levels && l < 16; l++) {
+        int lw = w >> l, lh = h >> l;
+        if (lw < 4 || lh < 4) break;
+        uint32_t bw = (uint32_t)lw / 4, bh = (uint32_t)lh / 4, sz = bw * bh * bsz;
+        if (src + sz > len) break;
+        VkDeviceSize off;
+        if (has_bc) {
+            uint8_t *p = ring_alloc(&fr->stage, sz, 16, &off);
+            if (!p) break;
+            memcpy(p, file + src, sz);
+        } else {
+            uint32_t *out = ring_alloc(&fr->stage, (VkDeviceSize)lw * lh * 4, 16, &off), blk[16];
+            if (!out) break;
+            for (uint32_t by = 0; by < bh; by++)
+                for (uint32_t bx = 0; bx < bw; bx++) {
+                    dxt_block(kind, file + src + (by * bw + bx) * bsz, blk);
+                    for (int k = 0; k < 16; k++) out[(by * 4 + k / 4) * lw + bx * 4 + k % 4] = blk[k];
+                }
+        }
+        regions[nl] = (VkBufferImageCopy){off, 0, 0, {VK_IMAGE_ASPECT_COLOR_BIT, (uint32_t)l, 0, 1}, {0, 0, 0},
+                                          {(uint32_t)lw, (uint32_t)lh, 1}};
+        nl++;
+        src += sz;
+    }
+    free(file);
+    if (!nl) return 0;
+    VkFormat vf = !has_bc ? VK_FORMAT_R8G8B8A8_UNORM : kind == TF_DXT1 ? VK_FORMAT_BC1_RGBA_UNORM_BLOCK :
+                  kind == TF_DXT3 ? VK_FORMAT_BC2_UNORM_BLOCK : VK_FORMAT_BC3_UNORM_BLOCK;
+    Img im = {0};
+    if (!img_create(&im, w, h, nl, vf, VK_IMAGE_USAGE_SAMPLED_BIT | VK_IMAGE_USAGE_TRANSFER_DST_BIT,
+                    VK_IMAGE_ASPECT_COLOR_BIT)) return 0;
+    barrier(fr->up, &im, VK_IMAGE_ASPECT_COLOR_BIT, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL);
+    vkCmdCopyBufferToImage(fr->up, fr->stage.buf, im.img, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, nl, regions);
+    barrier(fr->up, &im, VK_IMAGE_ASPECT_COLOR_BIT, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
+    fr->up_used = 1;
+    if (e->hdim.img) img_destroy_later(&e->hdim);
+    e->hdim = im;
+    e->hd = 1 + idx;
+    e->hd_bytes = (uint32_t)total;
+    hd_vram += total;
+    hd_budget_bytes += (uint32_t)total;
+    static int n_hd;
+    if (++n_hd % 100 == 1) LOG("[hdtex] %d HD textures loaded (%.0f MB)\n", n_hd, hd_vram / 1048576.0);
+    return 1;
+}
+/* F10 toggles the HD pack on and off; UG_SHOTAB=1 renders the frame after each UG_SHOT frame without it */
+volatile int g_hd_hidden;
+static int hd_shot_ab = -1, shot_every = -1;
+static VkImageView tex_view(TexEntry *e) {
+    if (hd_shot_ab < 0) { const char *a = getenv("UG_SHOTAB"); hd_shot_ab = a && *a == '1'; }
+    int off = g_hd_hidden || (hd_shot_ab && shot_every > 0 && frame_no % (uint32_t)shot_every == 1);
+    return e->hd > 0 && e->hdim.img && !off ? e->hdim.view : e->im.view;
+}
+
 /* stage i -> image view (or 0); *rect = linear texture (unnormalized coordinates) */
 static ZSurface *find_zs(uint32_t addr) {
     for (int i = 0; i < n_zss; i++) if (zss[i].addr == addr && zss[i].depth.img) return &zss[i];
@@ -869,7 +1002,8 @@ static VkImageView get_texture(int i, int *rect, int *tw, int *th, float *zmax) 
         if (e->im.img && e->hash == hsh && e->addr == addr && e->fmt == fmtw && e->pitch == pitch && e->w == w &&
             e->h == h && e->pal_addr == pal_addr && e->pal_len == pal_len) {
             e->last_frame = frame_no;
-            return e->im.view;
+            if (e->hd < 0) create_hd(e, -e->hd - 1);   /* HD upload that waited for budget */
+            return tex_view(e);
         }
     }
     /* same texture slot rewritten (movie frames, render-to-memory): re-upload into the previous image, unless that
@@ -878,7 +1012,7 @@ static VkImageView get_texture(int i, int *rect, int *tw, int *th, float *zmax) 
     TexEntry *old_e = addr_slot[aslot];
     if (old_e && old_e->im.img && old_e->addr == addr && old_e->fmt == fmtw && old_e->pitch == pitch && old_e->w == w &&
         old_e->h == h && old_e->pal_addr == pal_addr && old_e->pal_len == pal_len && old_e->last_frame != frame_no &&
-        old_e->levels == levels) {
+        old_e->levels == levels && !old_e->hd) {   /* an HD image has another size: take the new-entry path */
         if (pal_len)
             for (uint32_t k = 0; k < 256; k++) {
                 uint32_t c = k < pal_len ? RD32(pal_addr + k * 4) : 0;
@@ -895,6 +1029,9 @@ static VkImageView get_texture(int i, int *rect, int *tw, int *th, float *zmax) 
         if (e->last_frame < v->last_frame) v = e;
     }
     img_destroy_later(&v->im);
+    img_destroy_later(&v->hdim);
+    if (v->hd > 0) hd_vram -= v->hd_bytes;
+    v->hd = 0; v->hd_bytes = 0;
     {   /* UG_TEXDUMP=<format word, hex>: write each new texture of that format to out/tex_<addr>_<fmt>.bin (raw guest
          * bytes, all levels; debug) */
         static int td = -1;
@@ -914,9 +1051,12 @@ static VkImageView get_texture(int i, int *rect, int *tw, int *th, float *zmax) 
         }
     v->addr = addr; v->fmt = fmtw; v->pitch = pitch; v->w = w; v->h = h; v->pal_addr = pal_addr; v->pal_len = pal_len;
     v->hash = hsh; v->last_frame = frame_no; v->levels = levels;
+    v->hd = 0;
     if (!create_texture(v, f, levels, palette)) return 0;
     addr_slot[aslot] = v;
-    return v->im.view;
+    int hdi = hd_match(v, f, hsh);   /* HD pack (UG_HDTEX): replaces the image now, or on a later frame */
+    if (hdi >= 0 && !create_hd(v, hdi)) v->hd = -(1 + hdi);
+    return tex_view(v);
 }
 
 /* ---- samplers ---- */
@@ -1745,10 +1885,10 @@ static void submit_and_present(Surface *s) {
                     VK_IMAGE_LAYOUT_PRESENT_SRC_KHR);
     }
     /* UG_SHOT=N: every N frames, read the presented surface back and write out/shot_<frame>.ppm (debug) */
-    static int shot_every = -1;
     static Ring shot;
     if (shot_every < 0) { const char *e = getenv("UG_SHOT"); shot_every = e ? atoi(e) : 0; }
-    int shoot = s && shot_every > 0 && frame_no % (uint32_t)shot_every == 0;
+    int shoot = s && shot_every > 0 &&
+                (frame_no % (uint32_t)shot_every == 0 || (hd_shot_ab > 0 && frame_no % (uint32_t)shot_every == 1));
     if (shoot) {
         VkDeviceSize need = (VkDeviceSize)s->hw * s->hh * 4;
         if (shot.size < need) {
@@ -1805,7 +1945,12 @@ static void flip_impl(uint32_t addr) {
     frame_no++;
     if (frame_no % 60 == 0)   /* evict textures idle for 10 s */
         for (int i = 0; i < TEX_CACHE; i++)
-            if (tcache[i].im.img && frame_no - tcache[i].last_frame > 600) img_destroy_later(&tcache[i].im);
+            if (tcache[i].im.img && frame_no - tcache[i].last_frame > 600) {
+                img_destroy_later(&tcache[i].im);
+                img_destroy_later(&tcache[i].hdim);
+                if (tcache[i].hd > 0) hd_vram -= tcache[i].hd_bytes;
+                tcache[i].hd = 0; tcache[i].hd_bytes = 0;
+            }
     /* XDK 5659 swaps without naming the front buffer (4242 left it in 1D8C): present the surface just rendered */
     Surface *s = find_rt(addr);
     if (!s) s = cur_rt;

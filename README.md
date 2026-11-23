@@ -59,6 +59,25 @@ A static recompilation by 8gram Labs: the original x86 game code is translated t
 - **Android.** Your PC turns your installed game into an APK for your phone (arm64, Android 13+, Vulkan 1.3), with
   on-screen touch controls.
 - **Controllers and keyboard.** XInput pads on Windows, SDL3 gamepads on Linux and Android, up to 4 players.
+- **HD texture packs (optional).** It loads PCSX2-format replacement packs made for the PS2 version, such as the
+  community *HD Remaster* pack. The PS2 pack's file names can't be rebuilt from the Xbox data, so each texture is
+  matched by picture instead (see [HD textures](#hd-textures)). F10 in the game switches them on and off.
+
+## HD textures
+
+![Original and HD texture pack, same frame](docs/images/hd_compare.jpg)
+
+Optional. Unpack a PCSX2 replacement pack for the PS2 version (*Tony Hawk's Underground (USA) [SLUS-20731]*), then
+pick its folder, for example `...\SLUS-20731\replacements`, in the launcher (**Settings**, **HD texture pack**).
+Linux: `./setup.sh --hd <folder>` or `UG_HDTEX=<folder>` in `settings.ini`. The pack is used where it is and is not
+copied. **F10** in the game switches it on and off, so you can compare.
+
+How it works: the pack names its files by PS2 texture hashes, and the Xbox textures are stored differently (DXT
+instead of palettes), so those names can't be rebuilt. Instead, every texture the game loads is shrunk to a 16-pixel
+thumbnail and compared with thumbnails of the whole pack. A pack texture is used only when it is clearly the same
+picture; flat or ambiguous textures keep the original. In New Jersey about 600 of 870 detailed textures find their
+HD version. The pack was made from the lower-resolution PS2 textures, so the gain over the Xbox originals is
+modest.
 
 ## The installer and launcher
 
@@ -83,7 +102,7 @@ rebuild the game in place and keep your saves and settings.
 | Installer, launcher, updates, uninstall (Windows) | Install, update and uninstall tested |
 | Linux | Boots to New Jersey gameplay; install, update, uninstall and the updater tested (Ubuntu 24.04, WSL) |
 | Android | APK builds and signs on Windows and Linux; not yet run on a phone |
-| PS2 HD Remaster textures | Planned (last step) |
+| HD texture packs (PS2 PCSX2 packs, matched by picture) | Working (optional; F10 toggles) |
 
 Known gaps:
 - A translucent dark band sometimes crosses the sky (cosmetic).
