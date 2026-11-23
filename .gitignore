@@ -1,0 +1,6 @@
+*.iso
+*.rar
+/build/
+/out/
+/toolchain/
+/extracted/
