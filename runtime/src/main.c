@@ -264,6 +264,7 @@ void ug_fncount(uint32_t va) {
     keys[h] = va;
     vals[h]++;
 }
+void updater_start(void);
 int main(int argc, char **argv) {
     const char *xbe = argc > 1 ? argv[1] : "game/default.xbe";
 #ifdef _WIN32
@@ -293,12 +294,14 @@ int main(int argc, char **argv) {
     CreateDirectoryA("out", NULL);
 #ifndef _WIN32
     /* installed: underground.sh sends stderr to out/underground.log */
+    updater_start();
     crash_handler_install();
     g_missed = fopen("out/missed_targets.txt", "a");
 #else
     if (!GetConsoleWindow() && (GetStdHandle(STD_ERROR_HANDLE) == NULL ||
                                 GetStdHandle(STD_ERROR_HANDLE) == INVALID_HANDLE_VALUE))
         freopen("out\\underground.log", "w", stderr);   /* installed build (windows subsystem): log to a file */
+    updater_start();   /* updater.c: forge release check (installed builds only) */
     ULONG guarantee = 0x10000;
     SetThreadStackGuarantee(&guarantee);
     AddVectoredExceptionHandler(1, crash_handler);

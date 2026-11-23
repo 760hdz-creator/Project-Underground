@@ -99,7 +99,7 @@ def build_oracle(jobs):
 
 RT_SRC = os.path.join(ROOT, "runtime", "src")
 RT_OBJ = os.path.join(OUT, "rt")
-RT_LIBS = ["-lwinmm", "-luser32", "-lgdi32", "-lshlwapi", "-lshell32", "-ladvapi32", "-lole32"]
+RT_LIBS = ["-lwinmm", "-luser32", "-lgdi32", "-lshlwapi", "-lshell32", "-ladvapi32", "-lole32", "-lwinhttp"]
 
 
 def build_runtime(jobs, exe=None, defines=(), gui=False):
