@@ -142,6 +142,24 @@ static DWORD WINAPI watchdog(void *p) {
             if (v > (uintptr_t)base && v < (uintptr_t)base + 0x2000000) { LOG(" +%llX", (unsigned long long)(v - (uintptr_t)base)); n++; }
         }
         LOG("\n");
+        /* UG_PEEK="va,len;*ptr_va+off,len": guest memory hex dumps (sample 0); '*' dereferences a guest pointer. */
+        const char *pk = sample ? NULL : getenv("UG_PEEK");
+        while (pk && *pk) {
+            int deref = *pk == '*';
+            char *e;
+            uint32_t va = (uint32_t)strtoul(pk + deref, &e, 16), off = 0, len = 0x40;
+            if (deref) va = RD32(va);
+            if (*e == '+') off = (uint32_t)strtoul(e + 1, &e, 16);
+            if (*e == ',') len = (uint32_t)strtoul(e + 1, &e, 16);
+            va += off;
+            for (uint32_t i = 0; i < len; i += 16) {
+                LOG("[peek] %08X:", va + i);
+                for (uint32_t j = 0; j < 16 && i + j < len; j += 4) LOG(" %08X", RD32(va + i + j));
+                LOG("\n");
+            }
+            pk = strchr(e, ';');
+            if (pk) pk++;
+        }
         ResumeThread(g_main_thread);
     }
     ExitProcess(4);

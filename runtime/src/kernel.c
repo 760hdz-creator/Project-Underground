@@ -378,6 +378,8 @@ K(158, KeWaitForMultipleObjects) {
 }
 K(233, NtWaitForSingleObject) {
     /* (Handle, Alertable, *Timeout) */
+    Handle *hf = handle_get(ARG(0));
+    if (hf && hf->kind == H_FILE) return STATUS_SUCCESS; /* file I/O completes before NtReadFile returns */
     uint32_t obj = handle_object(ARG(0));
     if (!obj) return STATUS_INVALID_HANDLE;
     int64_t t;
@@ -386,6 +388,8 @@ K(233, NtWaitForSingleObject) {
 }
 K(234, NtWaitForSingleObjectEx) {
     /* (Handle, WaitMode, Alertable, *Timeout) */
+    Handle *hf = handle_get(ARG(0));
+    if (hf && hf->kind == H_FILE) return STATUS_SUCCESS; /* file I/O completes before NtReadFile returns */
     uint32_t obj = handle_object(ARG(0));
     if (!obj) return STATUS_INVALID_HANDLE;
     int64_t t;

@@ -41,6 +41,7 @@ typedef struct {
     uint32_t guest;              /* object address the guest holds */
     Fmt fmt;
     uint32_t data, bytes;        /* guest audio data */
+    uint32_t owned;              /* buffer we allocated at create (freed on Release); 0 if none */
     uint32_t freq;               /* 0 = fmt.rate */
     int32_t volume;              /* hundredths of a dB, <= 0 */
     int32_t bin_vol[2];          /* mix bins 0/1 (front left/right), hundredths of a dB; 0 until set */
@@ -401,15 +402,17 @@ int dsound_vcall(X86Context *c, uint32_t va) {
 static uint32_t create_buffer(uint32_t d) {
     /* DSBUFFERDESC: dwSize, dwFlags, dwBufferBytes, lpwfxFormat, lpMixBins, dwInputMixBin */
     uint32_t flags = RD32(d + 4), bytes = RD32(d + 8), wfx = RD32(d + 12);
-    if (g_nvoices >= MAX_BUFFERS) rt_fatal("DSOUND: more than %d buffers", MAX_BUFFERS);
     EnterCriticalSection(&g_lock);
-    Voice *v = &g_voices[g_nvoices];
+    int slot = 0;
+    while (slot < g_nvoices && g_voices[slot].guest) slot++;   /* reuse a released slot */
+    if (slot >= MAX_BUFFERS) rt_fatal("DSOUND: more than %d live buffers", MAX_BUFFERS);
+    Voice *v = &g_voices[slot];
     memset(v, 0, sizeof *v);
     v->guest = mem_alloc(0x40, 16);
     read_fmt(wfx, &v->fmt);
     v->adpcm_block = -1;
-    if (bytes) { v->data = mem_alloc(bytes, 16); v->bytes = bytes; }
-    g_nvoices++;
+    if (bytes) { v->data = v->owned = mem_alloc(bytes, 16); v->bytes = bytes; }
+    if (slot == g_nvoices) g_nvoices++;
     LeaveCriticalSection(&g_lock);
     if (g_log_kernel || g_nvoices <= 4)
         LOG("[dsound] CreateSoundBuffer flags %X bytes %X fmt %X ch %u rate %u bits %u -> %08X\n", flags, bytes,
@@ -447,9 +450,22 @@ int dsound_hle(X86Context *c, uint32_t va) {
         ret_std(c, 3, 0);
         return 1;
     case 0x1BE541: /* ULONG IDirectSound_Release(this) */
-    case 0x1BE55C: /* ULONG IDirectSoundBuffer_Release(this) */
         ret_std(c, 1, 1);
         return 1;
+    case 0x1BE55C: { /* ULONG IDirectSoundBuffer_Release(this): the game never calls AddRef, so this frees */
+        EnterCriticalSection(&g_lock);
+        for (int i = 0; i < g_nvoices; i++) {
+            Voice *v = &g_voices[i];
+            if (v->guest != ARG(0)) continue;
+            mem_free(v->guest);
+            if (v->owned) mem_free(v->owned);
+            memset(v, 0, sizeof *v);
+            break;
+        }
+        LeaveCriticalSection(&g_lock);
+        ret_std(c, 1, 0);
+        return 1;
+    }
     case 0x1BF5E8: /* VOID DirectSoundDoWork(void) */
         c->esp += 4;
         return 1;

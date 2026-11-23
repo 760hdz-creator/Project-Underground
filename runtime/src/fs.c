@@ -23,6 +23,7 @@ typedef struct {
     char host_path[MAX_PATH];
     HANDLE find;
     int find_done;
+    int async; /* opened without FILE_SYNCHRONOUS_IO_*: reads complete as STATUS_PENDING */
 } FsFile;
 
 /* ---- symbolic links ---- */
@@ -172,6 +173,7 @@ static uint32_t open_common(uint32_t handle_out, uint32_t oa, uint32_t io, uint3
     f->h = h;
     f->is_dir = is_dir;
     f->find = INVALID_HANDLE_VALUE;
+    f->async = !is_dir && !(options & 0x30); /* FILE_SYNCHRONOUS_IO_ALERT | _NONALERT */
     strcpy(f->guest_path, gpath);
     strcpy(f->host_path, host);
     WR32(handle_out, handle_new(H_FILE, 0, f));
@@ -230,7 +232,19 @@ K(NtReadFile) {
     uint32_t st = (got == 0 && ARG(6)) ? ST_END_OF_FILE : STATUS_SUCCESS;
     iosb(ARG(4), st, got);
     signal_event(ARG(1));
-    return st;
+    /* Async handles: the data is already in place, but report STATUS_PENDING like the real
+     * device does. THUG's cutscene streamer (35700/357F7) takes a synchronous success of an
+     * overlapped ReadFile as end of stream and closes the file. EOF stays synchronous. */
+    /* Only for OVERLAPPED reads (event or ApcContext given). XAPI's plain ReadFile passes neither; on
+     * STATUS_PENDING it waits on the file handle, which kernel.c treats as signaled. */
+    int overlapped = ARG(1) || ARG(3);
+    uint32_t ret = (f->async && overlapped && st == STATUS_SUCCESS) ? 0x103 /* STATUS_PENDING */ : st;
+    static int fslog = -1;
+    if (fslog < 0) fslog = getenv("UG_FSLOG") != NULL;
+    if (fslog)
+        LOG("[fs] read %s len %X off %llX ev %X apc %X/%X -> got %X ret %08X\n", f->guest_path, ARG(6),
+            ARG(7) ? (unsigned long long)RD64(ARG(7)) : ~0ull, ARG(1), ARG(2), ARG(3), (unsigned)got, ret);
+    return ret;
 }
 K(NtWriteFile) {
     FsFile *f = file_of(ARG(0));
