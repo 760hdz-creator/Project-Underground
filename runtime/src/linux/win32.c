@@ -422,6 +422,11 @@ _Noreturn void linux_relaunch(void) {
     g_android_relaunch = 1;   /* runs on a guest fiber: the restart goes through Java from sched_run */
     for (;;) ug_sched_yield();
 #endif
-    if (saved_argv) execv("/proc/self/exe", saved_argv);
+    if (saved_argv) {   /* the real path, so the process keeps its name (execv of /proc/self/exe renames it "exe") */
+        char self[MAX_PATH];
+        ssize_t n = readlink("/proc/self/exe", self, sizeof self - 1);
+        if (n > 0) { self[n] = 0; execv(self, saved_argv); }
+        execv("/proc/self/exe", saved_argv);
+    }
     _exit(0);
 }

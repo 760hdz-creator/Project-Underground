@@ -17,13 +17,19 @@ static void ret_std(X86Context *c, int nargs, uint32_t eax) {
 static DWORD (WINAPI *host_get_state)(DWORD, void *);
 static DWORD (WINAPI *host_set_state)(DWORD, void *);
 
+#ifndef _WIN32
+/* WINAPI-typed wrappers: no cast across calling conventions (DXVK Native's WINAPI may be ms_abi) */
+static DWORD WINAPI sdl_get_state(DWORD port, void *s) { return pad_sdl_get_state(port, s); }
+static DWORD WINAPI sdl_set_state(DWORD port, void *v) { return pad_sdl_set_state(port, v); }
+#endif
+
 static void host_xinput_init(void) {
     static int done;
     if (done++) return;
 #ifndef _WIN32
     if (pad_sdl_init()) {   /* Linux: SDL3 gamepads (pad_sdl.c), same XINPUT_STATE layout */
-        host_get_state = (void *)pad_sdl_get_state;
-        host_set_state = (void *)pad_sdl_set_state;
+        host_get_state = sdl_get_state;
+        host_set_state = sdl_set_state;
         return;
     }
 #endif

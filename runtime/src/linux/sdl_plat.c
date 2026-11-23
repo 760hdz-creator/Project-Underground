@@ -11,6 +11,7 @@ void touch_event(uint32_t type, uint64_t id, float nx, float ny);   /* touch.c *
 #define LOG(...) do { fprintf(stderr, __VA_ARGS__); fflush(stderr); } while (0)
 
 static SDL_Window *g_win;
+volatile int linux_window_resized;
 static int g_video;
 
 /* ---------------- window ---------------- */
@@ -92,6 +93,9 @@ void linux_pump_events(void) {
         case SDL_EVENT_WINDOW_CLOSE_REQUESTED:
             LOG("[gpu] window closed\n");
             ExitProcess(0);
+        case SDL_EVENT_WINDOW_PIXEL_SIZE_CHANGED:
+            linux_window_resized = 1;
+            break;
         case SDL_EVENT_KEY_DOWN:
             if (e.key.repeat) break;
             if (e.key.key == SDLK_ESCAPE) { LOG("[gpu] escape\n"); ExitProcess(0); }

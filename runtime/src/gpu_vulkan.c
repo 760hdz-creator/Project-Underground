@@ -1431,6 +1431,13 @@ static void submit_and_present(Surface *s) {
     Frame *f = &frames[fi];
     end_rendering();
     uint32_t img = UINT32_MAX;
+#ifndef _WIN32
+    if (linux_window_resized) {   /* Wayland may never report OUT_OF_DATE after a resize or fullscreen toggle */
+        linux_window_resized = 0;
+        vkDeviceWaitIdle(dev);
+        swapchain_create();
+    }
+#endif
     VkResult ar = swapchain ? vkAcquireNextImageKHR(dev, swapchain, UINT64_MAX, f->acquired, 0, &img) : VK_ERROR_OUT_OF_DATE_KHR;
     if (ar == VK_ERROR_OUT_OF_DATE_KHR) { vkDeviceWaitIdle(dev); swapchain_create(); img = UINT32_MAX; }
     else if (ar != VK_SUCCESS && ar != VK_SUBOPTIMAL_KHR) img = UINT32_MAX;
