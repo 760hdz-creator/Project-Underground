@@ -166,7 +166,25 @@ print(','.join(ev))")" UG_SHOT=1200 ./out/underground.exe   (NJ level by ~frame 
    (72 s), launch, --update, --uninstall and the in-game updater loop all verified in WSL. Lift on Linux matches the
    Windows lift (CRLF only). WSL test dirs: ~/ug-run, ~/ug-linux, ~/ug-lifted, ~/ug-lift-test, ~/ug-inst, ~/ug-src,
    ~/ug-dist (safe to delete). Not tested: real Linux GPU, real pads, Wayland desktop.
-   NEXT: Android port (Gauntlet tools/build_android.sh, gt_android.py, android/, linux/touch.c as models).
+   Linux checks also passed: UG_PADTEST 35/35, SDL audio (non-silent UG_WAVDUMP), settings.ini keys, fullscreen on
+   Wayland + X11 (3440x1440), process name kept after the reboot relaunch.
+   ANDROID PORT (2026-11-23, built, NOT YET RUN ON A PHONE: no device on adb this session):
+   - tools/build_android.sh <dir> [--lifted d] (WSL; NDK ~/Android/android-ndk-r27c, deps ~/.cache/ttt2-android:
+     SDL 3.4.18 + android-project): libugrt.a, android-kit (template.apk, no game code), debug APK with --lifted.
+     Dev APK: ~/uga/build/underground-0.1.0-android-arm64-debug.apk (game files copied in by hand, Gauntlet's way:
+     run-as into Android/data/com.eightgramlabs.underground/files/game).
+   - android/: UndergroundActivity, RestartActivity (HalReturnToFirmware relaunch), Vulkan 1.3 required.
+   - Fixed from the Gauntlet copy: aarch64 fiber asm labels (were gt_*: link would fail), game/default.xbe.
+   - gpu_vulkan.c: DXT CPU decode when no BC (UG_NOBC=1 tested on Windows, NJ correct), depth format must be
+     sampleable, SUBOPTIMAL recreate only on real change, surface recreate on foreground / SURFACE_LOST,
+     touch overlay (runtime/shaders/touch.*; UG_TOUCHDEMO=1 checked on Windows).
+   - Player pipeline: tools/ug_android.py (LIFT_FLAGS + -fsigned-char); launcher "Android..." button; Linux
+     setup.sh --android. Linux path verified (3.4 GB APK, apksigner v2 OK, zipalign OK). Windows path: run
+     with the payload python against G:\ug_test (NDK download into G:\ug_test\android\ndk).
+   - Windows payload needs dist\_cache\android-kit (copy of WSL ~/uga/build/android-kit).
+   NEXT: phone test (connect it on adb): install the player APK, first-start unpack (3.2 GB), relaunch via
+   RestartActivity, intro, menus, touch controls, background/resume, swapchain transform (log line
+   "transform X"), fps. Then the release (user says push).
 - Not pushed since the initial commits (user rule: push only when asked).
 - Repos: origin gitlab.com/octagram-labs-group/Project-Underground, forge 8gramlabs/Project-Underground (both public).
   Homepage card live (placeholder image landing/img/thug.jpg: replace with a screenshot later). release-sync REPOS updated.
