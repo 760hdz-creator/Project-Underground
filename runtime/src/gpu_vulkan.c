@@ -802,9 +802,10 @@ static int create_texture(TexEntry *e, TexFmt f, int levels, const uint32_t *pal
 typedef struct { uint64_t hash; int idx; } HdMemo;   /* idx: pack index, -1 no match; hash 0 = empty slot */
 static HdMemo hd_memo[1 << 14];
 static int hd_match(const TexEntry *e, TexFmt f, uint64_t hsh) {
-    if (!hdtex_enabled() || (!f.swizzled && f.kind < TF_DXT1) || f.kind == TF_I8 || e->w < 32 || e->h < 32 ||
-        e->w > 4096 || e->h > 4096)
-        return -1;   /* palettized (I8): not matched yet */
+    int i8 = f.kind == TF_I8;   /* palettized: the exact PS2 hashes (hdtex_find_indexed); others: by picture */
+    if (!hdtex_enabled() || (!f.swizzled && f.kind < TF_DXT1) || e->w > 4096 || e->h > 4096 ||
+        (i8 ? (e->w < 4 || e->h < 4 || !e->pal_len) : (e->w < 32 || e->h < 32)))
+        return -1;
     uint32_t s = (uint32_t)(hsh ^ hsh >> 29) & ((1 << 14) - 1);
     for (int p = 0; p < 16; p++) {
         HdMemo *m = &hd_memo[(s + p) & ((1 << 14) - 1)];
@@ -822,6 +823,25 @@ static int hd_match(const TexEntry *e, TexFmt f, uint64_t hsh) {
                 dxt_block(f.kind, base + (by * bw + bx) * bsz, blk);
                 for (int k = 0; k < 16; k++) rgba[(by * 4 + k / 4) * w + bx * 4 + k % 4] = blk[k];
             }
+    } else if (i8) {   /* unswizzled indices + the raw guest palette (A8R8G8B8) */
+        uint8_t *ix = malloc((size_t)w * h);
+        uint32_t *xs = malloc(w * 4), *ys = malloc(h * 4), pal[256] = {0};
+        swizzle_tables(w, h, xs, ys);
+        for (uint32_t k = 0; k < e->pal_len && k < 256; k++) pal[k] = RD32(e->pal_addr + k * 4);
+        for (int y = 0; y < h; y++)
+            for (int x = 0; x < w; x++) {
+                uint8_t v = base[xs[x] | ys[y]];
+                uint32_t c = pal[v];
+                ix[y * w + x] = v;
+                rgba[y * w + x] = (c >> 16 & 255) | (c & 0xFF00) | (c & 255) << 16 | (c & 0xFF000000u);
+            }
+        int idx = hdtex_find_indexed(ix, w, h, pal, e->pal_len, rgba);
+        free(xs); free(ys); free(ix); free(rgba);
+        for (int p = 0; p < 16; p++) {
+            HdMemo *m = &hd_memo[(s + p) & ((1 << 14) - 1)];
+            if (!m->hash || p == 15) { m->hash = hsh; m->idx = idx; break; }
+        }
+        return idx;
     } else {
         uint32_t *xs = malloc(w * 4), *ys = malloc(h * 4);
         swizzle_tables(w, h, xs, ys);

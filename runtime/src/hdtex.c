@@ -17,12 +17,18 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#define XXH_INLINE_ALL
+#include "xxhash.h"
 #include "hdtex.h"
 
 #define LOG(...) do { fprintf(stderr, __VA_ARGS__); fflush(stderr); } while (0)
 #define T 16                     /* thumbnail: larger side */
 
-typedef struct { char *path; int w, h, levels, tw, th; uint32_t fourcc; uint8_t thumb[T * T * 3]; } HdTex;
+/* name: <tex0>-<clut>-<bits>.dds (clut 0: <tex0>-<bits>.dds); bits = PSM:6 TW:4 TH:4 */
+typedef struct {
+    char *path; int w, h, levels, tw, th; uint32_t fourcc; uint8_t thumb[T * T * 3];
+    uint64_t tex0, clut; uint32_t bits;
+} HdTex;
 static HdTex *packs;
 static int npacks, cap_packs, state = -1;   /* -1 not started, 0 off, 1 on */
 
@@ -56,7 +62,7 @@ static void add_file(const char *path) {
     uint32_t h = *(uint32_t *)(hd + 12), w = *(uint32_t *)(hd + 16), mips = *(uint32_t *)(hd + 28);
     uint32_t fourcc = *(uint32_t *)(hd + 84);
     int bsz = fourcc == 0x31545844u ? 8 : (fourcc == 0x33545844u || fourcc == 0x35545844u) ? 16 : 0;   /* DXT1 / 3 / 5 */
-    if (!bsz || w < 16 || h < 16 || w > 8192 || h > 8192) { fclose(f); return; }
+    if (!bsz || w < 4 || h < 4 || w > 8192 || h > 8192) { fclose(f); return; }
     if (mips < 1) mips = 1;
     long off = 128;
     uint32_t mw = w, mh = h;
@@ -65,20 +71,21 @@ static void add_file(const char *path) {
         off += (long)((mw + 3) / 4) * ((mh + 3) / 4) * bsz;
         mw = mw > 1 ? mw / 2 : 1; mh = mh > 1 ? mh / 2 : 1; lvl++;
     }
-    if (mw > T || mh > T || mw < 1 || mh < 1) { fclose(f); return; }   /* no small mip: skip (rare) */
+    /* thumbnail only from a mip whose larger side is exactly 16 (no thumbnail: exact PS2-hash matches only) */
+    int thumb_ok = (mw == T || mh == T) && mw <= T && mh <= T;
     uint32_t bw = (mw + 3) / 4, bh = (mh + 3) / 4;
     uint8_t buf[16 * 4 * 4 * 16];
-    if (bw * bh * bsz > sizeof buf || fseek(f, off, SEEK_SET) || fread(buf, 1, bw * bh * bsz, f) != bw * bh * bsz) {
-        fclose(f);
-        return;
-    }
+    if (thumb_ok && (bw * bh * bsz > sizeof buf || fseek(f, off, SEEK_SET) || fread(buf, 1, bw * bh * bsz, f) != bw * bh * bsz))
+        thumb_ok = 0;
     fclose(f);
     if (npacks == cap_packs) {
         cap_packs = cap_packs ? cap_packs * 2 : 1024;
         packs = realloc(packs, sizeof *packs * cap_packs);
     }
     HdTex *p = &packs[npacks];
-    p->w = (int)w; p->h = (int)h; p->levels = (int)mips; p->fourcc = fourcc; p->tw = (int)mw; p->th = (int)mh;
+    p->w = (int)w; p->h = (int)h; p->levels = (int)mips; p->fourcc = fourcc;
+    p->tw = thumb_ok ? (int)mw : 0; p->th = thumb_ok ? (int)mh : 0;
+    if (thumb_ok)
     for (uint32_t by = 0; by < bh; by++)
         for (uint32_t bx = 0; bx < bw; bx++) {
             uint8_t px[16][3];
@@ -89,6 +96,21 @@ static void add_file(const char *path) {
             }
         }
     p->path = strdup(path);
+    p->tex0 = p->clut = 0; p->bits = 0;
+    {   /* PCSX2 name: <tex0>-<clut>-<bits> or <tex0>-<bits>, hex */
+        const char *b = path + strlen(path);
+        while (b > path && b[-1] != '/' && b[-1] != '\\') b--;
+        char *e1, *e2, *e3;
+        unsigned long long a = strtoull(b, &e1, 16);
+        if (*e1 == '-') {
+            unsigned long long c = strtoull(e1 + 1, &e2, 16);
+            if (*e2 == '.' && e2 - e1 - 1 == 8) { p->tex0 = a; p->bits = (uint32_t)c & 0x3FFF; }
+            else if (*e2 == '-') {
+                unsigned long long d = strtoull(e2 + 1, &e3, 16);
+                if (*e3 == '.') { p->tex0 = a; p->clut = c; p->bits = (uint32_t)d & 0x3FFF; }
+            }
+        }
+    }
     npacks++;
 }
 
@@ -212,4 +234,115 @@ uint8_t *hdtex_load(int idx, size_t *len) {
     fclose(f);
     *len = b ? (size_t)n : 0;
     return b;
+}
+
+/* ---- palettized (I8) textures: the PS2 hashes rebuilt exactly, as in Project Gauntlet's hdtex.c ----
+ * The Xbox I8 texture keeps the PS2 indices and palette, so PCSX2's hashes can be computed:
+ *  - TEX0 hash: XXH3-64 over the GS memory blocks in raster block order. PSMT8 block = 16x16 texels (256 bytes),
+ *    PSMT4 block = 32x16 (two texels per byte, low nibble first). Smaller than one block: linear indices.
+ *  - CLUT hash: XXH3-64 over the palette as PS2 RGBA8 words (R low) with GS alpha (0x80 = opaque):
+ *    Xbox alpha 0xFF -> 0x80, else (a + 1) / 2. 256 entries for PSMT8, 16 for PSMT4.
+ * PSMT8 is tried first, PSMT4 when every index is < 16. No CLUT match but files for that TEX0 hash: the one whose
+ * thumbnail is closest to the texture (palette variants) is used. */
+static unsigned off8(unsigned x, unsigned y) {
+    unsigned c = y >> 2, r = y & 3, xs = x ^ ((((r >> 1) ^ c) & 1) * 4);
+    return c * 64 + (xs & 1) * 4 + ((xs >> 1) & 3) * 16 + ((x >> 3) & 1) * 2 + (r & 1) * 8 + ((r >> 1) & 1);
+}
+static unsigned off4(unsigned x, unsigned y) {
+    unsigned c = y >> 2, r = y & 3, xs = x ^ ((((r >> 1) ^ c) & 1) * 4);
+    return c * 128 + (xs & 1) * 8 + ((xs >> 1) & 3) * 32 + ((x >> 3) & 3) * 2 + (r & 1) * 16 + ((r >> 1) & 1);
+}
+static uint64_t tex_hash(const uint8_t *idx, int w, int h, int psmt4) {
+    int bw = psmt4 ? 32 : 16, bh = 16;
+    if (w < bw || h < bh) return XXH3_64bits(idx, (size_t)w * h);
+    static unsigned short o8[256], o4[512];
+    if (!o8[1]) {
+        for (unsigned y = 0; y < 16; y++) {
+            for (unsigned x = 0; x < 16; x++) o8[y * 16 + x] = (unsigned short)off8(x, y);
+            for (unsigned x = 0; x < 32; x++) o4[y * 32 + x] = (unsigned short)off4(x, y);
+        }
+    }
+    XXH3_state_t st;
+    XXH3_64bits_reset(&st);
+    uint8_t blk[256];
+    for (int by = 0; by < h; by += bh)
+        for (int bx = 0; bx < w; bx += bw) {
+            if (psmt4) {
+                memset(blk, 0, sizeof blk);
+                for (int y = 0; y < 16; y++)
+                    for (int x = 0; x < 32; x++) {
+                        unsigned n = o4[y * 32 + x];
+                        blk[n >> 1] |= (uint8_t)((idx[(by + y) * w + bx + x] & 15) << ((n & 1) * 4));
+                    }
+            } else {
+                for (int y = 0; y < 16; y++)
+                    for (int x = 0; x < 16; x++) blk[o8[y * 16 + x]] = idx[(by + y) * w + bx + x];
+            }
+            XXH3_64bits_update(&st, blk, sizeof blk);
+        }
+    return XXH3_64bits_digest(&st);
+}
+static int log2i(int v) { int n = 0; while ((1 << n) < v) n++; return n; }
+
+/* thumbnail distance of pack texture i to the RGBA texture (UINT32_MAX: no thumbnail / other shape) */
+static uint32_t thumb_dist(int i, const uint32_t *rgba, int w, int h) {
+    int tw = w >= h ? T : T * w / h, th = h >= w ? T : T * h / w;
+    if (packs[i].tw != tw || packs[i].th != th || tw < 1 || th < 1 || w % tw || h % th) return UINT32_MAX;
+    int sx = w / tw, sy = h / th;
+    uint32_t d = 0;
+    for (int y = 0; y < th; y++)
+        for (int x = 0; x < tw; x++) {
+            uint32_t acc[3] = {0};
+            for (int yy = 0; yy < sy; yy++)
+                for (int xx = 0; xx < sx; xx++) {
+                    uint32_t c = rgba[(y * sy + yy) * w + x * sx + xx];
+                    acc[0] += c & 255; acc[1] += c >> 8 & 255; acc[2] += c >> 16 & 255;
+                }
+            for (int ch = 0; ch < 3; ch++)
+                d += (uint32_t)abs((int)(acc[ch] / (uint32_t)(sx * sy)) - (int)packs[i].thumb[(y * tw + x) * 3 + ch]);
+        }
+    return d;
+}
+
+int hdtex_find_indexed(const uint8_t *idx, int w, int h, const uint32_t *pal, uint32_t pal_len, const uint32_t *rgba) {
+    if (!hdtex_enabled()) return -1;
+    uint32_t gs[256] = {0};
+    for (uint32_t k = 0; k < pal_len && k < 256; k++) {
+        uint32_t c = pal[k], a = c >> 24;   /* guest D3DCOLOR A8R8G8B8 */
+        gs[k] = (c >> 16 & 255) | (c & 0xFF00) | (c & 255) << 16 | (a == 255 ? 0x80u : (a + 1) / 2) << 24;
+    }
+    uint8_t mx = 0;
+    for (int i = 0, n = w * h; i < n; i++) if (idx[i] > mx) mx = idx[i];
+    uint32_t size_bits = (uint32_t)log2i(w) << 6 | (uint32_t)log2i(h) << 10;
+    uint64_t t8 = tex_hash(idx, w, h, 0), t4 = mx < 16 ? tex_hash(idx, w, h, 1) : 0;
+    uint64_t c8 = XXH3_64bits(gs, (size_t)(pal_len < 256 ? pal_len : 256) * 4), c4 = XXH3_64bits(gs, 16 * 4);
+    struct { uint64_t t, c; uint32_t psm; } tries[4] = {{t8, c8, 0x13}, {t4, c4, 0x14}, {t4, c8, 0x14}, {t8, c4, 0x13}};
+    int id = -1;
+    const char *how = "miss";
+    for (int k = 0; k < 4 && id < 0; k++) {
+        if (tries[k].psm == 0x14 && mx >= 16) continue;
+        for (int i = 0; i < npacks; i++)
+            if (packs[i].tex0 == tries[k].t && packs[i].clut == tries[k].c && packs[i].bits == (tries[k].psm | size_bits)) {
+                id = i; how = "exact"; break;
+            }
+    }
+    for (int k = 0; k < 2 && id < 0; k++) {   /* this TEX0 hash with another CLUT: closest thumbnail, or the only file */
+        if (k == 1 && mx >= 16) break;
+        uint64_t t = k ? t4 : t8;
+        uint32_t bits = (k ? 0x14 : 0x13) | size_bits, bd = UINT32_MAX;
+        int nfound = 0, first = -1;
+        for (int i = 0; i < npacks; i++) {
+            if (packs[i].tex0 != t || packs[i].bits != bits) continue;
+            nfound++;
+            if (first < 0) first = i;
+            uint32_t d = rgba ? thumb_dist(i, rgba, w, h) : UINT32_MAX;
+            if (d < bd) { bd = d; id = i; }
+        }
+        if (nfound == 1) { id = first; how = "tex0"; }
+        else if (id >= 0) how = "variant";
+    }
+    if (getenv("UG_HDLOG"))
+        LOG("[hdtex] I8 %dx%d pal %u: t8 %llx clut %llx -> %s %s\n", w, h, pal_len, (unsigned long long)t8,
+            (unsigned long long)c8, how, id >= 0 ? packs[id].path : "");
+    return id;
 }

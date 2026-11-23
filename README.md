@@ -60,8 +60,8 @@ A static recompilation by 8gram Labs: the original x86 game code is translated t
   on-screen touch controls.
 - **Controllers and keyboard.** XInput pads on Windows, SDL3 gamepads on Linux and Android, up to 4 players.
 - **HD texture packs (optional).** It loads PCSX2-format replacement packs made for the PS2 version, such as the
-  community *HD Remaster* pack. The PS2 pack's file names can't be rebuilt from the Xbox data, so each texture is
-  matched by picture instead (see [HD textures](#hd-textures)). F10 in the game switches them on and off.
+  community *HD Remaster* pack. Palettized textures are matched by their exact PS2 hashes; compressed (DXT) ones by
+  picture (see [HD textures](#hd-textures)). F10 in the game switches them on and off.
 
 ## HD textures
 
@@ -72,12 +72,15 @@ pick its folder, for example `...\SLUS-20731\replacements`, in the launcher (**S
 Linux: `./setup.sh --hd <folder>` or `UG_HDTEX=<folder>` in `settings.ini`. The pack is used where it is and is not
 copied. **F10** in the game switches it on and off, so you can compare.
 
-How it works: the pack names its files by PS2 texture hashes, and the Xbox textures are stored differently (DXT
-instead of palettes), so those names can't be rebuilt. Instead, every texture the game loads is shrunk to a 16-pixel
-thumbnail and compared with thumbnails of the whole pack. A pack texture is used only when it is clearly the same
-picture; flat or ambiguous textures keep the original. In New Jersey about 600 of 870 detailed textures find their
-HD version. The pack was made from the lower-resolution PS2 textures, so the gain over the Xbox originals is
-modest.
+How it works: the pack names its files by PS2 texture hashes. The Xbox version keeps two kinds of texture:
+- **Palettized (8-bit)** ones have the same indices and palette as on the PS2, so the PS2 hashes are rebuilt exactly
+  (as in Project Gauntlet). In New Jersey 79 of 83 find their file.
+- **Compressed (DXT)** ones, most of the level art, were re-encoded for the Xbox, so their PS2 hashes can't be
+  rebuilt. Each is shrunk to a 16-pixel thumbnail and compared with thumbnails of the whole pack; a pack texture is
+  used only when it is clearly the same picture, and flat or ambiguous textures keep the original. In New Jersey
+  about 600 of 870 detailed textures find their HD version.
+
+The pack was made from the lower-resolution PS2 textures, so the gain over the Xbox originals is modest.
 
 ## The installer and launcher
 
