@@ -62,7 +62,7 @@ cp "$cache/gcdb-$gcdb_rev-LICENSE" "$kit/licenses/SDL_GameControllerDB_LICENSE.t
 cp "${UG_SDL3_SRC:-$HOME/ttt2-deps/sdl3/src}/LICENSE.txt" "$kit/licenses/SDL3_LICENSE.txt"
 cp "$root/third_party/vulkan/LICENSE-Vulkan-Headers.md" "$root/third_party/vulkan/LICENSE-volk.md" "$kit/licenses/"
 # xxHash (BSD-2-Clause): the license is the header comment of runtime/src/xxhash.h
-awk '{print} /\*\//{exit}' "$root/runtime/src/xxhash.h" | tr -d '' > "$kit/licenses/xxhash_LICENSE.txt"
+awk '{print} /\*\//{exit}' "$root/runtime/src/xxhash.h" | tr -d '\r' > "$kit/licenses/xxhash_LICENSE.txt"
 cat > "$kit/licenses/README.txt" <<'EOF'
 Third-party parts of the Linux package:
 - SDL3 3.4 (zlib license, https://libsdl.org): lib/libSDL3.so.0
