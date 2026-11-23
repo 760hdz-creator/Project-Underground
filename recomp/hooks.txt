@@ -1,0 +1,2 @@
+# Lifted functions that call x86_hook(c, va) on entry (runtime/src/hle.c): <va> <name>
+F1D60 ChangeLevel

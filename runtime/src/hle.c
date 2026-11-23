@@ -140,8 +140,61 @@ static uint32_t pad_mask(void) {
 }
 static int pad_ok(uint32_t h) { return (h & ~3u) == PAD_HANDLE && (pad_mask() >> (h & 3) & 1); }
 
-/* recomp/hooks.txt entry hooks: debugging only (UG_HOOKLOG=1 logs registers and the first stack slots) */
+/* Script checksums: the game's CRC32 (lower case, '/' as '\', init ~0, no final xor; table at 0x225EC0, GenerateCRC
+ * 0x118C0). */
+static uint32_t qb_crc(const char *s) {
+    uint32_t r = 0xFFFFFFFFu;
+    for (; *s; s++) {
+        uint8_t ch = (uint8_t)*s;
+        if (ch >= 'A' && ch <= 'Z') ch += 32;
+        if (ch == '/') ch = '\\';
+        r = (r >> 8) ^ RD32(0x225EC0u + 4 * ((ch ^ r) & 0xFF));
+    }
+    return r;
+}
+
+/* Level test cheat. ChangeLevel (script C function 0xF1D60, params = arg 0): its CStruct is a list of components
+ * (+0 type, 0x0D = name/checksum; +4 name; +8 value; +0xC next); "level" holds the level script (load_nj ...).
+ * Every change is logged as "[level] load_xx". UG_LEVEL=<xx or load_xx> sends every change into a skating level to
+ * that level instead (menus, Create-a-Skater bedroom, skate shops and park editor are left alone): start story or
+ * free skate and land in Moscow with UG_LEVEL=ru. Levels on the disc: nj ny fl sd hi vc sj ru hn ph se sc sc2 dj sp
+ * vn testlevel. */
+static const char *const k_levels[] = {"nj", "ny", "fl", "sd", "hi", "vc", "sj", "ru", "hn", "ph", "se", "sc", "sc2",
+                                       "dj", "sp", "vn", "testlevel",   /* skating levels (K_SKATE_LEVELS) */
+                                       "mainmenu", "cas_bedroom", "skateshop", "nj_skateshop", "sk5ed", "sk5ed_shell",
+                                       "sk5ed2", "sk5ed3", "sk5ed4", "sk5ed5"};
+#define K_SKATE_LEVELS 17
+static int level_index(uint32_t crc) {
+    char b[48];
+    for (int i = 0; i < (int)(sizeof k_levels / sizeof *k_levels); i++) {
+        snprintf(b, sizeof b, "load_%s", k_levels[i]);
+        if (qb_crc(b) == crc || qb_crc(k_levels[i]) == crc) return i;
+    }
+    return -1;
+}
+static void change_level_hook(X86Context *c) {
+    uint32_t params = RD32(c->esp + 4), want = qb_crc("level");
+    for (uint32_t comp = params ? RD32(params) : 0, n = 0; comp && n < 64; comp = RD32(comp + 0xC), n++) {
+        if (RD32(comp + 4) != want || RD8(comp) != 0x0D) continue;
+        uint32_t v = RD32(comp + 8);
+        int i = level_index(v);
+        const char *e = getenv("UG_LEVEL");
+        if (e && *e && i >= 0 && i < K_SKATE_LEVELS) {
+            char to[48];
+            snprintf(to, sizeof to, "%s%s", strncmp(e, "load_", 5) ? "load_" : "", e);
+            uint32_t t = qb_crc(to);
+            if (t != v) { WR32(comp + 8, t); LOG("[level] load_%s -> %s (UG_LEVEL)\n", k_levels[i], to); return; }
+        }
+        if (i >= 0) LOG("[level] load_%s\n", k_levels[i]);
+        else LOG("[level] %08X\n", v);
+        return;
+    }
+    LOG("[level] ChangeLevel without a level name\n");
+}
+
+/* recomp/hooks.txt entry hooks (UG_HOOKLOG=1 logs registers and the first stack slots) */
 void x86_hook(X86Context *c, uint32_t va) {
+    if (va == 0xF1D60) { change_level_hook(c); return; }
     static int on = -1;
     if (on < 0) on = getenv("UG_HOOKLOG") != NULL;
     if (on) LOG("[hook] %06X eax %08X ecx %08X edx %08X ebx %08X | %08X %08X %08X %08X %08X\n", va, c->eax, c->ecx,

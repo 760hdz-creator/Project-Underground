@@ -32,7 +32,7 @@ Gauntlet's installer (G:\Project Gauntlet\docs\installer.md) without its Visual 
   60 fps is off, UG_VSYNC=0 when VSync is off, UG_MONITOR, UG_WINDOW=WxH (windowed client size in pixels; default 2/3
   of the monitor's height at the game's aspect, centred), UG_WIDESCREEN=0 (4:3; default on: the Xbox widescreen video
   flag, the game renders 16:9 anamorphic and the frame is shown at 16:9), UG_ASPECT=stretch (fill the window), UG_SCALE,
-  UG_PADS; a default deletes the key; the game's main.c load_settings applies keys not already in the environment),
+  UG_PADS, UG_LEVEL (test cheat: story or free skate loads that level, see runtime/src/hle.c); a default deletes the key; the game's main.c load_settings applies keys not already in the environment),
   Logs, Uninstall. The game window is per-monitor DPI aware (sizes are physical pixels; no blurry upscale at 125-200%
   display scaling). F11 / Alt+Enter toggle borderless fullscreen on the window's monitor.
 - Game updater (`runtime/src/updater.c`): installed builds GET forge `8gramlabs/Project-Underground` releases/latest;
