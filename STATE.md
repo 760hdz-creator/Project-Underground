@@ -67,19 +67,26 @@ Sibling of Project Gauntlet (G:\Project Gauntlet): its x86->C lifter, runtime an
     NtWaitForSingleObject(Ex) on a file handle returns at once.
   - DSOUND: IDirectSoundBuffer_Release frees the voice (game never AddRefs), slots reused.
   - New debug env: UG_FSLOG=1 (file reads), UG_PEEK="va,len;*ptr+off,len" (guest dump at first UG_WATCHDOG sample).
-  - Scripted route to gameplay (timing drifts run to run, so the CAS exit is a repeating cycle; D-pad needs >=0.4 s):
+  - Scripted route to gameplay (timing drifts run to run, so the CAS exit is a repeating cycle). D-pad presses are
+    ignored by the menus (unknown why; keyboard/XInput D-pad untested), the left stick works:
     UG_INPUT="$(python -c "
 ev=[f'{t}:A' for t in range(6,31,3)]
-for c in range(40,200,12): ev+=[f'{c}:B:0.3',f'{c+1.5}:B:0.3',f'{c+3}:B:0.3',f'{c+5}:DOWN:0.4',f'{c+7}:DOWN:0.4',f'{c+9}:A:0.3']
-print(','.join(ev))")" UG_SHOT=600 ./out/underground.exe   (in level by ~frame 7800)
-  - Visible bugs: stray light-blue triangle streaks across the sky in gameplay (bad vertex / index?); cutscene skies
-    and the bedroom window tinted magenta (texture format or combiner?).
+for c in range(40,200,12): ev+=[f'{c}:B:0.3',f'{c+1.5}:B:0.3',f'{c+3}:B:0.3',f'{c+5}:LDOWN:0.3',f'{c+7}:LDOWN:0.3',f'{c+9}:A:0.3']
+print(','.join(ev))")" UG_SHOT=1200 ./out/underground.exe   (NJ level by ~frame 6000; run 280 s)
+  - FIXED 2026-11-23: magenta tint = final combiner (c0/c1 now SET_SPECULAR_FOG_FACTOR 0x1E20/24; fog alpha 1 when
+    fog off). Fog function (FOG_MODE/PARAMS) added in nv2a.vert. build.py now tracks local #include mtimes.
+  - OPEN: translucent dark-blue band/wedge across the sky at the top of the screen, intermittent (~1 in 8 shots,
+    only when sky is in view). UG_SKIPMODE=2 A/B run: not seen in windows without VP draws (weak evidence). Not texgen
+    (no draw uses TEXGEN 0x3C0..; no texgen support exists). Mode-2 draws are skinned characters + one fullscreen quad
+    sampling the 256x256 skater RT (fmt 00011E29). Next idea: per-vertex guard in nv2a.vert (flag outputs with
+    |screen xy| >> surface or w ~ 0) via UG_DBGCOLOR, or skip the fullscreen RT quad.
+  - Debug env added: UG_SKIPFMT=<hex>, UG_SKIPMODE=<m> (odd 300-frame windows), UG_DRAWLOG prints fog, texgen, pos range.
 - Oracle (all leaves): 2228 pass, 17 fail, 887 skip. Explained: ret imm16 sign (unicorn bug: 19430, 224EF, 3DC24,
   168D83, 181B68 are junk starts), rdtsc/cpuid stubs (173E80, 18A9D0, 1975F0, 182300). Unexamined: 11980, 48D63,
   6A330, 78820/1C5395 (st0 nan vs inf), 1945D0 (x87 top), 1C5FA7, 1F8A78.
 
 ## Next
-1. Gameplay render bugs: sky triangle streak, magenta tint in cutscene skies.
+1. Gameplay render bug: sky band/wedge (above). Then FF lighting (0x0314), texgen, cube maps.
 2. Renderer gaps: shader stage modes other than 2D/pass-through (mode 2 seen), cube maps, fixed-function lighting
    (0x0314 = 1 seen), fog, MSAA, widescreen, CPU-drawn loading bar (writes guest framebuffer RAM directly).
 3. Oracle fails above. Unimplemented lifter sites (46: enter, segment movs, fnsave/frstor).

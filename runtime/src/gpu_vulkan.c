@@ -1067,6 +1067,10 @@ static void draw_impl(int topo, const KVertex *v, uint32_t nv, const uint32_t *i
         static int skip = -2;
         if (skip == -2) { const char *e = getenv("UG_SKIPFMT"); skip = e ? (int)strtol(e, NULL, 16) : -1; }
         if (skip >= 0 && (KREG(K_TEX_CONTROL0(0)) >> 30 & 1) && (int)(KREG(K_TEX_FORMAT(0)) >> 8 & 0xFF) == skip) return;
+        /* UG_SKIPMODE=<transform mode>: drop those draws in odd 300-frame windows (A/B shots in one run, debug) */
+        static int skipm = -2;
+        if (skipm == -2) { const char *e = getenv("UG_SKIPMODE"); skipm = e ? atoi(e) : -1; }
+        if (skipm >= 0 && (frame_no / 300 & 1) && (int)(KREG(K_TRANSFORM_MODE) & 3) == skipm) return;
     }
     if (!select_targets()) return;
     Frame *f = &frames[fi];
@@ -1164,6 +1168,11 @@ static void draw_impl(int topo, const KVertex *v, uint32_t nv, const uint32_t *i
                 LOG("[draw]   fog en %X mode %X gen %X color %08X params %g %g sfac %08X %08X fogp.z %g\n", KREG(K_FOG_ENABLE),
                     KREG(K_FOG_MODE), KREG(K_FOG_GEN_MODE), KREG(K_FOG_COLOR), u->fogp[0], u->fogp[1],
                     KREG(K_SPECFOG_FACTOR0), KREG(K_SPECFOG_FACTOR1), u->fogp[2]);
+                LOG("[draw]   texgen0 %X %X %X %X texgen1 %X %X %X %X tex en %X %X %X %X texmat en %u light %X\n",
+                    g_kreg[0x3C0 >> 2], g_kreg[0x3C4 >> 2], g_kreg[0x3C8 >> 2], g_kreg[0x3CC >> 2], g_kreg[0x3D0 >> 2],
+                    g_kreg[0x3D4 >> 2], g_kreg[0x3D8 >> 2], g_kreg[0x3DC >> 2], KREG(K_TEX_CONTROL0(0)) >> 30 & 1,
+                    KREG(K_TEX_CONTROL0(1)) >> 30 & 1, KREG(K_TEX_CONTROL0(2)) >> 30 & 1, KREG(K_TEX_CONTROL0(3)) >> 30 & 1,
+                    u->mode[2], g_kreg[0x314 >> 2]);
                 LOG("[draw]   pos range x %g..%g y %g..%g z %g..%g w %g..%g\n", lo[0], hi[0], lo[1], hi[1], lo[2], hi[2],
                     lo[3], hi[3]);
             }
