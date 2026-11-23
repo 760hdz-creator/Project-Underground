@@ -90,9 +90,9 @@ print(','.join(ev))")" UG_SHOT=1200 ./out/underground.exe   (NJ level by ~frame 
     outside the light frustum?). Check with UG_DBGCOLOR=7 there. Debug: UG_DBGCOLOR=6 (r = fract(ref*16), g = stored
     depth < 1, b = ref > stored), 7 (uv, ref/4 of shadow draws; other draws white), UG_SHADOWNOZ=1 (no z test/cull on
     shadow draws). Draw log now prints all 4 stage modes, shader prog, z func and polygon offset.
-  - PERF NOTE: during the intro cutscene the 02778000/02AFC000 targets flip between 640x480 and 640x420 every frame
-    (~3000 recreations, each clears; zeta recreation now does vkDeviceWaitIdle for its depth view). Key surfaces by
-    address with the max size and render the clip size as a sub-rect instead.
+  - FIXED: color/zeta surfaces grow only (Surface.aw/ah); a smaller clip (640x420 letterbox in CAS/cutscenes, was
+    recreating + clearing both targets every frame) renders into the top-left of the allocation. Rect sampling of a
+    render target uses the allocated size.
   - Debug env added: UG_SKIPFMT=<hex>, UG_SKIPMODE=<m>, UG_SKIPTEXMAT=1 (both drop draws in windows where
     ((frame+150)/300) is odd; shot N shows frame N-1), UG_DRAWLOG prints fog, texgen, texmat-stage formats, pos range.
 - Oracle (all leaves): 2228 pass, 17 fail, 887 skip. Explained: ret imm16 sign (unicorn bug: 19430, 224EF, 3DC24,
@@ -100,7 +100,7 @@ print(','.join(ev))")" UG_SHOT=1200 ./out/underground.exe   (NJ level by ~frame 
   6A330, 78820/1C5395 (st0 nan vs inf), 1945D0 (x87 top), 1C5FA7, 1F8A78.
 
 ## Next
-1. Surface size thrash (perf note above). FF lighting (0x0314), texgen (stage-1 texgen 0x8512 reflection map seen on
+1. FF lighting (0x0314), texgen (stage-1 texgen 0x8512 reflection map seen on
    texmat draws: env mapping, not implemented), cube maps; sky wedge (cosmetic); pool-floor rectangle.
 2. Renderer gaps: shader stage modes other than 2D/pass-through (mode 2 seen), cube maps, fixed-function lighting
    (0x0314 = 1 seen), fog, MSAA, widescreen, CPU-drawn loading bar (writes guest framebuffer RAM directly).

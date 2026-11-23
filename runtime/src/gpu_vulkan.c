@@ -349,17 +349,19 @@ static int swapchain_create(void) {
 /* ================================================================ surfaces */
 
 typedef struct {
-    uint32_t addr; int w, h, hw, hh;
+    uint32_t addr; int w, h, hw, hh;   /* active guest size (clip) and its host size */
+    int aw, ah;                        /* allocated guest size: grows only; a smaller clip renders into the top-left */
     Img color;
     uint32_t last_frame;
 } Surface;
-typedef struct { uint32_t addr; int w, h; Img depth; VkImageView dview; } ZSurface;   /* dview: depth aspect only (shadow maps) */
+typedef struct { uint32_t addr; int w, h; Img depth; VkImageView dview; } ZSurface;   /* w, h: allocated (grows only) */   /* dview: depth aspect only (shadow maps) */
 static Surface rts[16]; static int n_rts;
 static ZSurface zss[8]; static int n_zss;
 static Surface *cur_rt;
 static ZSurface *cur_zs;
 static int rendering;                 /* inside vkCmdBeginRendering */
 static Surface *r_rt; static ZSurface *r_zs;   /* what the active rendering pass targets */
+static int r_hw, r_hh;                         /* and its render area */
 
 static VkCommandBuffer CMD(void) { return frames[fi].cmd; }
 
@@ -368,7 +370,7 @@ static void end_rendering(void) {
 }
 
 static void begin_rendering(void) {
-    if (rendering && r_rt == cur_rt && r_zs == cur_zs) return;
+    if (rendering && r_rt == cur_rt && r_zs == cur_zs && r_hw == cur_rt->hw && r_hh == cur_rt->hh) return;
     end_rendering();
     barrier(CMD(), &cur_rt->color, VK_IMAGE_ASPECT_COLOR_BIT, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL);
     if (cur_zs) barrier(CMD(), &cur_zs->depth, VK_IMAGE_ASPECT_DEPTH_BIT | VK_IMAGE_ASPECT_STENCIL_BIT,
@@ -386,7 +388,7 @@ static void begin_rendering(void) {
     ri.layerCount = 1; ri.colorAttachmentCount = 1; ri.pColorAttachments = &ca;
     if (cur_zs) { ri.pDepthAttachment = &za; ri.pStencilAttachment = &za; }
     vkCmdBeginRendering(CMD(), &ri);
-    rendering = 1; r_rt = cur_rt; r_zs = cur_zs;
+    rendering = 1; r_rt = cur_rt; r_zs = cur_zs; r_hw = cur_rt->hw; r_hh = cur_rt->hh;
     VkViewport vp = {0, 0, (float)cur_rt->hw, (float)cur_rt->hh, 0, 1};
     vkCmdSetViewport(CMD(), 0, 1, &vp);
     VkRect2D sc = {{0, 0}, {(uint32_t)cur_rt->hw, (uint32_t)cur_rt->hh}};
@@ -413,7 +415,12 @@ static void clear_image(Img *im, VkImageAspectFlags aspect) {
 static Surface *get_rt(uint32_t addr, int w, int h) {
     Surface *s = find_rt(addr);
     if (s && s->w == w && s->h == h) return s;
+    if (s && w <= s->aw && h <= s->ah) {   /* clip changed within the allocation (cutscene letterbox 640x420/480) */
+        s->w = w; s->h = h; s->hw = w * g_scale; s->hh = h * g_scale;
+        return s;
+    }
     end_rendering();
+    if (s) { if (w < s->aw) w = s->aw; if (h < s->ah) h = s->ah; }
     if (!s) {
         if (n_rts == 16) {
             int o = 0;
@@ -422,7 +429,7 @@ static Surface *get_rt(uint32_t addr, int w, int h) {
         } else s = &rts[n_rts++];
     }
     img_destroy_later(&s->color);
-    s->addr = addr; s->w = w; s->h = h; s->hw = w * g_scale; s->hh = h * g_scale;
+    s->addr = addr; s->w = s->aw = w; s->h = s->ah = h; s->hw = w * g_scale; s->hh = h * g_scale;
     if (!img_create(&s->color, s->hw, s->hh, 1, VK_FORMAT_R8G8B8A8_UNORM,
                     VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT | VK_IMAGE_USAGE_SAMPLED_BIT | VK_IMAGE_USAGE_TRANSFER_SRC_BIT |
                     VK_IMAGE_USAGE_TRANSFER_DST_BIT, VK_IMAGE_ASPECT_COLOR_BIT)) return NULL;
@@ -432,12 +439,13 @@ static Surface *get_rt(uint32_t addr, int w, int h) {
 }
 
 static ZSurface *get_zs(uint32_t addr, int w, int h) {
-    for (int i = 0; i < n_zss; i++) if (zss[i].addr == addr && zss[i].w == w && zss[i].h == h && zss[i].depth.img) return &zss[i];
+    for (int i = 0; i < n_zss; i++) if (zss[i].addr == addr && w <= zss[i].w && h <= zss[i].h && zss[i].depth.img) return &zss[i];
     end_rendering();
     ZSurface *z = NULL;
     for (int i = 0; i < n_zss; i++) if (zss[i].addr == addr) z = &zss[i];
+    if (z) { if (w < z->w) w = z->w; if (h < z->h) h = z->h; }
     if (!z) z = n_zss < 8 ? &zss[n_zss++] : &zss[0];
-    if (z->dview) { vkDeviceWaitIdle(dev); vkDestroyImageView(dev, z->dview, 0); z->dview = 0; }   /* rare: size change */
+    if (z->dview) { vkDeviceWaitIdle(dev); vkDestroyImageView(dev, z->dview, 0); z->dview = 0; }   /* rare: grows only */
     img_destroy_later(&z->depth);
     z->addr = addr; z->w = w; z->h = h;
     if (!img_create(&z->depth, w * g_scale, h * g_scale, 1, depth_fmt,
@@ -725,6 +733,7 @@ static VkImageView get_texture(int i, int *rect, int *tw, int *th, float *zmax) 
     Surface *s = find_rt(addr);
     if (s) {
         if (s == cur_rt) return 0;
+        if (*rect) { *tw = s->aw; *th = s->ah; }   /* texel coordinates over the whole (possibly larger) allocation */
         end_rendering();
         barrier(CMD(), &s->color, VK_IMAGE_ASPECT_COLOR_BIT, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
         return s->color.view;
