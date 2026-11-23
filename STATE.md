@@ -60,19 +60,26 @@ Sibling of Project Gauntlet (G:\Project Gauntlet): its x86->C lifter, runtime an
     NOTE: UG_NVLOG logs only the first write of each register, whatever its value.
   - Lifter: polling loops (short, call-free, store-free, reading a global) get x86_spin() on the back-edge (49 sites).
   - Memory: RAM also mapped at 0xF0000000 (write-combined view D3D's LockRect returns; loading-bar timer callback).
-- CURRENT BLOCKER (story mode): after Difficulty -> the game opens data/cutscenes/Intro_01.cut.Xbx and then loops in
-  the cutscene loader 106EE0: { call 33660 (stream update), call 31C40 (ready?), call 174090 (wait one vblank) }.
-  31C40 -> 34760 -> 358C0: the stream object (ptr at [0x24E7DC] / [0x24E7E0]) is "ready" when [+0xA0] == 1 and
-  [+0x98] >= [+0x9C] + 0x2000 (bytes buffered). [+0x98] is written at 337E5, 33BD3, 35768, 35850: find which path
-  should advance it (async file read completion? DSOUND stream callback? NtReadFile returns at once, no APCs seen).
-  The vblank callback (173E90, via D3D's ISR) does run. Repro:
-  `UG_INPUT=$(python -c "print(','.join(f'{t}:A' for t in range(6,240,3)))") ./out/underground.exe`.
+- 2026-11-22 (night): GAMEPLAY REACHED. Story: intro cutscene -> Create-a-Skater -> NJ_01V cutscene -> New Jersey
+  level, skater controllable, HUD, 60 fps, no fatal in 300 s (out/ingame_nj.png).
+  - Cutscene stall fix: overlapped NtReadFile on async handles (no FILE_SYNCHRONOUS_IO_*, event or ApcContext given)
+    returns STATUS_PENDING with the IOSB already filled; THUG's streamers (33940, 357F7) take a sync success as EOS.
+    NtWaitForSingleObject(Ex) on a file handle returns at once.
+  - DSOUND: IDirectSoundBuffer_Release frees the voice (game never AddRefs), slots reused.
+  - New debug env: UG_FSLOG=1 (file reads), UG_PEEK="va,len;*ptr+off,len" (guest dump at first UG_WATCHDOG sample).
+  - Scripted route to gameplay (timing drifts run to run, so the CAS exit is a repeating cycle; D-pad needs >=0.4 s):
+    UG_INPUT="$(python -c "
+ev=[f'{t}:A' for t in range(6,31,3)]
+for c in range(40,200,12): ev+=[f'{c}:B:0.3',f'{c+1.5}:B:0.3',f'{c+3}:B:0.3',f'{c+5}:DOWN:0.4',f'{c+7}:DOWN:0.4',f'{c+9}:A:0.3']
+print(','.join(ev))")" UG_SHOT=600 ./out/underground.exe   (in level by ~frame 7800)
+  - Visible bugs: stray light-blue triangle streaks across the sky in gameplay (bad vertex / index?); cutscene skies
+    and the bedroom window tinted magenta (texture format or combiner?).
 - Oracle (all leaves): 2228 pass, 17 fail, 887 skip. Explained: ret imm16 sign (unicorn bug: 19430, 224EF, 3DC24,
   168D83, 181B68 are junk starts), rdtsc/cpuid stubs (173E80, 18A9D0, 1975F0, 182300). Unexamined: 11980, 48D63,
   6A330, 78820/1C5395 (st0 nan vs inf), 1945D0 (x87 top), 1C5FA7, 1F8A78.
 
 ## Next
-1. Fix the Intro_01 cutscene stream stall (above), reach gameplay.
+1. Gameplay render bugs: sky triangle streak, magenta tint in cutscene skies.
 2. Renderer gaps: shader stage modes other than 2D/pass-through (mode 2 seen), cube maps, fixed-function lighting
    (0x0314 = 1 seen), fog, MSAA, widescreen, CPU-drawn loading bar (writes guest framebuffer RAM directly).
 3. Oracle fails above. Unimplemented lifter sites (46: enter, segment movs, fnsave/frstor).
