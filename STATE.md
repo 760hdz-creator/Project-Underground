@@ -180,7 +180,8 @@ print(','.join(ev))")" UG_SHOT=1200 ./out/underground.exe   (NJ level by ~frame 
      touch overlay (runtime/shaders/touch.*; UG_TOUCHDEMO=1 checked on Windows).
    - Player pipeline: tools/ug_android.py (LIFT_FLAGS + -fsigned-char); launcher "Android..." button; Linux
      setup.sh --android. Linux path verified (3.4 GB APK, apksigner v2 OK, zipalign OK). Windows path: run
-     with the payload python against G:\ug_test (NDK download into G:\ug_test\android\ndk).
+     with the payload python against G:\ug_test: OK (NDK in G:\ug_test\android\ndk, APK 3.4 GB there: delete with
+     the other test dirs). Installer rebuilt with the kit (20.1 MB); the launcher shows "Android...".
    - Windows payload needs dist\_cache\android-kit (copy of WSL ~/uga/build/android-kit).
    NEXT: phone test (connect it on adb): install the player APK, first-start unpack (3.2 GB), relaunch via
    RestartActivity, intro, menus, touch controls, background/resume, swapchain transform (log line
