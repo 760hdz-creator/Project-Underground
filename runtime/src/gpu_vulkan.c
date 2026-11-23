@@ -1070,7 +1070,12 @@ static void draw_impl(int topo, const KVertex *v, uint32_t nv, const uint32_t *i
         /* UG_SKIPMODE=<transform mode>: drop those draws in odd 300-frame windows (A/B shots in one run, debug) */
         static int skipm = -2;
         if (skipm == -2) { const char *e = getenv("UG_SKIPMODE"); skipm = e ? atoi(e) : -1; }
-        if (skipm >= 0 && (frame_no / 300 & 1) && (int)(KREG(K_TRANSFORM_MODE) & 3) == skipm) return;
+        if (skipm >= 0 && ((frame_no + 150) / 300 & 1) && (int)(KREG(K_TRANSFORM_MODE) & 3) == skipm) return;
+        /* UG_SKIPTEXMAT=1: same windows, drop draws with any texture matrix enabled (projected textures) */
+        static int skipt = -1;
+        if (skipt < 0) skipt = getenv("UG_SKIPTEXMAT") != NULL;
+        if (skipt && ((frame_no + 150) / 300 & 1) && (KREG(K_TEXMAT_EN) & 1 || KREG(K_TEXMAT_EN + 4) & 1 ||
+                                                       KREG(K_TEXMAT_EN + 8) & 1 || KREG(K_TEXMAT_EN + 12) & 1)) return;
     }
     if (!select_targets()) return;
     Frame *f = &frames[fi];
@@ -1173,6 +1178,9 @@ static void draw_impl(int topo, const KVertex *v, uint32_t nv, const uint32_t *i
                     g_kreg[0x3D4 >> 2], g_kreg[0x3D8 >> 2], g_kreg[0x3DC >> 2], KREG(K_TEX_CONTROL0(0)) >> 30 & 1,
                     KREG(K_TEX_CONTROL0(1)) >> 30 & 1, KREG(K_TEX_CONTROL0(2)) >> 30 & 1, KREG(K_TEX_CONTROL0(3)) >> 30 & 1,
                     u->mode[2], g_kreg[0x314 >> 2]);
+                if (u->mode[2])
+                    LOG("[draw]   texmat draw: tex fmt %08X %08X %08X %08X\n", KREG(K_TEX_FORMAT(0)), KREG(K_TEX_FORMAT(1)),
+                        KREG(K_TEX_FORMAT(2)), KREG(K_TEX_FORMAT(3)));
                 LOG("[draw]   pos range x %g..%g y %g..%g z %g..%g w %g..%g\n", lo[0], hi[0], lo[1], hi[1], lo[2], hi[2],
                     lo[3], hi[3]);
             }
