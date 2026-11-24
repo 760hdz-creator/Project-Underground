@@ -15,7 +15,7 @@ import sys
 HERE = os.path.dirname(os.path.abspath(__file__))
 ROOT = os.path.dirname(HERE)
 LIBS = ["user32", "gdi32", "comctl32", "comdlg32", "shell32", "ole32", "uuid", "winhttp", "windowscodecs",
-        "msimg32", "advapi32", "uxtheme"]
+        "msimg32", "advapi32", "uxtheme", "gdiplus"]
 
 
 def run(cmd, cwd):

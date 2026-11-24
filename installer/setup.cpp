@@ -28,6 +28,7 @@
 #include <uxtheme.h>
 #include <wincodec.h>
 #include <winhttp.h>
+#include <gdiplus.h>
 #include <algorithm>
 #include <cmath>
 #include <cstdio>
@@ -551,7 +552,7 @@ static const RECT kBoards[6] = {{1590, 225, 2522, 421}, {1590, 433, 2522, 621}, 
                                 {1590, 832, 2522, 1021}, {1590, 1030, 2522, 1219}, {1590, 1228, 2522, 1420}};
 static const RECT kClose = {2618, 12, 2710, 100};     // the X plate, top right
 static const RECT kOverlay = {200, 650, 1550, 1415};  // launcher settings panel (over the skater)
-static const RECT kStatus = {200, 1446, 2250, 1494}, kBar = {200, 1502, 2250, 1520}, kInfo = {2280, 1446, 2600, 1494};
+static const RECT kStatus = {200, 1438, 2250, 1482}, kBar = {200, 1474, 2250, 1534}, kInfo = {2280, 1446, 2600, 1494};
 static double g_scale = 1;
 static HDC g_artDC;
 static HBITMAP g_artBmp, g_artPanelBmp;                 // the art, and the art with the settings panel painted in
@@ -1098,13 +1099,97 @@ static void MakeCombo(int id, const Choice* c, int n, int x, int y, int w, HFONT
     for (int i = 0; i < n; i++) SendMessageW(cb, CB_ADDSTRING, 0, (LPARAM)c[i].label);
 }
 
+// Progress: a skateboard rolling along a rail (grind bar) on the bottom metal bar; the rail behind it lights up.
+// Takes PBM_SETPOS (0..100) like the common progress bar; drawn with GDI+ (antialiased) over the art.
+static LRESULT CALLBACK SkateBarProc(HWND h, UINT m, WPARAM wp, LPARAM lp) {
+    switch (m) {
+    case PBM_SETPOS: {
+        LONG_PTR old = GetWindowLongPtrW(h, GWLP_USERDATA);
+        SetWindowLongPtrW(h, GWLP_USERDATA, (LONG_PTR)std::min<WPARAM>(wp, 100));
+        if ((WPARAM)old != wp) InvalidateRect(h, nullptr, FALSE);
+        return old;
+    }
+    case PBM_SETRANGE: case PBM_SETBARCOLOR: case PBM_SETBKCOLOR: return 0;
+    case WM_ERASEBKGND: return 1;
+    case WM_PAINT: {
+        PAINTSTRUCT ps;
+        HDC wdc = BeginPaint(h, &ps);
+        RECT r;
+        GetClientRect(h, &r);
+        int W = r.right, H = r.bottom;
+        HDC dc = CreateCompatibleDC(wdc);
+        HBITMAP bmp = CreateCompatibleBitmap(wdc, W, H);
+        HGDIOBJ ob = SelectObject(dc, bmp);
+        FillRect(dc, &r, ArtBrushFor(dc, h));
+        {
+            using namespace Gdiplus;
+            Graphics g(dc);
+            g.SetSmoothingMode(SmoothingModeAntiAlias);
+            float pct = (float)GetWindowLongPtrW(h, GWLP_USERDATA) / 100.f;
+            float wr = H * 0.16f;                    // wheel radius
+            float L = H * 3.3f;                      // deck length
+            float railY = H - H * 0.12f, railH = H * 0.11f;
+            float cx = L / 2 + 4 + pct * (W - L - 8);   // board centre
+            // rail: dark steel, lit orange up to the board
+            SolidBrush steel(Color(255, 40, 38, 36)), lit(Color(255, 255, 160, 40)), edge(Color(255, 90, 86, 80));
+            g.FillRectangle(&steel, 0.f, railY - railH / 2, (REAL)W, railH);
+            g.FillRectangle(&lit, 0.f, railY - railH / 2, pct >= 1.f ? (REAL)W : cx, railH);
+            Pen railPen(Color(255, 0, 0, 0), 1.5f);
+            g.DrawRectangle(&railPen, 0.f, railY - railH / 2, (REAL)W - 1, railH);
+            // wheels sit on the rail; trucks; deck = a thick stroke with kicked-up tails (black outline under it)
+            float wy = railY - railH / 2 - wr, deckT = H * 0.12f, deckY = wy - wr - H * 0.13f;
+            float spin = pct * 40.f;
+            float x0 = cx - L / 2, x1 = cx + L / 2, tail = L * 0.16f, lift = H * 0.17f;
+            GraphicsPath deck;
+            deck.AddBezier(x0, deckY - lift, x0 + tail * 0.25f, deckY, x0 + tail * 0.6f, deckY, x0 + tail, deckY);
+            deck.AddLine(x0 + tail, deckY, x1 - tail, deckY);
+            deck.AddBezier(x1 - tail, deckY, x1 - tail * 0.6f, deckY, x1 - tail * 0.25f, deckY, x1, deckY - lift);
+            Pen dout(Color(255, 0, 0, 0), deckT + 3.f), dwood(Color(255, 247, 148, 29), deckT), dgrip(Color(255, 25, 22, 20), deckT * 0.35f);
+            for (Pen* pn : {&dout, &dwood, &dgrip}) { pn->SetStartCap(LineCapRound); pn->SetEndCap(LineCapRound); pn->SetLineJoin(LineJoinRound); }
+            SolidBrush truck(Color(255, 175, 175, 182)), wheel(Color(255, 245, 240, 225)), hub(Color(255, 60, 60, 60));
+            Pen black(Color(255, 0, 0, 0), 1.6f), spoke(Color(255, 110, 110, 110), 1.4f);
+            for (int k = -1; k <= 1; k += 2) {
+                float wx = cx + k * L * 0.27f;
+                PointF tp[4] = {PointF(wx - wr * 0.9f, deckY + deckT * 0.4f), PointF(wx + wr * 0.9f, deckY + deckT * 0.4f),
+                                PointF(wx + wr * 0.45f, wy), PointF(wx - wr * 0.45f, wy)};
+                g.FillPolygon(&truck, tp, 4);
+                g.DrawPolygon(&black, tp, 4);
+                g.FillEllipse(&wheel, wx - wr, wy - wr, wr * 2, wr * 2);
+                g.DrawEllipse(&black, wx - wr, wy - wr, wr * 2, wr * 2);
+                g.FillEllipse(&hub, wx - wr * 0.36f, wy - wr * 0.36f, wr * 0.72f, wr * 0.72f);
+                float an = spin + k;
+                g.DrawLine(&spoke, wx + wr * 0.48f * cosf(an), wy + wr * 0.48f * sinf(an), wx + wr * 0.85f * cosf(an),
+                           wy + wr * 0.85f * sinf(an));
+            }
+            g.DrawPath(&dout, &deck);
+            g.DrawPath(&dwood, &deck);
+            g.TranslateTransform(0.f, -deckT * 0.32f);
+            g.DrawPath(&dgrip, &deck);   // grip tape along the top
+        }
+        BitBlt(wdc, 0, 0, W, H, dc, 0, 0, SRCCOPY);
+        SelectObject(dc, ob);
+        DeleteObject(bmp);
+        DeleteDC(dc);
+        EndPaint(h, &ps);
+        return 0;
+    }
+    }
+    return DefWindowProcW(h, m, wp, lp);
+}
+
 static void MakeStatusBar(const wchar_t* text, bool progress) {
     if (progress) {
-        g_progress = MakeAt(PROGRESS_CLASSW, L"", PBS_SMOOTH, ID_PROGRESS, kBar);
-        SetWindowTheme(g_progress, L"", L"");   // unthemed, so the colours below apply
-        SendMessageW(g_progress, PBM_SETRANGE, 0, MAKELPARAM(0, 100));
-        SendMessageW(g_progress, PBM_SETBARCOLOR, 0, kAccent);
-        SendMessageW(g_progress, PBM_SETBKCOLOR, 0, kField);
+        static bool reg;
+        if (!reg) {
+            WNDCLASSW wc = {};
+            wc.lpfnWndProc = SkateBarProc;
+            wc.hInstance = GetModuleHandleW(nullptr);
+            wc.hCursor = LoadCursorW(nullptr, IDC_ARROW);
+            wc.lpszClassName = L"UgSkateBar";
+            RegisterClassW(&wc);
+            reg = true;
+        }
+        g_progress = MakeAt(L"UgSkateBar", L"", 0, ID_PROGRESS, kBar);
     }
     g_status = MakeAt(L"STATIC", text, SS_LEFT | SS_CENTERIMAGE | SS_ENDELLIPSIS | SS_NOPREFIX, ID_STATUS, kStatus,
                       g_smallFont);
@@ -1142,6 +1227,8 @@ static void CreateLauncherControls() {
 int WINAPI wWinMain(HINSTANCE inst, HINSTANCE, PWSTR, int) {
     SetProcessDpiAwarenessContext(DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2);
     CoInitializeEx(nullptr, COINIT_APARTMENTTHREADED);
+    ULONG_PTR gdipToken = 0;   // GDI+ for the skateboard progress bar
+    { Gdiplus::GdiplusStartupInput gsi; Gdiplus::GdiplusStartup(&gdipToken, &gsi, nullptr); }
     INITCOMMONCONTROLSEX icc = {sizeof icc, ICC_PROGRESS_CLASS | ICC_STANDARD_CLASSES};
     InitCommonControlsEx(&icc);
     int argc = 0;
