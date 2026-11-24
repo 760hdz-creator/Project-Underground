@@ -58,7 +58,9 @@ A static recompilation by 8gram Labs: the original x86 game code is translated t
   with menu entry, updates and uninstall.
 - **Android.** Your PC turns your installed game into an APK for your phone (arm64, Android 13+, Vulkan 1.3), with
   on-screen touch controls.
-- **Controllers and keyboard.** XInput pads on Windows, SDL3 gamepads on Linux and Android, up to 4 players.
+- **Almost any controller.** Xbox, PlayStation 3/4/5, Switch Pro and Joy-Con, Steam Controller and Steam Deck,
+  8BitDo and thousands more through SDL3 and the community controller database, on Windows, Linux and Android. Up
+  to 4 players, plus the keyboard. See [Controls](#controls).
 - **HD texture packs (optional).** It loads PCSX2-format replacement packs made for the PS2 version, such as the
   community *HD Remaster* pack. Palettized textures are matched by their exact PS2 hashes; compressed (DXT) ones by
   picture (see [HD textures](#hd-textures)). F10 in the game switches them on and off.
@@ -123,7 +125,13 @@ Known gaps:
 | Black / White | F / G |
 | LT / RT | Q / E |
 | START / BACK | Enter / Backspace |
-| | F11 or Alt+Enter: fullscreen, Esc: quit |
+| | F11 or Alt+Enter: fullscreen, F10: HD textures on/off, Esc: quit |
+
+Controllers: Xbox, PlayStation, Switch Pro / Joy-Con, Steam, 8BitDo and most other USB and Bluetooth pads work
+(buttons go by position, so the bottom face button is A). SDL3 (`SDL3.dll` next to the game on Windows) and the
+community [SDL_GameControllerDB](https://github.com/mdqinc/SDL_GameControllerDB) (`gamecontrollerdb.txt`) cover a
+few thousand pads; a pad that is still unknown gets a generic layout, and your own SDL mapping lines can go in
+`controllers.txt` in the game folder (never touched by updates). Set the number of players in the launcher.
 
 ## How it works
 

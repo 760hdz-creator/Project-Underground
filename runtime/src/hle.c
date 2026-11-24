@@ -13,26 +13,23 @@ static void ret_std(X86Context *c, int nargs, uint32_t eax) {
     c->esp += 4 + 4 * nargs;
 }
 
-/* ---- host gamepads: XInput, loaded dynamically so the exe runs without it ---- */
+/* ---- host gamepads: SDL3 (every controller SDL knows: Xbox, PlayStation, Switch, Steam, 8BitDo, ... see
+ * pad_sdl.c); on Windows without SDL3.dll next to the exe, XInput (loaded dynamically: the exe runs without it) ---- */
 static DWORD (WINAPI *host_get_state)(DWORD, void *);
 static DWORD (WINAPI *host_set_state)(DWORD, void *);
 
-#ifndef _WIN32
 /* WINAPI-typed wrappers: no cast across calling conventions (DXVK Native's WINAPI may be ms_abi) */
 static DWORD WINAPI sdl_get_state(DWORD port, void *s) { return pad_sdl_get_state(port, s); }
 static DWORD WINAPI sdl_set_state(DWORD port, void *v) { return pad_sdl_set_state(port, v); }
-#endif
 
 static void host_xinput_init(void) {
     static int done;
     if (done++) return;
-#ifndef _WIN32
-    if (pad_sdl_init()) {   /* Linux: SDL3 gamepads (pad_sdl.c), same XINPUT_STATE layout */
+    if (pad_sdl_init()) {   /* SDL3 gamepads (pad_sdl.c), same XINPUT_STATE layout */
         host_get_state = sdl_get_state;
         host_set_state = sdl_set_state;
         return;
     }
-#endif
     HMODULE m = LoadLibraryA("xinput1_4.dll");
     if (!m) m = LoadLibraryA("xinput9_1_0.dll");
     if (m) host_get_state = (void *)GetProcAddress(m, "XInputGetState");
@@ -195,6 +192,41 @@ static void change_level_hook(X86Context *c) {
 /* recomp/hooks.txt entry hooks (UG_HOOKLOG=1 logs registers and the first stack slots) */
 void x86_hook(X86Context *c, uint32_t va) {
     if (va == 0xF1D60) { change_level_hook(c); return; }
+    if (va == 0x34F80 && getenv("UG_STREAMLOG")) {   /* PlayStreamById(checksum): table at [29E83C], count [29E840] */
+        uint32_t id = RD32(c->esp + 4), n = RD32(0x29E840), t = RD32(0x29E83C), found = 0xFFFFFFFF;
+        for (uint32_t i = 0; i < n && i < 100000; i++) if (RD32(t + i * 12) == id) { found = i; break; }
+        LOG("[stream] play %08X: table %u entries, %s (entry %08X %08X) slots %08X %08X\n", id, n,
+            found != 0xFFFFFFFF ? "found" : "NOT FOUND", found != 0xFFFFFFFF ? RD32(t + found * 12 + 4) : 0,
+            found != 0xFFFFFFFF ? RD32(t + found * 12 + 8) : 0, RD32(0x24E7DC), RD32(0x24E7E0));
+    }
+    if (va == 0x34C70 && getenv("UG_STREAMLOG")) {   /* stop both stream slots (this = ecx) */
+        static int n;
+        if (n++ < 40) LOG("[stream] t=%.2f stop-all this %08X [this] %08X %08X from %08X\n", sched_now_100ns() / 1e7,
+                          c->ecx, RD32(c->ecx), RD32(c->ecx + 4), RD32(c->esp));
+    }
+    if (va == 0x34CC0 && getenv("UG_STREAMLOG")) {   /* stream manager update: slot changes */
+        static uint32_t a0, b0;
+        uint32_t a = RD32(0x24E7DC), b = RD32(0x24E7E0);
+        if (a != a0 || b != b0) {
+            LOG("[stream] t=%.2f slots music %08X speech %08X\n", sched_now_100ns() / 1e7, a, b);
+            if (b) LOG("[stream]   speech: ready %u busy %u state %u buffered %X\n", RD8(b + 0xC), RD8(b + 0xD), RD32(b + 0xA4), RD32(b + 0x9C));
+            a0 = a; b0 = b;
+        }
+    }
+    if (va == 0x34490) {   /* music / speech stream update (this = ecx): UG_STREAMLOG=1 logs its state (debug) */
+        static int on = -1;
+        static uint32_t last;
+        if (on < 0) on = getenv("UG_STREAMLOG") != NULL;
+        uint32_t t = GetTickCount();
+        if (on && t - last > 500) {
+            last = t;
+            uint32_t s = c->ecx;
+            LOG("[stream] %08X ready %u busy %u state %u buffered %X want %X pos %X a0 %X 94 %X 98 %X\n", s, RD8(s + 0xC),
+                RD8(s + 0xD), RD32(s + 0xA4), RD32(s + 0x9C), RD32(s + 0xA0), RD32(s + 0x4C), RD32(s + 0xA0),
+                RD32(s + 0x94), RD32(s + 0x98));
+        }
+        return;
+    }
     static int on = -1;
     if (on < 0) on = getenv("UG_HOOKLOG") != NULL;
     if (on) LOG("[hook] %06X eax %08X ecx %08X edx %08X ebx %08X | %08X %08X %08X %08X %08X\n", va, c->eax, c->ecx,

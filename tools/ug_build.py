@@ -161,6 +161,11 @@ def main():
     exe = os.path.join(root, "underground.exe")
     build.build_runtime(jobs, exe=exe + ".new", defines=[f'-DUG_VERSION="{a.version}"'], gui=True)
     os.replace(exe + ".new", exe)
+    # SDL3.dll + gamecontrollerdb.txt: every controller SDL knows (runtime/src/pad_sdl.c; without them, XInput only)
+    for f in ("SDL3.dll", "gamecontrollerdb.txt"):
+        src = os.path.join(KIT, "sdl3", f)
+        if os.path.exists(src):
+            shutil.copy2(src, os.path.join(root, f))
     os.makedirs(os.path.join(root, "out"), exist_ok=True)   # saves (out/hdd) and the log live here
     step("Done")
 

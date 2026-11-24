@@ -326,7 +326,7 @@ static int Uninstall(const std::wstring& dir) {
         DeleteFileW((KnownDir(FOLDERID_Programs) + L"\\" + kShortcut).c_str());
     }
     // never out\ (saves, log)
-    const wchar_t* parts[] = {L"python", L"tools", L"recomp", L"runtime", L"third_party", L"licenses", L"build", L"game",
+    const wchar_t* parts[] = {L"python", L"tools", L"recomp", L"runtime", L"third_party", L"licenses", L"build", L"game", L"sdl3",
                               L"toolchain", L"android\\ndk", L"android\\template.apk", L"android\\include",
                               L"android\\libugrt.a"};   // keeps android\signing-key.json (a new APK installs over the old one)
     for (auto p : parts) {
@@ -341,7 +341,8 @@ static int Uninstall(const std::wstring& dir) {
         SHFILEOPSTRUCTW op = {nullptr, FO_DELETE, from.c_str(), nullptr, FOF_NO_UI};
         SHFileOperationW(&op);
     }
-    for (auto f : {L"underground.exe", L"underground.ico", L"VERSION", L"settings.ini"})
+    for (auto f : {L"underground.exe", L"underground.ico", L"VERSION", L"settings.ini", L"SDL3.dll",
+                   L"gamecontrollerdb.txt"})   // controllers.txt (the player's own mappings) is kept
         DeleteFileW((dir + L"\\" + f).c_str());
     if (registered) {
         RegDeleteTreeW(HKEY_CURRENT_USER, kRegKey);

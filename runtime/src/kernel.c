@@ -487,8 +487,31 @@ K(269, RtlCompareMemoryUlong) {
     return i;
 }
 K(301, RtlNtStatusToDosError) {
+    /* XAPI's GetLastError values. STATUS_PENDING must be ERROR_IO_PENDING: THUG's music / speech streamer (33940)
+     * starts each stream with an overlapped ReadFile and treats any other error as a failed stream (no music, no
+     * cutscene dialogue: every track was dropped at once and the next one tried). */
+    static const uint32_t map[][2] = {
+        {0x00000103, 997},  /* STATUS_PENDING -> ERROR_IO_PENDING */
+        {0x00000102, 258},  /* STATUS_TIMEOUT -> WAIT_TIMEOUT */
+        {0x80000005, 234},  /* STATUS_BUFFER_OVERFLOW -> ERROR_MORE_DATA */
+        {0x80000006, 18},   /* STATUS_NO_MORE_FILES */
+        {0xC0000008, 6},    /* STATUS_INVALID_HANDLE */
+        {0xC000000D, 87},   /* STATUS_INVALID_PARAMETER */
+        {0xC000000F, 2},    /* STATUS_NO_SUCH_FILE -> ERROR_FILE_NOT_FOUND */
+        {0xC0000011, 38},   /* STATUS_END_OF_FILE -> ERROR_HANDLE_EOF */
+        {0xC0000017, 8},    /* STATUS_NO_MEMORY */
+        {0xC0000022, 5},    /* STATUS_ACCESS_DENIED */
+        {0xC0000034, 2},    /* STATUS_OBJECT_NAME_NOT_FOUND */
+        {0xC0000035, 183},  /* STATUS_OBJECT_NAME_COLLISION -> ERROR_ALREADY_EXISTS */
+        {0xC000003A, 3},    /* STATUS_OBJECT_PATH_NOT_FOUND */
+        {0xC0000043, 32},   /* STATUS_SHARING_VIOLATION */
+        {0xC000007F, 112},  /* STATUS_DISK_FULL */
+        {0xC0000120, 995},  /* STATUS_CANCELLED -> ERROR_OPERATION_ABORTED */
+    };
     uint32_t s = ARG(0);
-    return s == 0 ? 0 : s == STATUS_OBJECT_NAME_NOT_FOUND ? 2 : s == STATUS_NO_MEMORY ? 8 : 31;
+    if (!s) return 0;
+    for (size_t i = 0; i < sizeof map / sizeof *map; i++) if (map[i][0] == s) return map[i][1];
+    return 31;   /* ERROR_GEN_FAILURE */
 }
 
 /* system */

@@ -31,6 +31,8 @@
 #define WAVE_FORMAT_PCM_       1
 #define WAVE_FORMAT_XBOX_ADPCM 0x69
 #define XMEDIAPACKET_STATUS_SUCCESS 0
+#define XMEDIAPACKET_STATUS_PENDING 0x8000000Au   /* E_PENDING: THUG's streamer polls packet status for it */
+#define XMEDIAPACKET_STATUS_FLUSHED 0x80004004u   /* E_ABORT */
 
 typedef struct {
     uint16_t tag, channels, block_align, bits;
@@ -56,10 +58,18 @@ static Voice g_voices[MAX_BUFFERS];
 static int g_nvoices;
 static uint32_t g_ds_obj;        /* the IDirectSound the game holds */
 
-/* ---- stream (one WMV soundtrack at a time) ---- */
+/* ---- streams (music, cutscene speech; Xbox ADPCM is decoded to PCM as packets arrive). A packet completes when
+ * the mixer has played past its end, not when it is submitted: the game queues dwMaxAttachedPackets packets and
+ * refills each one as it completes (completed at once, it streamed whole tracks into the FIFO in seconds). ---- */
 #define FIFO_BYTES (4u << 20)
+#define STREAM_QUEUE 64
+typedef struct { uint32_t end, size, pdone, pstat, evh, ctx; } Packet;
 typedef struct {
     uint32_t guest;
+    int adpcm;                   /* source is Xbox ADPCM (fmt below is the decoded PCM) */
+    uint32_t maxpk;
+    Packet q[STREAM_QUEUE];      /* attached packets, oldest first */
+    int qh, qn;
     Fmt fmt;
     int paused;
     int32_t volume;              /* hundredths of a dB */
@@ -328,11 +338,50 @@ static void dsound_init(void) {
 
 static Stream *stream_of(uint32_t guest) {
     for (int i = 0; i < g_nstreams; i++)
-        if (g_streams[i].guest == guest) return &g_streams[i];
+        if (guest && g_streams[i].guest == guest) return &g_streams[i];
     return NULL;
 }
 
 /* ------------------------------------------------------------------ stream vtable (XMediaObject) */
+
+/* Completes the oldest attached packet with `status`: size done, status word, event, callback (guest thread only). */
+static void stream_complete_head(X86Context *c, Stream *s, uint32_t status) {
+    EnterCriticalSection(&g_lock);
+    if (!s->qn) { LeaveCriticalSection(&g_lock); return; }
+    Packet p = s->q[s->qh];
+    s->qh = (s->qh + 1) % STREAM_QUEUE;
+    s->qn--;
+    uint32_t cb = s->callback, cctx = s->context;
+    LeaveCriticalSection(&g_lock);
+    if (p.pdone) WR32(p.pdone, status == XMEDIAPACKET_STATUS_SUCCESS ? p.size : 0);
+    if (p.pstat) WR32(p.pstat, status);
+    if (p.evh) { uint32_t ev = handle_object(p.evh); if (ev) WR32(ev + 4, 1); }
+    if (cb) {   /* VOID CALLBACK (LPVOID pStreamContext, LPVOID pPacketContext, DWORD dwStatus) */
+        uint32_t args[3] = {cctx, p.ctx, status};
+        X86Context sub = *c;
+        sub.esp = c->esp - 64;
+        guest_call(&sub, cb, 3, args);
+    }
+}
+/* every packet the mixer has played past */
+static void stream_complete(X86Context *c, Stream *s) {
+    for (;;) {
+        EnterCriticalSection(&g_lock);
+        int done = s->qn && (int32_t)(s->rd - s->q[s->qh].end) >= 0;
+        LeaveCriticalSection(&g_lock);
+        if (!done) return;
+        stream_complete_head(c, s, XMEDIAPACKET_STATUS_SUCCESS);
+    }
+}
+static void stream_flush(X86Context *c, Stream *s) {
+    EnterCriticalSection(&g_lock);
+    s->rd = s->wr;
+    LeaveCriticalSection(&g_lock);
+    while (s->qn) stream_complete_head(c, s, XMEDIAPACKET_STATUS_FLUSHED);
+}
+static void streams_poll(X86Context *c) {
+    for (int i = 0; i < g_nstreams; i++) if (g_streams[i].guest) stream_complete(c, &g_streams[i]);
+}
 
 int dsound_vcall(X86Context *c, uint32_t va) {
     if (va < HSENTINEL_BASE || va >= HSENTINEL_BASE + 4 * STREAM_SLOTS || (va & 3)) return 0;
@@ -344,9 +393,12 @@ int dsound_vcall(X86Context *c, uint32_t va) {
     case 0: /* ULONG AddRef(this) */
         ret_std(c, 1, 1);
         return 1;
-    case 1: /* ULONG Release(this): the object stays (cosmetic refcount), playback stops */
+    case 1: /* ULONG Release(this): pending packets complete as flushed, the slot is reused (one stream per track) */
+        stream_flush(c, s);
         EnterCriticalSection(&g_lock);
-        s->rd = s->wr;
+        free(s->fifo);
+        s->fifo = NULL;
+        s->guest = 0;
         LeaveCriticalSection(&g_lock);
         ret_std(c, 1, 0);
         return 1;
@@ -356,29 +408,40 @@ int dsound_vcall(X86Context *c, uint32_t va) {
         ret_std(c, 2, 0);
         return 1;
     }
-    case 3: /* HRESULT GetStatus(this, DWORD *): XMO_STATUSF_ACCEPT_INPUT_DATA */
-        if (ARG(1)) WR32(ARG(1), 1);
+    case 3: /* HRESULT GetStatus(this, DWORD *): XMO_STATUSF_ACCEPT_INPUT_DATA while a packet slot is free */
+        stream_complete(c, s);
+        if (ARG(1)) WR32(ARG(1), s->qn < (int)(s->maxpk ? s->maxpk : 8) && s->qn < STREAM_QUEUE ? 1 : 0);
         ret_std(c, 2, 0);
         return 1;
-    case 4: { /* HRESULT Process(this, XMEDIAPACKET *in, XMEDIAPACKET *out): copied at once, completed at once */
+    case 4: { /* HRESULT Process(this, XMEDIAPACKET *in, XMEDIAPACKET *out): queued, completes once played */
         uint32_t pk = ARG(1);
+        stream_complete(c, s);
         if (pk) {
             uint32_t buf = RD32(pk), size = RD32(pk + 4), pdone = RD32(pk + 8), pstat = RD32(pk + 12);
             uint32_t evh = RD32(pk + 16), pctx = RD32(pk + 24);
+            if (s->qn == STREAM_QUEUE) stream_complete_head(c, s, XMEDIAPACKET_STATUS_SUCCESS);   /* cannot happen */
             EnterCriticalSection(&g_lock);
-            if (s->wr - s->rd + size > FIFO_BYTES) s->rd = s->wr + size - FIFO_BYTES;   /* overflow: drop oldest */
-            for (uint32_t i = 0; i < size; i++) s->fifo[(s->wr + i) % FIFO_BYTES] = RD8(buf + i);
-            s->wr += size;
-            LeaveCriticalSection(&g_lock);
-            if (pdone) WR32(pdone, size);
-            if (pstat) WR32(pstat, XMEDIAPACKET_STATUS_SUCCESS);
-            if (evh) { uint32_t ev = handle_object(evh); if (ev) WR32(ev + 4, 1); }
-            if (s->callback) {   /* VOID CALLBACK (LPVOID pStreamContext, LPVOID pPacketContext, DWORD dwStatus) */
-                uint32_t args[3] = {s->context, pctx, XMEDIAPACKET_STATUS_SUCCESS};
-                X86Context sub = *c;
-                sub.esp = c->esp - 64;
-                guest_call(&sub, s->callback, 3, args);
+            if (s->adpcm) {   /* 36-byte blocks per channel -> 64 s16 frames */
+                uint32_t bb = 36u * s->fmt.channels, nb = size / bb;
+                int16_t pcm[64 * 2];
+                for (uint32_t b = 0; b < nb; b++) {
+                    adpcm_decode_block(buf + b * bb, s->fmt.channels, pcm);
+                    uint32_t n = 64u * s->fmt.channels * 2;
+                    if (s->wr - s->rd + n > FIFO_BYTES) s->rd = s->wr + n - FIFO_BYTES;   /* overflow: drop oldest */
+                    for (uint32_t i = 0; i < n; i++) s->fifo[(s->wr + i) % FIFO_BYTES] = ((uint8_t *)pcm)[i];
+                    s->wr += n;
+                }
+            } else {
+                if (s->wr - s->rd + size > FIFO_BYTES) s->rd = s->wr + size - FIFO_BYTES;
+                for (uint32_t i = 0; i < size; i++) s->fifo[(s->wr + i) % FIFO_BYTES] = RD8(buf + i);
+                s->wr += size;
             }
+            Packet *p = &s->q[(s->qh + s->qn) % STREAM_QUEUE];
+            p->end = s->wr; p->size = size; p->pdone = pdone; p->pstat = pstat; p->evh = evh; p->ctx = pctx;
+            s->qn++;
+            LeaveCriticalSection(&g_lock);
+            if (pdone) WR32(pdone, 0);
+            if (pstat) WR32(pstat, XMEDIAPACKET_STATUS_PENDING);
         }
         ret_std(c, 3, 0);
         return 1;
@@ -387,9 +450,7 @@ int dsound_vcall(X86Context *c, uint32_t va) {
         ret_std(c, 1, 0);
         return 1;
     case 6: /* HRESULT Flush(this) */
-        EnterCriticalSection(&g_lock);
-        s->rd = s->wr;
-        LeaveCriticalSection(&g_lock);
+        stream_flush(c, s);
         ret_std(c, 1, 0);
         return 1;
     default:
@@ -423,9 +484,11 @@ static uint32_t create_buffer(uint32_t d) {
 static uint32_t create_stream(uint32_t d) {
     /* DSSTREAMDESC: dwFlags, dwMaxAttachedPackets, lpwfxFormat, lpfnCallback, lpvContext, lpMixBins */
     uint32_t flags = RD32(d), maxpk = RD32(d + 4), wfx = RD32(d + 8);
-    if (g_nstreams >= MAX_STREAMS) rt_fatal("DSOUND: more than %d streams", MAX_STREAMS);
     EnterCriticalSection(&g_lock);
-    Stream *s = &g_streams[g_nstreams];
+    int slot = 0;
+    while (slot < g_nstreams && g_streams[slot].guest) slot++;   /* released streams are reused (one per track) */
+    if (slot >= MAX_STREAMS) rt_fatal("DSOUND: more than %d live streams", MAX_STREAMS);
+    Stream *s = &g_streams[slot];
     memset(s, 0, sizeof *s);
     s->guest = mem_alloc(0x40, 16);
     WR32(s->guest, g_stream_vtbl);
@@ -433,7 +496,12 @@ static uint32_t create_stream(uint32_t d) {
     s->callback = RD32(d + 12);
     s->context = RD32(d + 16);
     read_fmt(wfx, &s->fmt);
-    g_nstreams++;
+    s->maxpk = maxpk;
+    if (s->fmt.tag == WAVE_FORMAT_XBOX_ADPCM) {   /* decoded to s16 PCM in Process */
+        s->adpcm = 1;
+        s->fmt.tag = WAVE_FORMAT_PCM_; s->fmt.bits = 16; s->fmt.block_align = (uint16_t)(2 * s->fmt.channels);
+    }
+    if (slot == g_nstreams) g_nstreams++;
     LeaveCriticalSection(&g_lock);
     LOG("[dsound] CreateStream flags %X packets %u fmt %X ch %u rate %u bits %u cb %08X -> %08X\n", flags, maxpk,
         s->fmt.tag, s->fmt.channels, s->fmt.rate, s->fmt.bits, s->callback, s->guest);
@@ -466,7 +534,8 @@ int dsound_hle(X86Context *c, uint32_t va) {
         ret_std(c, 1, 0);
         return 1;
     }
-    case 0x1BF5E8: /* VOID DirectSoundDoWork(void) */
+    case 0x1BF5E8: /* VOID DirectSoundDoWork(void): stream packets the mixer has played complete here */
+        streams_poll(c);
         c->esp += 4;
         return 1;
     case 0x1BF482: { /* HRESULT IDirectSound_DownloadEffectsImage(this, LPCVOID image, DWORD size,
@@ -502,9 +571,10 @@ int dsound_hle(X86Context *c, uint32_t va) {
         int nargs = 2;
         if (va == 0x1BF5C1) s->volume = (int32_t)ARG(1);          /* IDirectSoundStream_SetVolume(this, LONG) */
         else if (va == 0x1BF5CB) s->paused = (ARG(1) & 1) != 0;   /* IDirectSoundStream_Pause(this, DWORD) */
-        else if (va == 0x1BF5D0) { s->rd = s->wr; nargs = 4; }    /* FlushEx(this, REFERENCE_TIME, DWORD flags) */
+        else if (va == 0x1BF5D0) nargs = 4;                       /* FlushEx(this, REFERENCE_TIME, DWORD flags) */
         /* 0x1BF5C6 IDirectSoundStream_SetMixBins(this, LPCDSMIXBINS): ignored */
         LeaveCriticalSection(&g_lock);
+        if (va == 0x1BF5D0) stream_flush(c, s);
         ret_std(c, nargs, 0);
         return 1;
     }

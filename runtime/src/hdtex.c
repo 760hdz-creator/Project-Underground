@@ -149,14 +149,23 @@ static void scan(const char *dir, int depth) {
 #endif
 }
 
+/* Only the worker thread scans and matches (see the async part at the end); state: -1 not started, 0 off,
+ * 1 on (the worker may still be scanning: the pack is used once the scan is done). */
+static volatile int scanned;
+static void scan_pack(void) {
+    const char *e = getenv("UG_HDTEX");
+    scan(e, 0);
+    LOG("[hdtex] %d textures in %s\n", npacks, e);
+    scanned = 1;
+}
+static void start_worker(void);
 int hdtex_enabled(void) {
     if (state >= 0) return state;
     const char *e = getenv("UG_HDTEX");
     state = 0;
     if (!e || !*e || !strcmp(e, "0")) return 0;
-    scan(e, 0);
-    LOG("[hdtex] %d textures in %s\n", npacks, e);
-    state = npacks > 0;
+    state = 1;
+    start_worker();
     return state;
 }
 
@@ -338,11 +347,184 @@ int hdtex_find_indexed(const uint8_t *idx, int w, int h, const uint32_t *pal, ui
             uint32_t d = rgba ? thumb_dist(i, rgba, w, h) : UINT32_MAX;
             if (d < bd) { bd = d; id = i; }
         }
-        if (nfound == 1) { id = first; how = "tex0"; }
+        if (nfound == 1) { id = first; how = "tex0"; bd = rgba ? thumb_dist(first, rgba, w, h) : UINT32_MAX; }
         else if (id >= 0) how = "variant";
+        /* the palette (colours) did not match: Create-a-Skater recolours clothes with other palettes over the same
+         * indices, so take the file only when its colours match too (no thumbnail: no) */
+        if (id >= 0) {
+            int n = packs[id].tw * packs[id].th * 3;
+            if (bd == UINT32_MAX || !n || (double)bd / n > 12.0) { id = -1; how = "colours differ"; }
+        }
     }
     if (getenv("UG_HDLOG"))
         LOG("[hdtex] I8 %dx%d pal %u: t8 %llx clut %llx -> %s %s\n", w, h, pal_len, (unsigned long long)t8,
             (unsigned long long)c8, how, id >= 0 ? packs[id].path : "");
     return id;
+}
+
+/* ---- async: the pack scan, matching and file reads run on one worker thread, so the game never waits for them.
+ * The renderer submits a new texture once (hdtex_submit, keyed by its content hash) and asks again on later frames
+ * (hdtex_result); until then the original texture is drawn. Files are read ahead the same way (hdtex_file). ---- */
+#ifdef _WIN32
+static CRITICAL_SECTION mu;
+static CONDITION_VARIABLE cv;
+#define LOCK() EnterCriticalSection(&mu)
+#define UNLOCK() LeaveCriticalSection(&mu)
+#define WAIT() SleepConditionVariableCS(&cv, &mu, INFINITE)
+#define WAKE() WakeConditionVariable(&cv)
+#else
+#include <pthread.h>
+static pthread_mutex_t mu = PTHREAD_MUTEX_INITIALIZER;
+static pthread_cond_t cv = PTHREAD_COND_INITIALIZER;
+#define LOCK() pthread_mutex_lock(&mu)
+#define UNLOCK() pthread_mutex_unlock(&mu)
+#define WAIT() pthread_cond_wait(&cv, &mu)
+#define WAKE() pthread_cond_signal(&cv)
+#endif
+
+typedef struct Job {
+    uint64_t key; int w, h, file; uint32_t *rgba; uint8_t *idx; uint32_t pal[256], pal_len; struct Job *next;
+    uint8_t *raw; int kind, bpp, i8; HdDecode dec;   /* raw: decode on the worker first */
+} Job;
+static Job *q_head, *q_tail;   /* file >= 0: read pack file `file`; else match */
+#define RES_BITS 16
+typedef struct { uint64_t key; int pack; int state; } Res;   /* state 1 queued, 2 done */
+static Res res[1 << RES_BITS];
+typedef struct { int pack; uint8_t *buf; size_t len; int state; } File;   /* state 1 queued, 2 ready */
+static File files[256];
+
+static Res *res_slot(uint64_t key, int add) {   /* under the lock */
+    uint32_t i = (uint32_t)(key ^ key >> 32) & ((1 << RES_BITS) - 1);
+    for (int n = 0; n < 64; n++, i = (i + 1) & ((1 << RES_BITS) - 1)) {
+        if (res[i].key == key && res[i].state) return &res[i];
+        if (!res[i].state) {
+            if (!add) return NULL;
+            res[i].key = key;
+            return &res[i];
+        }
+    }
+    return NULL;
+}
+static void push(Job *j) {
+    LOCK();
+    j->next = NULL;
+    if (q_tail) q_tail->next = j; else q_head = j;
+    q_tail = j;
+    WAKE();
+    UNLOCK();
+}
+#ifdef _WIN32
+static DWORD WINAPI worker(LPVOID unused) {
+    (void)unused;
+#else
+static void *worker(void *unused) {
+    (void)unused;
+#endif
+    scan_pack();
+    for (;;) {
+        LOCK();
+        while (!q_head) WAIT();
+        Job *j = q_head;
+        q_head = j->next;
+        if (!q_head) q_tail = NULL;
+        UNLOCK();
+        if (j->file >= 0) {
+            size_t len = 0;
+            uint8_t *b = hdtex_load(j->file, &len);
+            LOCK();
+            for (int i = 0; i < 256; i++)
+                if (files[i].state == 1 && files[i].pack == j->file) { files[i].buf = b; files[i].len = len; files[i].state = 2; b = NULL; break; }
+            UNLOCK();
+            free(b);
+        } else {
+            if (j->raw) {   /* decode the guest texture here, off the render thread */
+                j->rgba = malloc((size_t)j->w * j->h * 4);
+                j->idx = j->i8 ? malloc((size_t)j->w * j->h) : NULL;
+                if (j->rgba && (!j->i8 || j->idx)) j->dec(j->raw, j->kind, j->bpp, j->w, j->h, j->pal, j->rgba, j->idx);
+                free(j->raw); j->raw = NULL;
+            }
+            int p = !j->rgba ? -1 : npacks ? (j->idx ? hdtex_find_indexed(j->idx, j->w, j->h, j->pal, j->pal_len, j->rgba)
+                                     : hdtex_find(j->rgba, j->w, j->h)) : -1;
+            LOCK();
+            Res *r = res_slot(j->key, 0);
+            if (r) { r->pack = p; r->state = 2; }
+            UNLOCK();
+        }
+        free(j->rgba); free(j->idx); free(j);
+    }
+#ifdef _WIN32
+    return 0;
+#else
+    return NULL;
+#endif
+}
+static void start_worker(void) {
+#ifdef _WIN32
+    InitializeCriticalSection(&mu);
+    InitializeConditionVariable(&cv);
+    HANDLE t = CreateThread(NULL, 0, worker, NULL, 0, NULL);
+    if (t) { SetThreadPriority(t, THREAD_PRIORITY_BELOW_NORMAL); CloseHandle(t); }
+#else
+    pthread_t t;
+    if (!pthread_create(&t, NULL, worker, NULL)) pthread_detach(t);
+#endif
+}
+
+/* -3 not submitted, -2 waiting, -1 no HD texture, >= 0 pack index */
+int hdtex_result(uint64_t key) {
+    if (!hdtex_enabled()) return -1;
+    LOCK();
+    Res *r = res_slot(key, 0);
+    int v = !r ? -3 : r->state == 2 ? r->pack : -2;
+    UNLOCK();
+    return v;
+}
+/* takes ownership of rgba / idx (malloc'd); idx != NULL: palettized (exact PS2 hashes) */
+void hdtex_submit(uint64_t key, uint32_t *rgba, uint8_t *idx, const uint32_t *pal, uint32_t pal_len, int w, int h) {
+    LOCK();
+    Res *r = res_slot(key, 1);
+    int dup = !r || r->state;
+    if (r && !r->state) { r->state = 1; r->pack = -1; }
+    UNLOCK();
+    if (dup) { free(rgba); free(idx); return; }
+    Job *j = calloc(1, sizeof *j);
+    j->key = key; j->w = w; j->h = h; j->file = -1; j->rgba = rgba; j->idx = idx; j->pal_len = pal_len;
+    if (pal) memcpy(j->pal, pal, (pal_len < 256 ? pal_len : 256) * 4);
+    push(j);
+}
+/* pack file `pack`: 1 = *buf / *len handed over (caller frees), 0 = being read (ask again next frame) */
+int hdtex_file(int pack, uint8_t **buf, size_t *len) {
+    LOCK();
+    int free_slot = -1;
+    for (int i = 0; i < 256; i++) {
+        if (files[i].state && files[i].pack == pack) {
+            if (files[i].state == 1) { UNLOCK(); return 0; }
+            *buf = files[i].buf; *len = files[i].len;
+            files[i].state = 0; files[i].buf = NULL;
+            UNLOCK();
+            return *buf != NULL;
+        }
+        if (!files[i].state && free_slot < 0) free_slot = i;
+    }
+    if (free_slot < 0) { UNLOCK(); return 0; }   /* 256 reads in flight: later */
+    files[free_slot].pack = pack; files[free_slot].state = 1;
+    UNLOCK();
+    Job *j = calloc(1, sizeof *j);
+    j->file = pack;
+    push(j);
+    return 0;
+}
+void hdtex_submit_raw(uint64_t key, uint8_t *raw, int kind, int bpp, int i8, int w, int h, const uint32_t *pal,
+                      uint32_t pal_len, HdDecode dec) {
+    LOCK();
+    Res *r = res_slot(key, 1);
+    int dup = !r || r->state;
+    if (r && !r->state) { r->state = 1; r->pack = -1; }
+    UNLOCK();
+    if (dup) { free(raw); return; }
+    Job *j = calloc(1, sizeof *j);
+    j->key = key; j->w = w; j->h = h; j->file = -1; j->raw = raw; j->kind = kind; j->bpp = bpp; j->i8 = i8; j->dec = dec;
+    j->pal_len = pal_len;
+    if (pal) memcpy(j->pal, pal, (pal_len < 256 ? pal_len : 256) * 4);
+    push(j);
 }

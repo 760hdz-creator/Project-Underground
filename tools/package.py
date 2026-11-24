@@ -19,6 +19,10 @@ import capstone
 ROOT = Path(__file__).resolve().parent.parent
 PY_VER = "3.15.0"
 PY_URL = f"https://www.python.org/ftp/python/{PY_VER}/python-{PY_VER}-embed-amd64.zip"
+SDL_VER = "3.4.18"   # same as the Linux / Android builds
+SDL_URL = f"https://github.com/libsdl-org/SDL/releases/download/release-{SDL_VER}/SDL3-{SDL_VER}-win32-x64.zip"
+GCDB_REV = "4e87e3c6c2574f49e1cdf8526b6f829b61e5ccb3"   # SDL_GameControllerDB, pinned (as in Project Gauntlet)
+GCDB_URL = f"https://raw.githubusercontent.com/mdqinc/SDL_GameControllerDB/{GCDB_REV}/"
 CAPSTONE_VER = "5.0.7"   # the dev lift's version: a different decoder could change the lifted code
 SHIP = ["VERSION", "recomp/lift.py", "recomp/hle.txt", "recomp/hooks.txt", "recomp/seeds_extra.txt",
         "recomp/include/*", "runtime/src/*", "third_party/vulkan/*", "tools/ug_build.py", "tools/build.py",
@@ -60,6 +64,26 @@ def main():
     shutil.copy2(out / "python" / "LICENSE.txt", lic_dir / "python_LICENSE.txt")
     for lic in ("LICENSE-Vulkan-Headers.md", "LICENSE-volk.md"):
         shutil.copy2(ROOT / "third_party" / "vulkan" / lic, lic_dir / lic)
+    # SDL3.dll (official release, zlib) + SDL_GameControllerDB (zlib): every controller SDL knows
+    # (runtime/src/pad_sdl.c); ug_build.py copies both next to underground.exe
+    (out / "sdl3").mkdir()
+    for url, name in [(SDL_URL, Path(SDL_URL).name)] + [(GCDB_URL + f, "gcdb-" + GCDB_REV + "-" + f)
+                                                        for f in ("gamecontrollerdb.txt", "LICENSE")]:
+        dst = ROOT / "dist" / "_cache" / name
+        if not dst.exists():
+            sibling = Path(r"G:\Project Gauntlet\dist\_cache") / name
+            if sibling.exists():
+                shutil.copy2(sibling, dst)
+            else:
+                print("downloading " + url)
+                urllib.request.urlretrieve(url, dst)
+    with zipfile.ZipFile(ROOT / "dist" / "_cache" / Path(SDL_URL).name) as z:
+        (out / "sdl3" / "SDL3.dll").write_bytes(z.read("SDL3.dll"))
+        lic = [n for n in z.namelist() if n.upper().startswith("LICENSE")]
+        if lic:
+            (lic_dir / "SDL3_LICENSE.txt").write_bytes(z.read(lic[0]))
+    shutil.copy2(ROOT / "dist" / "_cache" / ("gcdb-" + GCDB_REV + "-gamecontrollerdb.txt"), out / "sdl3" / "gamecontrollerdb.txt")
+    shutil.copy2(ROOT / "dist" / "_cache" / ("gcdb-" + GCDB_REV + "-LICENSE"), lic_dir / "SDL_GameControllerDB_LICENSE.txt")
     if not (ANDROID_KIT / "template.apk").exists():
         sys.exit(f"Android kit missing at {ANDROID_KIT} (tools/build_android.sh <dir> in WSL, then copy <dir>/android-kit)")
     shutil.copytree(ANDROID_KIT, out / "android", ignore=shutil.ignore_patterns("licenses"))

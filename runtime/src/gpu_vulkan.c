@@ -23,6 +23,7 @@
 #include <math.h>
 #include <stdarg.h>
 #include <stdlib.h>
+#include <limits.h>
 #include <string.h>
 #include "rt.h"
 #include "hdtex.h"
@@ -707,8 +708,6 @@ typedef struct {
     uint32_t last_frame;
     int w, h, levels;
     int hd;           /* HD pack texture: 1 + pack index once loaded, -(1 + index) while waiting for upload budget */
-    uint32_t hd_bytes;
-    Img hdim;         /* the HD image (im keeps the original: F10 / UG_SHOTAB compare them) */
     Img im;
 } TexEntry;
 #define TEX_CACHE 4096
@@ -716,7 +715,7 @@ static TexEntry tcache[TEX_CACHE];
 #define ADDR_SLOTS 4096
 static TexEntry *addr_slot[ADDR_SLOTS];   /* latest entry per texture address (in-place re-upload) */
 static Img white_tex;
-static uint32_t st_draws, st_verts, st_newtex;
+static uint32_t st_draws, st_verts, st_newtex, st_worst, st_slow;   /* st_worst: 0.1 ms */
 
 static uint32_t tex_bytes(TexFmt f, int w, int h, int levels, uint32_t pitch) {
     if (!f.swizzled && f.kind < TF_DXT1) return (pitch ? pitch : (uint32_t)w * f.bpp) * h;
@@ -800,8 +799,34 @@ static int create_texture(TexEntry *e, TexFmt f, int levels, const uint32_t *pal
 
 /* ---- HD texture packs (hdtex.c): the guest texture's level 0 as RGBA8 is matched by picture; results are kept per
  * content hash, so a texture seen again (other level, re-upload) costs nothing ---- */
+/* worker thread (hdtex.c): level 0 of a guest texture -> RGBA8 (R low), plus the unswizzled indices for I8 */
+static void hd_decode(const uint8_t *raw, int kind, int bpp, int w, int h, const uint32_t *pal, uint32_t *rgba, uint8_t *idx) {
+    if (kind >= TF_DXT1) {
+        uint32_t bsz = kind == TF_DXT1 ? 8 : 16, bw = (uint32_t)w / 4, blk[16];
+        for (int by = 0; by < h / 4; by++)
+            for (int bx = 0; bx < w / 4; bx++) {
+                dxt_block(kind, raw + (by * bw + bx) * bsz, blk);
+                for (int k = 0; k < 16; k++) rgba[(by * 4 + k / 4) * w + bx * 4 + k % 4] = blk[k];
+            }
+        return;
+    }
+    uint32_t *xs = malloc(w * 4), *ys = malloc(h * 4);
+    if (!xs || !ys) { free(xs); free(ys); memset(rgba, 0, (size_t)w * h * 4); return; }
+    swizzle_tables(w, h, xs, ys);
+    for (int y = 0; y < h; y++)
+        for (int x = 0; x < w; x++) {
+            if (idx) {   /* I8 with the guest palette (A8R8G8B8) */
+                uint8_t v = raw[xs[x] | ys[y]];
+                uint32_t c = pal[v];
+                idx[y * w + x] = v;
+                rgba[y * w + x] = (c >> 16 & 255) | (c & 0xFF00) | (c & 255) << 16 | (c & 0xFF000000u);
+            } else rgba[y * w + x] = texel(kind, raw + (xs[x] | ys[y]) * bpp, NULL);
+        }
+    free(xs); free(ys);
+}
 typedef struct { uint64_t hash; int idx; } HdMemo;   /* idx: pack index, -1 no match; hash 0 = empty slot */
 static HdMemo hd_memo[1 << 14];
+#define HD_WAIT (-2)   /* hd_match: still being matched */
 static int hd_match(const TexEntry *e, TexFmt f, uint64_t hsh) {
     int i8 = f.kind == TF_I8;   /* palettized: the exact PS2 hashes (hdtex_find_indexed); others: by picture */
     if (!hdtex_enabled() || (!f.swizzled && f.kind < TF_DXT1) || e->w > 4096 || e->h > 4096 ||
@@ -813,57 +838,52 @@ static int hd_match(const TexEntry *e, TexFmt f, uint64_t hsh) {
         if (m->hash == hsh) return m->idx;
         if (!m->hash) break;
     }
-    int w = e->w, h = e->h;
-    uint32_t *rgba = malloc((size_t)w * h * 4);
-    if (!rgba) return -1;
-    const uint8_t *base = g_mem + (e->addr & 0x03FFFFFF);
-    if (f.kind >= TF_DXT1) {
-        uint32_t bsz = f.kind == TF_DXT1 ? 8 : 16, bw = (uint32_t)w / 4, blk[16];
-        for (int by = 0; by < h / 4; by++)
-            for (int bx = 0; bx < w / 4; bx++) {
-                dxt_block(f.kind, base + (by * bw + bx) * bsz, blk);
-                for (int k = 0; k < 16; k++) rgba[(by * 4 + k / 4) * w + bx * 4 + k % 4] = blk[k];
-            }
-    } else if (i8) {   /* unswizzled indices + the raw guest palette (A8R8G8B8) */
-        uint8_t *ix = malloc((size_t)w * h);
-        uint32_t *xs = malloc(w * 4), *ys = malloc(h * 4), pal[256] = {0};
-        swizzle_tables(w, h, xs, ys);
-        for (uint32_t k = 0; k < e->pal_len && k < 256; k++) pal[k] = RD32(e->pal_addr + k * 4);
-        for (int y = 0; y < h; y++)
-            for (int x = 0; x < w; x++) {
-                uint8_t v = base[xs[x] | ys[y]];
-                uint32_t c = pal[v];
-                ix[y * w + x] = v;
-                rgba[y * w + x] = (c >> 16 & 255) | (c & 0xFF00) | (c & 255) << 16 | (c & 0xFF000000u);
-            }
-        int idx = hdtex_find_indexed(ix, w, h, pal, e->pal_len, rgba);
-        free(xs); free(ys); free(ix); free(rgba);
+    int r = hdtex_result(hsh);   /* the match runs on hdtex.c's worker thread */
+    if (r >= -1) {
         for (int p = 0; p < 16; p++) {
             HdMemo *m = &hd_memo[(s + p) & ((1 << 14) - 1)];
-            if (!m->hash || p == 15) { m->hash = hsh; m->idx = idx; break; }
+            if (!m->hash || p == 15) { m->hash = hsh; m->idx = r; break; }
         }
-        return idx;
-    } else {
-        uint32_t *xs = malloc(w * 4), *ys = malloc(h * 4);
-        swizzle_tables(w, h, xs, ys);
-        for (int y = 0; y < h; y++)
-            for (int x = 0; x < w; x++) rgba[y * w + x] = texel(f.kind, base + (xs[x] | ys[y]) * f.bpp, NULL);
-        free(xs); free(ys);
+        return r;
     }
-    int idx = hdtex_find(rgba, w, h);
-    free(rgba);
-    for (int p = 0; p < 16; p++) {
-        HdMemo *m = &hd_memo[(s + p) & ((1 << 14) - 1)];
-        if (!m->hash || p == 15) { m->hash = hsh; m->idx = idx; break; }
-    }
-    return idx;
+    if (r == -2) return HD_WAIT;
+    /* copy level 0 (a memcpy) and let the worker decode and match it */
+    int w = e->w, h = e->h;
+    size_t n = f.kind >= TF_DXT1 ? (size_t)(w / 4) * (h / 4) * (f.kind == TF_DXT1 ? 8 : 16) : (size_t)w * h * f.bpp;
+    uint8_t *raw = malloc(n);
+    if (!raw) return -1;
+    memcpy(raw, g_mem + (e->addr & 0x03FFFFFF), n);
+    uint32_t pal[256] = {0};
+    if (i8) for (uint32_t k = 0; k < e->pal_len && k < 256; k++) pal[k] = RD32(e->pal_addr + k * 4);
+    hdtex_submit_raw(hsh, raw, f.kind, f.bpp, i8, w, h, i8 ? pal : NULL, i8 ? e->pal_len : 0, hd_decode);
+    return HD_WAIT;
 }
 
 /* Replaces e's image with pack texture idx (all its levels down to 4x4). 0 = not now (this frame's HD upload budget
  * is spent, or the file is unusable): the caller keeps the original texture. */
 static uint32_t hd_budget_frame, hd_budget_bytes;
 static uint64_t hd_vram;   /* bytes of HD images created (budget: UG_HDVRAM MB, default 2048) */
+/* HD images, one per pack texture, shared by every cache entry that shows it (a texture seen again costs nothing);
+ * freed after 30 s unused. Slots keep their key (no deletion), so the table only grows to the pack textures used. */
+typedef struct { int key; Img im; uint32_t bytes, last; } HdImg;   /* key = pack index + 1, 0 = empty */
+#define HD_CACHE (1 << 14)
+static HdImg hd_imgs[HD_CACHE];
+static HdImg *hd_img(int idx, int add) {
+    uint32_t i = (uint32_t)idx * 2654435761u & (HD_CACHE - 1);
+    for (int n = 0; n < HD_CACHE; n++, i = (i + 1) & (HD_CACHE - 1)) {
+        if (hd_imgs[i].key == idx + 1) return &hd_imgs[i];
+        if (!hd_imgs[i].key) {
+            if (!add) return NULL;
+            hd_imgs[i].key = idx + 1;
+            return &hd_imgs[i];
+        }
+    }
+    return NULL;
+}
 static int create_hd(TexEntry *e, int idx) {
+    HdImg *hc = hd_img(idx, 1);
+    if (!hc) return 0;
+    if (hc->im.img) { hc->last = frame_no; e->hd = 1 + idx; return 1; }   /* already on the GPU */
     int w, h, levels;
     uint32_t fourcc;
     if (!hdtex_info(idx, &w, &h, &levels, &fourcc)) return 0;
@@ -879,10 +899,10 @@ static int create_hd(TexEntry *e, int idx) {
     if (!vram_cap) { const char *v = getenv("UG_HDVRAM"); vram_cap = (uint64_t)(v ? atoi(v) : 2048) << 20; }
     if (hd_vram + total > vram_cap) return 0;
     if (hd_budget_frame != frame_no) { hd_budget_frame = frame_no; hd_budget_bytes = 0; }
-    if (hd_budget_bytes + total > (24u << 20)) return 0;   /* rest next frame (the staging ring is 64 MB) */
+    if (hd_budget_bytes && hd_budget_bytes + total > (4u << 20)) return 0;   /* rest on later frames: no hitch */
     size_t len;
-    uint8_t *file = hdtex_load(idx, &len);
-    if (!file) return 0;
+    uint8_t *file;
+    if (!hdtex_file(idx, &file, &len)) return 0;   /* read ahead on the worker thread; ask again next frame */
     Frame *fr = &frames[fi];
     VkBufferImageCopy regions[16];
     int nl = 0;
@@ -892,6 +912,15 @@ static int create_hd(TexEntry *e, int idx) {
         if (lw < 4 || lh < 4) break;
         uint32_t bw = (uint32_t)lw / 4, bh = (uint32_t)lh / 4, sz = bw * bh * bsz;
         if (src + sz > len) break;
+        if (kind == TF_DXT5)   /* PS2 packs keep GS alpha (0x80 = opaque): double the endpoints of each alpha block */
+            for (uint32_t k = 0; k < bw * bh; k++) {
+                uint8_t *b = file + src + k * 16;
+                int a0 = b[0] * 2, a1 = b[1] * 2, eight = b[0] > b[1];
+                if (a0 > 255) a0 = 255;
+                if (a1 > 255) a1 = 255;
+                if (eight && a0 <= a1) a1 = a0 - 1;   /* keep the 8-value mode (6-value mode codes 6/7 as 0/255) */
+                b[0] = (uint8_t)a0; b[1] = (uint8_t)a1;
+            }
         VkDeviceSize off;
         if (has_bc) {
             uint8_t *p = ring_alloc(&fr->stage, sz, 16, &off);
@@ -922,10 +951,10 @@ static int create_hd(TexEntry *e, int idx) {
     vkCmdCopyBufferToImage(fr->up, fr->stage.buf, im.img, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, nl, regions);
     barrier(fr->up, &im, VK_IMAGE_ASPECT_COLOR_BIT, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
     fr->up_used = 1;
-    if (e->hdim.img) img_destroy_later(&e->hdim);
-    e->hdim = im;
+    hc->im = im;
+    hc->bytes = (uint32_t)total;
+    hc->last = frame_no;
     e->hd = 1 + idx;
-    e->hd_bytes = (uint32_t)total;
     hd_vram += total;
     hd_budget_bytes += (uint32_t)total;
     static int n_hd;
@@ -939,7 +968,12 @@ static VkImageView tex_view(TexEntry *e) {
     if (hd_shot_ab < 0) { const char *a = getenv("UG_SHOTAB"); hd_shot_ab = a && *a == '1'; }
     /* frame_no counts flips: while frame N+1 is drawn, frame_no is still N */
     int off = g_hd_hidden || (hd_shot_ab && shot_every > 0 && frame_no % (uint32_t)shot_every == 0);
-    return e->hd > 0 && e->hdim.img && !off ? e->hdim.view : e->im.view;
+    if (e->hd > 0 && !off) {
+        HdImg *hc = hd_img(e->hd - 1, 0);
+        if (hc && hc->im.img) { hc->last = frame_no; return hc->im.view; }
+        e->hd = -e->hd;   /* freed while unused: loaded again on a later frame */
+    }
+    return e->im.view;
 }
 
 /* stage i -> image view (or 0); *rect = linear texture (unnormalized coordinates) */
@@ -1024,7 +1058,11 @@ static VkImageView get_texture(int i, int *rect, int *tw, int *th, float *zmax) 
         if (e->im.img && e->hash == hsh && e->addr == addr && e->fmt == fmtw && e->pitch == pitch && e->w == w &&
             e->h == h && e->pal_addr == pal_addr && e->pal_len == pal_len) {
             e->last_frame = frame_no;
-            if (e->hd < 0) create_hd(e, -e->hd - 1);   /* HD upload that waited for budget */
+            if (e->hd == INT_MIN) {   /* still being matched */
+                int r = hd_match(e, f, hsh);
+                e->hd = r >= 0 ? -(1 + r) : r == HD_WAIT ? INT_MIN : 0;
+            }
+            if (e->hd < 0 && e->hd != INT_MIN) create_hd(e, -e->hd - 1);   /* file read / upload budget */
             return tex_view(e);
         }
     }
@@ -1051,9 +1089,7 @@ static VkImageView get_texture(int i, int *rect, int *tw, int *th, float *zmax) 
         if (e->last_frame < v->last_frame) v = e;
     }
     img_destroy_later(&v->im);
-    img_destroy_later(&v->hdim);
-    if (v->hd > 0) hd_vram -= v->hd_bytes;
-    v->hd = 0; v->hd_bytes = 0;
+    v->hd = 0;
     {   /* UG_TEXDUMP=<format word, hex>: write each new texture of that format to out/tex_<addr>_<fmt>.bin (raw guest
          * bytes, all levels; debug) */
         static int td = -1;
@@ -1077,7 +1113,8 @@ static VkImageView get_texture(int i, int *rect, int *tw, int *th, float *zmax) 
     if (!create_texture(v, f, levels, palette)) return 0;
     addr_slot[aslot] = v;
     int hdi = hd_match(v, f, hsh);   /* HD pack (UG_HDTEX): replaces the image now, or on a later frame */
-    if (hdi >= 0 && !create_hd(v, hdi)) v->hd = -(1 + hdi);
+    if (hdi == HD_WAIT) v->hd = INT_MIN;
+    else if (hdi >= 0 && !create_hd(v, hdi)) v->hd = -(1 + hdi);
     return tex_view(v);
 }
 
@@ -1919,7 +1956,10 @@ static void submit_and_present(Surface *s) {
     /* UG_SHOT=N: every N frames, read the presented surface back and write out/shot_<frame>.ppm (debug) */
     static Ring shot;
     if (shot_every < 0) { const char *e = getenv("UG_SHOT"); shot_every = e ? atoi(e) : 0; }
-    int shoot = s && shot_every > 0 &&
+    static uint32_t shot_from, shot_to = UINT32_MAX;   /* UG_SHOTRANGE=<first>,<last> frame (debug) */
+    static int range_init;
+    if (!range_init++) { const char *r = getenv("UG_SHOTRANGE"); if (r) sscanf(r, "%u,%u", &shot_from, &shot_to); }
+    int shoot = s && shot_every > 0 && frame_no >= shot_from && frame_no <= shot_to &&
                 (frame_no % (uint32_t)shot_every == 0 || (hd_shot_ab > 0 && frame_no % (uint32_t)shot_every == 1));
     if (shoot) {
         VkDeviceSize need = (VkDeviceSize)s->hw * s->hh * 4;
@@ -1975,24 +2015,40 @@ static void submit_and_present(Surface *s) {
 static void flip_impl(uint32_t addr) {
     if (!ready()) return;
     frame_no++;
+    if (frame_no % 60 == 30)   /* HD images unused for 30 s */
+        for (int i = 0; i < HD_CACHE; i++)
+            if (hd_imgs[i].im.img && frame_no - hd_imgs[i].last > 1800) {
+                img_destroy_later(&hd_imgs[i].im);
+                hd_vram -= hd_imgs[i].bytes;
+            }
     if (frame_no % 60 == 0)   /* evict textures idle for 10 s */
         for (int i = 0; i < TEX_CACHE; i++)
             if (tcache[i].im.img && frame_no - tcache[i].last_frame > 600) {
                 img_destroy_later(&tcache[i].im);
-                img_destroy_later(&tcache[i].hdim);
-                if (tcache[i].hd > 0) hd_vram -= tcache[i].hd_bytes;
-                tcache[i].hd = 0; tcache[i].hd_bytes = 0;
+                tcache[i].hd = 0;
             }
     /* XDK 5659 swaps without naming the front buffer (4242 left it in 1D8C): present the surface just rendered */
     Surface *s = find_rt(addr);
     if (!s) s = cur_rt;
     submit_and_present(s);
+    {   /* worst frame time (flip to flip) and frames over 25 ms since the last log line: stutter */
+        static uint64_t last;
+        uint64_t now = sched_now_100ns();
+        if (last) {
+            uint32_t ms10 = (uint32_t)((now - last) / 1000);   /* 0.1 ms */
+            if (ms10 > st_worst) st_worst = ms10;
+            if (ms10 > 250) st_slow++;
+        }
+        last = now;
+    }
     if (frame_no % 300 == 0) {
         static DWORD t0;
         DWORD t = GetTickCount();
-        LOG("[gpu] frame %u: %.1f fps, per frame: draws %u verts %u new textures %u, %d pipelines, %d targets\n", frame_no,
-            t0 ? 300000.0 / (double)(t - t0) : 0.0, st_draws / 300, st_verts / 300, st_newtex / 300, n_pipes, n_rts);
+        LOG("[gpu] frame %u: %.1f fps, worst %.1f ms, %u slow, per frame: draws %u verts %u new textures %u, %d pipelines, "
+            "%d targets\n", frame_no, t0 ? 300000.0 / (double)(t - t0) : 0.0, st_worst / 10.0, st_slow, st_draws / 300,
+            st_verts / 300, st_newtex / 300, n_pipes, n_rts);
         st_draws = st_verts = st_newtex = 0;
+        st_worst = st_slow = 0;
         t0 = t;
     }
 }

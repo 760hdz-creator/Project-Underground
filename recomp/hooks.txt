@@ -1,2 +1,8 @@
 # Lifted functions that call x86_hook(c, va) on entry (runtime/src/hle.c): <va> <name>
 F1D60 ChangeLevel
+34490 MusicStreamUpdate
+34CC0 StreamManagerUpdate
+363F0 MusicStreamUpdate2
+34F80 PlayStreamById
+34990 PlayMusicTrack
+34C70 StopAllStreams
