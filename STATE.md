@@ -246,9 +246,19 @@ print(','.join(ev))")" UG_SHOT=1200 ./out/underground.exe   (NJ level by ~frame 
      B = Cancel on the pad map: suppressed). Skater name in Edit Skater > Information: not tested.
      UG_TYPE="<s>:<text>,..." scripted typing ('<' backspace, '|' enter). Route: A 6..30 step 3, 52:DOWN, 56:A,
      61:A (Create New), then the keyboard is up at ~61 s. qb.prx unpacker: scratchpad prx.py (LZSS, N=4096 F=18).
-  4. In-game overlay menu: F1 or L3+R3, settings usable during play (fullscreen, camera invert = g_invert_x/y in
-     hle.c, HD on/off = g_hd_hidden, fps). Plan: layered Win32 window over the game (GDI like the launcher), game
-     paused while open; Linux later.
+  4. DONE 2026-11-23 (late): in-game menu, runtime/src/menu.c. F1 / Esc / L3+R3 (Esc no longer quits: Quit is a
+     menu item, press twice). Modal loop at the NV2A flip (nv2a.c 0x012C): guest threads are fibers on one host
+     thread, so the whole game pauses; sched_pause_add leaves the paused time out of sched_now_100ns (all guest
+     clocks derive from it); dsound g_audio_hold outputs silence without advancing voices/streams. Renderer:
+     gpu_menu_present re-presents last_present with the panel copied (opaque, centered, BGRA swap) into the
+     swapchain image: no new shaders; works on Linux/Android (same Vulkan path). Font: runtime/src/font8x8_basic.h
+     (public domain). Items: Resume, Fullscreen, Frame rate 30/60 (g_fps, nv2a.c), Invert X/Y, HD (only with a
+     pack; session only), Quit. Writes settings.ini (UG_FULLSCREEN, UG_FPS, UG_INVERTX, UG_INVERTY) only if the file
+     exists. Close waits for all keys/buttons released. Debug: UG_INPUT "<s>:MENU", UG_MENUKEYS=down,right,ok,back
+     (other words wait 300 ms), UG_MENUSHOT=1 -> out/menu.ppm. Verified (Windows): navigation + toggle, 10 s pause
+     in NJ gameplay resumes seamlessly (shots 7420-7480), 0 audio underruns. Not tested: Linux run (builds), real
+     pad L3+R3, fullscreen toggle from the menu, settings.ini write in an install. NEVER screen-capture the desktop
+     for tests (a DPI-wrong CopyFromScreen grabbed other windows; deleted): use UG_MENUSHOT / UG_SHOT only.
   5. Cheat menu in that overlay: unlock all (levels/skaters/gear: THUG global flags / cheat flags from qb scripts),
      THUG has no money (check), plus always special, perfect balance, moon physics etc. (THUG's own cheat flags).
   6. Controller support in the launcher: done 8c04593 (needs a real-pad test).

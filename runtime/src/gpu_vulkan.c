@@ -67,10 +67,22 @@ static void toggle_fullscreen(HWND h) {
 static LRESULT CALLBACK wndproc(HWND h, UINT m, WPARAM w, LPARAM l) {
     switch (m) {
     case WM_CLOSE: LOG("[gpu] window closed\n"); ExitProcess(0);
-    case WM_KEYDOWN:
-        if (w == VK_ESCAPE) { LOG("[gpu] escape\n"); ExitProcess(0); }
+    case WM_KEYDOWN: {
+        extern volatile int g_menu_req;
+        extern int menu_is_open(void);
+        extern void menu_key(int);
+        if (menu_is_open()) {   /* in-game menu (menu.c): arrows, Enter/Space = ok, Esc/F1/Backspace = back */
+            int k = w == VK_UP ? 1 : w == VK_DOWN ? 2 : w == VK_LEFT ? 3 : w == VK_RIGHT ? 4
+                  : w == VK_RETURN || w == VK_SPACE ? 5 : w == VK_ESCAPE || w == VK_F1 || w == VK_BACK ? 6 : 0;
+            if (k) menu_key(k);
+            if (w != VK_F11) return 0;
+        } else if ((w == VK_ESCAPE || w == VK_F1) && !(l & (1 << 30))) {   /* first press, not autorepeat */
+            g_menu_req = 1;
+            return 0;
+        }
         if (w == VK_F11) { toggle_fullscreen(h); return 0; }
         break;
+    }
     case WM_SYSKEYDOWN:
         if (w == VK_RETURN && (l & (1 << 29))) { toggle_fullscreen(h); return 0; }
         if (w == VK_F10) {   /* HD texture pack on/off (compare) */
@@ -1923,6 +1935,10 @@ static void surface_recreate(void) {
 }
 #endif
 
+static Surface *last_present;   /* the in-game menu re-presents it (gpu_menu_present) */
+static const uint8_t *menu_px;  /* menu panel to copy over the frame, RGBA */
+static int menu_w, menu_h;
+
 static void submit_and_present(Surface *s) {
     Frame *f = &frames[fi];
     end_rendering();
@@ -1962,6 +1978,23 @@ static void submit_and_present(Surface *s) {
                               {VK_IMAGE_ASPECT_COLOR_BIT, 0, 0, 1}, {{dx, dy, 0}, {dx + dw, dy + dh, 1}}};
             vkCmdBlitImage(cb, s->color.img, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, sc_img[img],
                            VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, 1, &bl, VK_FILTER_LINEAR);
+        }
+        if (menu_px) {   /* in-game menu panel (menu.c), centered, opaque */
+            int w = menu_w < (int)sc_ext.width ? menu_w : (int)sc_ext.width;
+            int h = menu_h < (int)sc_ext.height ? menu_h : (int)sc_ext.height;
+            VkDeviceSize off;
+            uint8_t *p = ring_alloc(&f->stage, (VkDeviceSize)menu_w * menu_h * 4, 16, &off);
+            if (p) {
+                int bgr = sc_fmt == VK_FORMAT_B8G8R8A8_UNORM || sc_fmt == VK_FORMAT_B8G8R8A8_SRGB;
+                for (int i = 0; i < menu_w * menu_h; i++) {
+                    const uint8_t *q = menu_px + (size_t)i * 4;
+                    uint8_t *d = p + (size_t)i * 4;
+                    d[0] = bgr ? q[2] : q[0]; d[1] = q[1]; d[2] = bgr ? q[0] : q[2]; d[3] = 255;
+                }
+                VkBufferImageCopy rg = {off, (uint32_t)menu_w, 0, {VK_IMAGE_ASPECT_COLOR_BIT, 0, 0, 1},
+                                        {((int)sc_ext.width - w) / 2, ((int)sc_ext.height - h) / 2, 0}, {(uint32_t)w, (uint32_t)h, 1}};
+                vkCmdCopyBufferToImage(cb, f->stage.buf, sc_img[img], VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, 1, &rg);
+            }
         }
         int drawn = touch_draw(cb, img);
         raw_barrier(cb, sc_img[img], drawn ? VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL : VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
@@ -2044,6 +2077,7 @@ static void flip_impl(uint32_t addr) {
     /* XDK 5659 swaps without naming the front buffer (4242 left it in 1D8C): present the surface just rendered */
     Surface *s = find_rt(addr);
     if (!s) s = cur_rt;
+    last_present = s;
     submit_and_present(s);
     {   /* worst frame time (flip to flip) and frames over 25 ms since the last log line: stutter */
         static uint64_t last;
@@ -2086,3 +2120,19 @@ void gpu_flip(uint32_t addr) {
     AcquireSRWLockExclusive(&gpu_lock); flip_impl(addr); ReleaseSRWLockExclusive(&gpu_lock);
 }
 void gpu_vblank(void) {}
+
+/* in-game menu (menu.c): present the frozen frame with the panel (RGBA) over it */
+void gpu_menu_present(const uint8_t *rgba, int w, int h) {
+    AcquireSRWLockExclusive(&gpu_lock);
+    if (ready() && rgba && w > 0 && h > 0) {
+        menu_px = rgba; menu_w = w; menu_h = h;
+        submit_and_present(last_present);
+        menu_px = NULL;
+    }
+    ReleaseSRWLockExclusive(&gpu_lock);
+}
+int gpu_window_height(void) { return sc_ext.height ? (int)sc_ext.height : 720; }
+#ifdef _WIN32
+int plat_fullscreen_get(void) { return g_hwnd && (GetWindowLongW(g_hwnd, GWL_STYLE) & WS_POPUP) != 0; }
+void plat_fullscreen_toggle(void) { if (g_hwnd) toggle_fullscreen(g_hwnd); }
+#endif

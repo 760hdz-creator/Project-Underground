@@ -110,11 +110,13 @@ static void *main_fiber;
 static GThread *threads, *current;
 static LARGE_INTEGER qpf, qpc0;
 
+static volatile uint64_t paused_100ns;   /* time spent in the in-game menu (menu.c) */
+void sched_pause_add(uint64_t d) { paused_100ns += d; }
 uint64_t sched_now_100ns(void) {
     LARGE_INTEGER t;
     if (!qpf.QuadPart) { QueryPerformanceFrequency(&qpf); QueryPerformanceCounter(&qpc0); }
     QueryPerformanceCounter(&t);
-    return (uint64_t)((double)(t.QuadPart - qpc0.QuadPart) * 1e7 / (double)qpf.QuadPart);
+    return (uint64_t)((double)(t.QuadPart - qpc0.QuadPart) * 1e7 / (double)qpf.QuadPart) - paused_100ns;
 }
 
 GThread *sched_current(void) { return current; }

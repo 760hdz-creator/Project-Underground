@@ -22,6 +22,9 @@ static void toggle_fullscreen(void) {
     SDL_SetWindowFullscreen(g_win, !fs);   /* borderless desktop fullscreen (no mode change) */
 }
 
+int plat_fullscreen_get(void) { return g_win && (SDL_GetWindowFlags(g_win) & SDL_WINDOW_FULLSCREEN) != 0; }
+void plat_fullscreen_toggle(void) { if (g_win) toggle_fullscreen(); }
+
 /* UG_MONITOR=N picks display N (SDL order). Default as on Windows: the installed game (underground.sh sets
  * UG_INSTALLED=1) opens on the primary display and takes focus; dev/test runs open on the first other display. */
 HWND linux_create_window(void) {
@@ -122,7 +125,19 @@ void linux_pump_events(void) {
             if (e.key.key == SDLK_RETURN && !(e.key.mod & SDL_KMOD_ALT)) { extern void kbd_text_push(int); kbd_text_push(13); }
             if (e.key.key == SDLK_BACKSPACE) { extern void kbd_text_push(int); kbd_text_push(8); }
             if (e.key.repeat) break;
-            if (e.key.key == SDLK_ESCAPE) { LOG("[gpu] escape\n"); ExitProcess(0); }
+            {   /* in-game menu (menu.c): arrows, Enter/Space = ok, Esc/F1/Backspace = back; Esc or F1 opens it */
+                extern volatile int g_menu_req;
+                extern int menu_is_open(void);
+                extern void menu_key(int);
+                SDL_Keycode kc = e.key.key;
+                if (menu_is_open()) {
+                    int k = kc == SDLK_UP ? 1 : kc == SDLK_DOWN ? 2 : kc == SDLK_LEFT ? 3 : kc == SDLK_RIGHT ? 4
+                          : kc == SDLK_RETURN || kc == SDLK_SPACE ? 5 : kc == SDLK_ESCAPE || kc == SDLK_F1 || kc == SDLK_BACKSPACE ? 6 : 0;
+                    if (k) menu_key(k);
+                    break;
+                }
+                if (kc == SDLK_ESCAPE || kc == SDLK_F1) { g_menu_req = 1; break; }
+            }
             if (e.key.key == SDLK_F11 || (e.key.key == SDLK_RETURN && (e.key.mod & SDL_KMOD_ALT))) toggle_fullscreen();
             if (e.key.key == SDLK_F10 && !e.key.repeat) {   /* HD texture pack on/off (gpu_vulkan.c) */
                 extern volatile int g_hd_hidden;

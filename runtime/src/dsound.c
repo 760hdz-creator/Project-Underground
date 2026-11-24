@@ -281,8 +281,10 @@ static void mix_stream(Stream *s, float *out, int n) {
     }
 }
 
+volatile int g_audio_hold;   /* in-game menu open: output silence, voices and streams stay where they are */
 static void mix(int16_t *dst, int n) {
     static float acc[2 * OUT_FRAMES];
+    if (g_audio_hold) { memset(dst, 0, (size_t)n * 4); return; }
     memset(acc, 0, sizeof(float) * 2 * n);
     EnterCriticalSection(&g_lock);
     for (int i = 0; i < g_nvoices; i++)

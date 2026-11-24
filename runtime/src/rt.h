@@ -64,7 +64,8 @@ void sched_maybe_yield(void);                        /* yield if the current sli
 _Noreturn void sched_exit_thread(uint32_t status);
 void sched_run(void);                                 /* main loop; returns when all threads exit */
 uint64_t sched_now_100ns(void);                       /* guest time (100 ns units since boot) */
-double host_ms(void);                                 /* host monotonic clock in ms (dsound.c) */
+double host_ms(void);
+void sched_pause_add(uint64_t d100ns);                /* in-game menu: leave paused time out of guest time */                                 /* host monotonic clock in ms (dsound.c) */
 void script_file_event(const char *path);           /* scripted-input file anchors (hle.c) */
 void sched_sleep_until(uint64_t t100ns);
 

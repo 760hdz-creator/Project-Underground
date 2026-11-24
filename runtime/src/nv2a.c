@@ -7,6 +7,8 @@
 #include <windows.h>
 #include <string.h>
 #include "rt.h"
+
+volatile int g_fps = -1;   /* flip pacing (UG_FPS; the in-game menu sets 30 / 60) */
 #include "kelvin.h"
 
 #define NV_BASE         0xFD000000u
@@ -384,11 +386,16 @@ static void pgraph_method(uint32_t subch, uint32_t method, uint32_t data) {
     case 0x012C:                                                        /* FLIP_INCREMENT_WRITE */
         /* XDK Swap: 1D8C (scratch) holds the surface offset just completed */
         gpu_flip((nv2a_dma_base(KREG(K_DMA_COLOR)) + KREG(K_ZSTENCIL_CLEAR)) & 0x03FFFFFF);
-        {   /* The NV2A flips at vblank: pace flips to UG_FPS (default 60; 0 = unlimited). Only this guest thread waits
-             * (sched_sleep_until runs the others). */
-            static int fps = -1;
+        {   /* in-game menu (menu.c): a modal loop here pauses every guest thread */
+            extern volatile int g_menu_req;
+            extern void menu_run(void);
+            if (g_menu_req) menu_run();
+        }
+        {   /* The NV2A flips at vblank: pace flips to UG_FPS (default 60; 0 = unlimited; menu.c changes it). Only this
+             * guest thread waits (sched_sleep_until runs the others). */
             static uint64_t next;
-            if (fps < 0) { const char *e = getenv("UG_FPS"); fps = e ? atoi(e) : 60; }
+            if (g_fps < 0) { const char *e = getenv("UG_FPS"); g_fps = e ? atoi(e) : 60; }
+            int fps = g_fps;
             if (fps > 0) {
                 uint64_t period = 10000000ull / (uint64_t)fps, now = sched_now_100ns();
                 if (!next || now > next + 4 * period) next = now;   /* first flip or a long stall: restart */

@@ -93,6 +93,10 @@ static void fill_state(uint32_t dst, int port) {
     uint8_t analog[8] = {
         b & 0x1000 ? 255 : 0, b & 0x2000 ? 255 : 0, b & 0x4000 ? 255 : 0, b & 0x8000 ? 255 : 0,
         b & 0x0200 ? 255 : 0, b & 0x0100 ? 255 : 0, h.lt, h.rt};
+    if (port == 0 && (b & 0xC0) == 0xC0) {   /* L3+R3: in-game menu (menu.c) */
+        extern volatile int g_menu_req;
+        g_menu_req = 1;
+    }
     if (port == 0 && our_focus()) {
         int typing = kbd_typing();   /* text entry polling the keyboard: only the arrows still act as the D-pad */
         for (int i = 0; i < (typing ? 4 : 6); i++) if (key(kb_dpad[i])) buttons |= 1u << i;
@@ -115,7 +119,7 @@ static void fill_state(uint32_t dst, int port) {
             nev = 0;
             static const char *names[] = {"UP", "DOWN", "LEFT", "RIGHT", "START", "BACK", "LS", "RS",
                                           "A", "B", "X", "Y", "BLACK", "WHITE", "LT", "RT",
-                                          "LUP", "LDOWN", "LLEFT", "LRIGHT"};
+                                          "LUP", "LDOWN", "LLEFT", "LRIGHT", "MENU"};
             const char *e = getenv("UG_INPUT");
             char buf[4096];
             snprintf(buf, sizeof buf, "%s", e ? e : "");
@@ -123,7 +127,7 @@ static void fill_state(uint32_t dst, int port) {
                 char name[16] = {0};
                 double t = 0, d = 0.15;
                 if (sscanf(tok, "%lf:%15[A-Z]:%lf", &t, name, &d) < 2) continue;
-                for (int k = 0; k < 20; k++)
+                for (int k = 0; k < 21; k++)
                     if (!strcmp(name, names[k])) { ev[nev].t = t; ev[nev].d = d; ev[nev].btn = k; nev++; break; }
             }
             if (nev) LOG("[input] %d scripted events\n", nev);
@@ -137,7 +141,8 @@ static void fill_state(uint32_t dst, int port) {
             else if (k == 16) h.ly = 32767;
             else if (k == 17) h.ly = -32767;
             else if (k == 18) h.lx = -32767;
-            else h.lx = 32767;
+            else if (k == 19) h.lx = 32767;
+            else { extern volatile int g_menu_req; g_menu_req = 1; ev[i].t = -1e9; }   /* MENU: once */
         }
     }
     WR32(dst, ++packet);
@@ -156,6 +161,25 @@ static void fill_state(uint32_t dst, int port) {
     }
     WR16(dst + 18, (uint16_t)h.rx);
     WR16(dst + 20, (uint16_t)h.ry);
+}
+
+/* in-game menu input (menu.c): pad 0 in XInput layout, left stick folded into the D-pad bits */
+uint32_t menu_pad_buttons(void) {
+    HostXState h;
+    memset(&h, 0, sizeof h);
+    host_xinput_init();
+    if (host_get_state) host_get_state(0, &h);
+    uint32_t b = h.buttons;
+    if (h.ly > 16000) b |= 1;
+    if (h.ly < -16000) b |= 2;
+    if (h.lx < -16000) b |= 4;
+    if (h.lx > 16000) b |= 8;
+    return b;
+}
+int menu_keys_down(void) {
+    static const int k[] = {VK_RETURN, VK_SPACE, VK_ESCAPE, VK_F1, VK_BACK, VK_UP, VK_DOWN, VK_LEFT, VK_RIGHT, 'Z', 'X'};
+    for (unsigned i = 0; i < sizeof k / sizeof *k; i++) if (key(k[i])) return 1;
+    return 0;
 }
 
 /* UG_PADS=N: gamepads on ports 0..N-1 (1..4, default 1) */
