@@ -139,16 +139,17 @@ B. Also seen (debug run, NJ pool by a brick wall): the wall's brick pattern draw
    2026-11-24: in out/pink/shot.png the fence next to the wall shows on the ground too: looks like the game's own
    planar reflection in the wet floor (not proven).
    GRAPHICS REQUEST (user, 2026-11-24): supersampling, anti-aliasing, ambient occlusion, anisotropic filtering,
-   unlimited draw distance. NOTHING OF IT WRITTEN YET. State and plan:
-   - Anisotropic: already in (UG_ANISO, 16x default). Missing: a launcher / in-game menu entry.
-   - Supersampling: UG_SCALE (1..8, default 2; launcher combo exists). Missing: submit_and_present downsamples with ONE
-     linear blit, which skips texels above 2x the window: step down by halves first.
-   - AA (FXAA) + ambient occlusion (from ZSurface.dview): one fullscreen pass at the world -> HUD boundary (after the
-     last perspective world draw, before the first HUD draw) so the HUD stays sharp. Find that boundary first
-     (perspective = comp row 3 not 0,0,0,x; beware letterbox / cutscene frames and render-to-texture). Needs a colour
-     copy image, a new pipeline (touch_pipeline() is the template) and new shaders (python -I tools/shaders.py).
-     Near plane 2, far about 32000 (measured from the composite matrices): use them to linearize depth.
-     All three off by env; settings in the in-game menu and the launcher.
+   unlimited draw distance. DONE (8a5991b + next commit, not pushed) except draw distance:
+   - Supersampling: downsample() in gpu_vulkan.c halves per axis until <= 2x, then the linear blit. Launcher row
+     "Supersampling" 1x..8x (launcher only: a runtime change would recreate every surface). 8x checked, 60 fps.
+   - UG_FXAA / UG_AO (both off by default): fx_watch / fx_apply in gpu_vulkan.c, shaders ao.frag and post.frag, drawn
+     before the first HUD draw (vertex program, v0 z = w = 0, no z write); at the flip when the frame has no HUD draw.
+     Projection (depth range, focal) derived from each frame's composite matrix: no near/far constants.
+     Frames whose only 3D is vertex-program drawn get FXAA but no AO (no composite matrix to read).
+   - UG_ANISO can change at run time (sampler key includes it). In-game menu + launcher rows for all three.
+   - Debug: UG_FXDEBUG=1 (AO alone) / 2 (projections), UG_FXAB=1 (off in odd frames; with UG_SHOTAB=1 gives A/B pairs),
+     UG_AORADIUS, UG_AOSTRENGTH, UG_SHOTOUT=1 (UG_SHOT saves the window image). Runner: out/fx/run.sh <name> <s> VAR=...
+     Linux build OK (WSL); not run there. Android: not built with it. Split screen AO uses one view's projection.
    - Draw distance: the far plane is not the limit (NJ is about +-16000 units, far about 32000) and fog was off in
      every captured NJ draw. Camera near/far = camera object +0xA8 / +0xAC (camera list [0x229C28],
      SetClippingDistances 0x11C240, defaults 12 / 12000; in NJ the matrices show about 2 / 32000).
@@ -166,7 +167,7 @@ C. README pictures (user asked): hd_compare.jpg REPLACED (static UG_SHOTAB pair 
    (UG_LEVEL redirect, UG_SHOT=600 from 4200; ~65 min). Do NOT run anything else meanwhile (shared out/shot_*,
    route timing). TaskStop does not kill the bash loop: kill bash + timeout + underground.exe by PID. Then pick
    the best widescreen shot per map (resize to 16:9), README gallery (docs/images/maps/*.jpg), commit, push.
-D. Not pushed: 4cd0dc8 (F9 capture) and the new hd_compare.jpg.
+D. Not pushed: everything from 4cd0dc8 (F9 capture, new hd_compare.jpg, graphics options).
 1. Sky wedge (cosmetic); pool-floor rectangle (UG_DBGCOLOR=7). Neither showed in 16 NJ shots on 2026-11-23
    (run_texgen, run_dbg7); a quarter-pipe light/dark split at f14400 is not a shadow draw (baked lighting).
 2. Renderer gaps (not seen in NJ so far: check other levels first): FF lighting, cube maps, eye/object-linear and
