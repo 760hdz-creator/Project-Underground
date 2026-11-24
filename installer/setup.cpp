@@ -605,7 +605,7 @@ static const int kArtW = 2752, kArtH = 1536;
 static const RECT kBoards[6] = {{1590, 225, 2522, 421}, {1590, 433, 2522, 621}, {1590, 633, 2522, 823},
                                 {1590, 832, 2522, 1021}, {1590, 1030, 2522, 1219}, {1590, 1228, 2522, 1420}};
 static const RECT kClose = {2618, 12, 2710, 100};     // the X plate, top right
-static const RECT kOverlay = {200, 650, 1550, 1415};  // launcher settings panel (over the skater)
+static const RECT kOverlay = {200, 600, 1550, 1415};  // launcher settings panel (over the skater)
 static const RECT kStatus = {200, 1438, 2250, 1482}, kStatusSetup = {200, 1432, 2250, 1468}, kBar = {200, 1464, 2250, 1534}, kInfo = {2280, 1446, 2600, 1494};
 static double g_scale = 1;
 static HDC g_artDC;
@@ -689,13 +689,13 @@ static void BuildArt(int w, int h) {
         Rectangle(pd, p.left, p.top, p.right, p.bottom);
         SelectObject(pd, op); SelectObject(pd, ob);
         DeleteObject(pen);
-        ArtText(pd, {260, 665, 1500, 755}, g_titleFont, kAccent, L"SETTINGS", DT_SINGLELINE | DT_VCENTER);
+        ArtText(pd, {260, 612, 1500, 692}, g_titleFont, kAccent, L"SETTINGS", DT_SINGLELINE | DT_VCENTER);
         static const wchar_t* rows[] = {L"Monitor", L"Resolution", L"Screen", L"Picture", L"Supersampling",
                                         L"Texture filtering", L"Players (gamepads)", L"Camera (right stick)", L"Level (test cheat)",
                                         L"HD texture pack"};
         for (int i = 0; i < 10; i++)
-            ArtText(pd, {260, 867 + 54 * i, 700, 921 + 54 * i}, g_font, kText, rows[i], DT_SINGLELINE | DT_VCENTER);
-        ArtText(pd, {700, 665, 1500, 755}, g_smallFont, kDim, L"Saved at once to settings.ini",
+            ArtText(pd, {260, 800 + 60 * i, 700, 860 + 60 * i}, g_font, kText, rows[i], DT_SINGLELINE | DT_VCENTER);
+        ArtText(pd, {700, 612, 1500, 692}, g_smallFont, kDim, L"Saved at once to settings.ini",
                 DT_SINGLELINE | DT_VCENTER | DT_RIGHT);
     }
     DeleteDC(pd);
@@ -1358,21 +1358,21 @@ static void CreateLauncherControls() {
     MakeBoard(5, L"UNINSTALL", ID_UNINSTALL);
     SetSub(ID_UNINSTALL, g_instDir);
     MakeStatusBar(L"Checking for updates...", false);
-    MakeCheck(L"Fullscreen", ID_FULLSCREEN, 260, 752, 380);
-    MakeCheck(L"60 fps", ID_FPS60, 700, 752, 300);
-    MakeCheck(L"VSync", ID_VSYNC, 1060, 752, 300);
-    MakeCheck(L"Anti-aliasing", ID_FXAA, 260, 810, 420);
-    MakeCheck(L"Ambient occlusion", ID_AO, 700, 810, 600);
-    MakeCombo(ID_MONITOR, kMonitor, g_nMonitors, 720, 872, 780);
-    MakeCombo(ID_WINSIZE, kWinSize, N_WINSIZE, 720, 926, 780);
-    MakeCombo(ID_SCREEN, kScreen, 2, 720, 980, 780);
-    MakeCombo(ID_FIT, kFit, 2, 720, 1034, 780);
-    MakeCombo(ID_SCALE, kScale, 7, 720, 1088, 780);
-    MakeCombo(ID_ANISO, kAniso, 5, 720, 1142, 780);
-    MakeCombo(ID_PADS, kPads, 4, 720, 1196, 780);
-    MakeCombo(ID_CAMERA, kCamera, 4, 720, 1250, 780);
-    MakeCombo(ID_LEVEL, kLevel, 18, 720, 1304, 780);
-    MakeCombo(ID_HD, nullptr, 0, 720, 1358, 780);
+    MakeCheck(L"Fullscreen", ID_FULLSCREEN, 260, 690, 380);
+    MakeCheck(L"60 fps", ID_FPS60, 700, 690, 300);
+    MakeCheck(L"VSync", ID_VSYNC, 1060, 690, 300);
+    MakeCheck(L"Anti-aliasing", ID_FXAA, 260, 742, 420);
+    MakeCheck(L"Ambient occlusion", ID_AO, 700, 742, 600);
+    MakeCombo(ID_MONITOR, kMonitor, g_nMonitors, 720, 800, 780);
+    MakeCombo(ID_WINSIZE, kWinSize, N_WINSIZE, 720, 860, 780);
+    MakeCombo(ID_SCREEN, kScreen, 2, 720, 920, 780);
+    MakeCombo(ID_FIT, kFit, 2, 720, 980, 780);
+    MakeCombo(ID_SCALE, kScale, 7, 720, 1040, 780);
+    MakeCombo(ID_ANISO, kAniso, 5, 720, 1100, 780);
+    MakeCombo(ID_PADS, kPads, 4, 720, 1160, 780);
+    MakeCombo(ID_CAMERA, kCamera, 4, 720, 1220, 780);
+    MakeCombo(ID_LEVEL, kLevel, 18, 720, 1280, 780);
+    MakeCombo(ID_HD, nullptr, 0, 720, 1340, 780);
     FillHdCombo();
     for (int id : kSettingIds) ShowWindow(GetDlgItem(g_wnd, id), SW_HIDE);
     LoadSettings();
