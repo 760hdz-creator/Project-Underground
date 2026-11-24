@@ -262,9 +262,10 @@ int drawdist_on(void) {
 }
 static void lod_hide_hook(X86Context *c) {
     uint32_t t = c->ecx, v;
-    float d2, lod, lod3;
+    float d2, lod, lod1, lod3;
     v = RD32(t + 0x24); memcpy(&d2, &v, 4);
     v = RD32(t + 0x38); memcpy(&lod, &v, 4);
+    v = RD32(t + 0x34); memcpy(&lod1, &v, 4);
     v = RD32(t + 0x3C); memcpy(&lod3, &v, 4);
     int cut = RD32(t + 0x2C) && !(d2 < lod * lod);
     static int dl = -1;
@@ -276,7 +277,7 @@ static void lod_hide_hook(X86Context *c) {
         if (lod3 == 1000002.0f) nfree++; else if (cut) ncut++;
         int k = 0;
         while (k < ns && seen[k] != lod) k++;
-        if (k == ns && ns < 64) { seen[ns++] = lod; LOG("[dd] lod_dist2 %.0f units (lod3 %.0f)\n", lod, lod3); }
+        if (k == ns && ns < 64) { seen[ns++] = lod; LOG("[dd] lod_dist2 %.0f units (lod1 %.0f, lod3 %.0f)\n", lod, lod1, lod3); }
         if (++calls % 60000 == 0) { LOG("[dd] %u checks: %u hidden by distance, %u unlimited\n", n, ncut, nfree); n = ncut = nfree = 0; }
         if (cut && lod3 != 1000002.0f && calls % 5000 < 40)
             LOG("[dd]   hidden: object %08X at %.0f units, limit %.0f, suspended %u\n", RD32(t + 0xC), sqrt(d2), lod, RD8(t + 0x30));
@@ -284,7 +285,7 @@ static void lod_hide_hook(X86Context *c) {
     static int ab = -1;   /* UG_DDAB=1: off in odd 300-frame windows (debug) */
     if (ab < 0) ab = getenv("UG_DDAB") != NULL;
     if (cut && drawdist_on() && lod > 0 && !(ab && (gpu_frame() / 300 & 1))) {
-        d2 = lod * lod * 0.99f;
+        d2 = nextafterf(lod * lod, 0.0f);   /* still above lod_dist1: the far animation tier is kept */
         memcpy(&v, &d2, 4);
         WR32(t + 0x24, v);
     }

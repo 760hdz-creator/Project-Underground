@@ -153,7 +153,7 @@ B. Also seen (debug run, NJ pool by a brick wall): the wall's brick pattern draw
    - Draw distance DONE: UG_DRAWDIST=1 (off by default; menu "Draw distance", launcher "Max draw distance"). Level geometry
      was never distance-cut (far 32000, no fog in NJ). Models were: 0x4CD00 (called by the suspend manager 0x4CF40 each
      frame) hides a model when +0x24 (squared distance) >= lod_dist2 (+0x38) squared; NJ limits 1800..6012 units, about
-     half of all checks hidden. Hook lod_hide_hook (hle.c) keeps +0x24 just under the limit; frustum test and suspension
+     half of all checks hidden. Hook lod_hide_hook (hle.c) clamps +0x24 to nextafterf(lod2 squared) (NOT 0.99x: lod1 is only 12 units under lod2 for most objects and 0x4CBA0, called from 0x5F268 animation and 0x103B7E, compares +0x24 with lod1 squared); frustum test and suspension
      (+0x30) unchanged, so AI beyond the suspend distance stays frozen, as on Xbox. Measured (NJ): up to +190 draws per
      frame, 60 fps; distant people/cars seen correct, no broken poses in the shots looked at. NOT proven: one model shown
      in a static on/off pair (skater never stands still); levels other than NJ. The limit also has a script scale
