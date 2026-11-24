@@ -1238,7 +1238,7 @@ static VkSampler get_sampler(int i, int rect) {
 /* ================================================================ pipelines */
 
 typedef struct {
-    uint32_t blend_en, sf, df, eq, cmask, topo, has_z;
+    uint32_t blend_en, sf, df, eq, cmask, topo, has_z, zclamp;
 } PipeKey;
 typedef struct { PipeKey key; VkPipeline p; } PipeEntry;
 static PipeEntry pipes[512]; static int n_pipes;
@@ -1289,6 +1289,14 @@ static VkStencilOp stencil_op(uint32_t v) {
     }
 }
 
+/* ZMIN_MAX_CONTROL (0x1D78): bits 7:4 = 1 clamp, 0 cull what is outside the near and far planes. As xemu. THUG
+ * clamps blended meshes only. UG_ZCLAMP=1: always clamp, 2: in odd frames (debug). */
+static uint32_t depth_clamp(void) {
+    static int zc = -1;
+    if (zc < 0) { const char *e = getenv("UG_ZCLAMP"); zc = e ? atoi(e) : 0; }
+    return (KREG(0x1D78) & 0xF0) != 0 || zc == 1 || (zc == 2 && (frame_no & 1));
+}
+
 static VkPipeline get_pipeline(const PipeKey *k) {
     for (int i = 0; i < n_pipes; i++) if (!memcmp(&pipes[i].key, k, sizeof *k)) return pipes[i].p;
     VkPipelineShaderStageCreateInfo st[2] = {
@@ -1300,7 +1308,7 @@ static VkPipeline get_pipeline(const PipeKey *k) {
                   k->topo == KTOPO_LINES ? VK_PRIMITIVE_TOPOLOGY_LINE_LIST : VK_PRIMITIVE_TOPOLOGY_POINT_LIST;
     VkPipelineViewportStateCreateInfo vp = {VK_STRUCTURE_TYPE_PIPELINE_VIEWPORT_STATE_CREATE_INFO, 0, 0, 1, 0, 1, 0};
     VkPipelineRasterizationStateCreateInfo rs = {VK_STRUCTURE_TYPE_PIPELINE_RASTERIZATION_STATE_CREATE_INFO};
-    rs.polygonMode = VK_POLYGON_MODE_FILL; rs.lineWidth = 1.0f; rs.depthClampEnable = has_depth_clamp;
+    rs.polygonMode = VK_POLYGON_MODE_FILL; rs.lineWidth = 1.0f; rs.depthClampEnable = has_depth_clamp && k->zclamp;
     VkPipelineMultisampleStateCreateInfo ms = {VK_STRUCTURE_TYPE_PIPELINE_MULTISAMPLE_STATE_CREATE_INFO};
     ms.rasterizationSamples = VK_SAMPLE_COUNT_1_BIT;
     VkPipelineDepthStencilStateCreateInfo ds = {VK_STRUCTURE_TYPE_PIPELINE_DEPTH_STENCIL_STATE_CREATE_INFO};
@@ -2013,7 +2021,7 @@ static void draw_impl(int topo, const KVertex *v, uint32_t nv, const uint32_t *i
             LOG("[draw] #%u f%u topo %d nv %u ni %u mode %u start %u surf %dx%d clip %g..%g comb %X fcw %08X %08X tm %u/%u/%u/%u prog %05X\n",
                 g_draw_idx, frame_no, topo, nv, ni, u->mode[0], u->mode[1], cur_rt->w, cur_rt->h, u->zr[0], u->zr[1], ctl,
                 u->comb[0][1], u->comb[0][2], u->tmode[0], u->tmode[1], u->tmode[2], u->tmode[3], prog);
-            LOG("[draw]   zfunc %X polyoff fill %X factor %g units %g cull %X/%X tex0 off %08X addr %08X\n", KREG(K_DEPTH_FUNC),
+            LOG("[draw]   zfunc %X zclamp %X polyoff fill %X factor %g units %g cull %X/%X tex0 off %08X addr %08X\n", KREG(K_DEPTH_FUNC), KREG(0x1D78),
                 KREG(K_POLY_OFFSET_FILL), kf(K_POLY_OFFSET_FACTOR), kf(K_POLY_OFFSET_UNITS), KREG(K_CULL_EN), KREG(K_CULL_FACE),
                 KREG(K_TEX_OFFSET(0)), KREG(K_TEX_ADDRESS(0)));
             LOG("[draw]   blend %X %X/%X eq %X cmask %08X ztest %X zmask %X atest %X func %X ref %X tex0 fmt %08X ctl0 %08X filter %08X\n",
@@ -2123,7 +2131,8 @@ static void draw_impl(int topo, const KVertex *v, uint32_t nv, const uint32_t *i
     /* pipeline + dynamic state */
     int has_z = cur_zs != NULL;
     PipeKey k = {KREG(K_BLEND_EN) & 1, KREG(K_BLEND_SFACTOR), KREG(K_BLEND_DFACTOR), KREG(K_BLEND_EQUATION),
-                 KREG(K_COLOR_MASK), (uint32_t)topo, (uint32_t)has_z};
+                 KREG(K_COLOR_MASK), (uint32_t)topo, (uint32_t)has_z, depth_clamp()};
+    if (g_cap_dbg) k.blend_en = 0;   /* draw ids: the last draw wins */
     if (!k.blend_en) k.sf = k.df = k.eq = 0;
     VkPipeline p = get_pipeline(&k);
     if (!p) return;
@@ -2175,10 +2184,10 @@ static void draw_impl(int topo, const KVertex *v, uint32_t nv, const uint32_t *i
     if (all || memcmp(d.bc, dst.bc, sizeof d.bc)) vkCmdSetBlendConstants(cb, d.bc);
     dst = d;
     dst_ok = 1;
-    {   /* UG_SHADOWSKIP=1: drop shadow-receiver draws (debug) */
+    {   /* UG_SHADOWSKIP=1: drop shadow-receiver draws, 2: in odd frames (debug) */
         static int ss = -1;
-        if (ss < 0) ss = getenv("UG_SHADOWSKIP") != NULL;
-        if (ss && (u->tmode[0] == 4 || u->tmode[1] == 4 || u->tmode[2] == 4 || u->tmode[3] == 4)) return;
+        if (ss < 0) { const char *e = getenv("UG_SHADOWSKIP"); ss = e ? atoi(e) : 0; }
+        if ((ss == 1 || (ss == 2 && (frame_no & 1))) && (u->tmode[0] == 4 || u->tmode[1] == 4 || u->tmode[2] == 4 || u->tmode[3] == 4)) return;
     }
     vkCmdDrawIndexed(cb, ni, 1, 0, 0, 0);
 }
@@ -2563,17 +2572,17 @@ static void flip_impl(uint32_t addr) {
         static int at = -1;
         if (at < 0) { const char *e = getenv("UG_CAPTURE"); at = e ? atoi(e) : 0; }
         if (at && (int)frame_no == at && !g_cap) g_cap = 1;
-        static int every = -1;   /* UG_CAPTUREEVERY=N: one every N frames */
+        static int every = -1;   /* UG_CAPTUREEVERY=N: one every N frames (from frame UG_CAPTURE on) */
         if (every < 0) { const char *e = getenv("UG_CAPTUREEVERY"); every = e ? atoi(e) : 0; }
-        if (every > 0 && frame_no % (uint32_t)every == 0 && !g_cap) g_cap = 1;
+        if (every > 0 && (int)frame_no >= at && frame_no % (uint32_t)every == 0 && !g_cap) g_cap = 1;
     }
     if (g_cap == 1) {   /* log the frame drawn next; the rest of the session's log goes to out/capture.log */
         g_cap_log_frame = frame_no;
         g_cap = 2;
         if (freopen("out/capture.log", "a", stderr)) LOG("[capture] frame %u\n", frame_no);
     }
-    else if (g_cap == 2) { g_cap_shoot = 1; g_cap_log_frame = 0; g_cap_dbg = 1; g_cap = 3; }   /* save it; ids next */
-    else if (g_cap == 3) { g_cap_shoot = 1; g_cap_dbg = 0; g_cap = 4; }               /* save the id frame */
+    else if (g_cap == 2) { g_cap_shoot = 1; g_cap_log_frame = frame_no; g_cap_dbg = 1; g_cap = 3; }   /* save it; ids next */
+    else if (g_cap == 3) { g_cap_shoot = 1; g_cap_log_frame = 0; g_cap_dbg = 0; g_cap = 4; }               /* save the id frame */
     else if (g_cap == 4) { g_cap = 0; LOG("[capture] done: frame %u logged, shots %u and %u\n", frame_no - 2, frame_no - 2, frame_no - 1); }
     if (frame_no % 60 == 30)   /* HD images unused for 30 s */
         for (int i = 0; i < HD_CACHE; i++)

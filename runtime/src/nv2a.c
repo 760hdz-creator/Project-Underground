@@ -398,6 +398,12 @@ static void pgraph_method(uint32_t subch, uint32_t method, uint32_t data) {
         if (vc_load < VP_CONSTS * 4) { memcpy(&((float *)g_vp_const)[vc_load++], &data, 4); g_vc_serial++; }
         return;
     }
+    if ((method >= 0x0AF0 && method < 0x0B00) || (method >= 0x0A20 && method < 0x0A30)) {
+        /* SET_VIEWPORT_SCALE / _OFFSET live in constants 58 / 59 (as xemu), where the D3D epilogue of vertex programs reads
+         * them. THUG's bone uploads overwrite both; the game restores them with these methods. */
+        float *c = &g_vp_const[method >= 0x0AF0 ? 58 : 59][(method >> 2) & 3];
+        if (memcmp(c, &data, 4)) { memcpy(c, &data, 4); g_vc_serial++; }
+    }
     switch (method) {
     case 0x17FC:                                                        /* SET_BEGIN_END */
         if (data == 0) end_primitive();
