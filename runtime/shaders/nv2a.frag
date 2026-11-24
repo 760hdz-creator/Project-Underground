@@ -51,6 +51,7 @@ vec4 stage_tex(int s, vec4 tc) {
     if (m == 2u || m == 4u) uv *= D.tsz[s].xy;
     vec4 t = s == 0 ? texture(tex0, uv) : s == 1 ? texture(tex1, uv) : s == 2 ? texture(tex2, uv) : texture(tex3, uv);
     if (m != 4u) return t;
+    if (D.mode.w == 8u) return vec4(1.0);   // UG_DBGCOLOR=8: every shadow lookup lit (debug)
     // shadow map: compare the texcoord depth (Z-buffer units, projected) with the stored depth -> 1 lit / 0 shadowed
     float rr = tc.z / (tc.w != 0.0 ? tc.w : 1.0) * D.tsz[s].z;
     float r = clamp(rr, 0.0, 1.0), d = t.r;   // fixed-point ref saturates
@@ -166,6 +167,8 @@ void main() {
     else if (D.mode.w == 4u) o = vec4(REG[12].rgb, 1.0);                // UG_DBGCOLOR=4: r0 after the combiners
     else if (D.mode.w == 5u) o = vec4(o.rgb, 1.0);                      // UG_DBGCOLOR=5: final rgb, opaque
     else if (D.mode.w == 6u && g_shadow_dbg.x >= -0.5) o = vec4(fract(g_shadow_dbg.x * 16.0), g_shadow_dbg.y < 0.9999 ? 1.0 : 0.0, g_shadow_dbg.x > g_shadow_dbg.y ? 1.0 : 0.0, 1.0);
-    else if (D.mode.w == 7u) o = g_shadow_raw.x > -0.5 ? vec4(fract(g_shadow_raw.x), fract(g_shadow_raw.y), clamp(g_shadow_raw.z * 0.25, 0.0, 1.0), 1.0) : vec4(1.0);
+    else if (D.mode.w == 9u) o = g_shadow_raw.x > -0.5 || g_shadow_raw.y > -0.5 ?   // UG_DBGCOLOR=9: signed ref, stored, w>0
+        vec4(clamp(g_shadow_raw.z * 0.5 + 0.5, 0.0, 1.0), g_shadow_dbg.y, g_shadow_raw.w > 0.0 ? 1.0 : 0.0, 1.0) : vec4(1.0);
+    else if (D.mode.w == 7u) o =g_shadow_raw.x > -0.5 ? vec4(fract(g_shadow_raw.x), fract(g_shadow_raw.y), clamp(g_shadow_raw.z * 0.25, 0.0, 1.0), 1.0) : vec4(1.0);
     o_color = o;
 }

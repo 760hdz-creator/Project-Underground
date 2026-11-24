@@ -162,6 +162,17 @@ static void fetch_vertex(uint32_t index, KVertex *out) {
         uint32_t base = nv2a_dma_base(KREG((off & 0x80000000u) ? K_DMA_VERTEX_B : K_DMA_VERTEX_A));
         uint32_t p = (base + (off & 0x7FFFFFFF) + index * stride) & 0x03FFFFFF;
         decode_attr(a, type, size, g_mem + p, o);
+        if (type == 2) {   /* float garbage (denormal / NaN / inf): an attribute that points at the next vertex in the
+                            * array (THUG's cutscene shadow receivers: stride 24, texcoords at +0x18 / +0x20) reads past
+                            * the last vertex; take the previous vertex's value (smeared, it drew dark shadow wedges) */
+            static float last[16][4];
+            int bad = 0;
+            for (uint32_t i = 0; i < size && i < 4; i++) {
+                float v = o[i], av = v < 0 ? -v : v;
+                if (v != v || av > 1e30f || (av != 0.0f && av < 1e-30f)) bad = 1;
+            }
+            if (bad) memcpy(o, last[a], 16); else memcpy(last[a], o, 16);
+        }
     }
 }
 

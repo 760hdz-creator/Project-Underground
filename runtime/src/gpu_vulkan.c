@@ -1643,6 +1643,10 @@ static void draw_impl(int topo, const KVertex *v, uint32_t nv, const uint32_t *i
                 if (u->mode[2])
                     LOG("[draw]   texmat draw: tex fmt %08X %08X %08X %08X\n", KREG(K_TEX_FORMAT(0)), KREG(K_TEX_FORMAT(1)),
                         KREG(K_TEX_FORMAT(2)), KREG(K_TEX_FORMAT(3)));
+                for (int a = 0; a < 16; a++) {   /* vertex arrays: type/size/stride and offset */
+                    uint32_t vf = KREG(K_VTX_FORMAT + a * 4);
+                    if ((vf >> 4) & 0xF) LOG("[draw]   attr %d fmt %08X off %08X\n", a, vf, KREG(0x1720 + a * 4));
+                }
                 LOG("[draw]   pos range x %g..%g y %g..%g z %g..%g w %g..%g\n", lo[0], hi[0], lo[1], hi[1], lo[2], hi[2],
                     lo[3], hi[3]);
             }
