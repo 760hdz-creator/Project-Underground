@@ -43,27 +43,48 @@ A static recompilation by 8gram Labs: the original x86 game code is translated t
 - **Own Vulkan renderer.** The Xbox GPU's (NV2A) push buffer goes straight to Vulkan on every platform: vertex
   programs and register combiners run as shader interpreters, with shadow maps, fog and texture generation. No
   Direct3D, no DXVK.
-- **High resolution.** The game renders at a multiple of the Xbox's 480 lines: 2x (960 lines) by default, up to 6x.
+- **High resolution and supersampling.** The game renders at a multiple of the Xbox's 480 lines: 2x (960 lines) by
+  default, up to 8x, scaled down cleanly to the window. Changes live in the in-game menu.
+- **Optional graphics.** Anti-aliasing and ambient occlusion (the HUD stays sharp), anisotropic texture filtering,
+  and a maximum draw distance that stops people, cars and props from vanishing.
 - **60 fps.** Frames are paced at a steady 60 fps (the launcher can switch to 30), with VSync on or off. The game
-  times its logic from real clocks, so it runs at the right speed.
+  steps by real time, so it plays at the same speed at 30 fps or when a PC cannot hold 60.
 - **Widescreen.** The game's own 16:9 mode is on by default (the Xbox widescreen setting): a wider view of the
   level. The original 4:3 is one click away.
 - **Window settings.** Windowed or borderless fullscreen (F11 or Alt+Enter), any monitor, window size presets,
   keep-aspect or stretch, and sharp output at any Windows display scaling.
-- **Launcher.** Play, display settings (fullscreen, monitor, window size, widescreen, picture fit, render scale,
-  60 fps, VSync, players), updates, logs, the Android build and uninstall, all on one screen.
+- **Launcher.** Play, display settings (fullscreen, monitor, window size, widescreen, picture fit, supersampling,
+  graphics options, 60 fps, VSync, players), updates, logs, the Android build and uninstall, all on one screen.
 - **Builds on your PC, no Visual Studio.** The setup fetches its own compiler (llvm-mingw, about 190 MB, once) and
   builds the game in about a minute. No admin rights needed.
 - **Linux.** The same renderer on Vulkan, SDL3 for the window, sound and controllers, and a `setup.sh` installer
   with menu entry, updates and uninstall.
 - **Android.** Your PC turns your installed game into an APK for your phone (arm64, Android 13+, Vulkan 1.3), with
   on-screen touch controls.
+- **Two-player split screen.**
 - **Almost any controller.** Xbox, PlayStation 3/4/5, Switch Pro and Joy-Con, Steam Controller and Steam Deck,
   8BitDo and thousands more through SDL3 and the community controller database, on Windows, Linux and Android. Up
   to 2 players, plus the keyboard. See [Controls](#controls).
 - **HD texture packs (optional).** It loads PCSX2-format replacement packs made for the PS2 version, such as the
   community *HD Remaster* pack. Palettized textures are matched by their exact PS2 hashes; compressed (DXT) ones by
   picture (see [HD textures](#hd-textures)). F10 in the game switches them on and off.
+
+## Maps
+
+Every skating level runs. Pictures: 3x supersampling, anti-aliasing, ambient occlusion and maximum draw distance
+on, original textures. Bonus levels are shown by the game's own short codes.
+
+|  |  |  |
+|---|---|---|
+| ![New Jersey](docs/images/maps/nj.jpg)<br>New Jersey | ![Manhattan](docs/images/maps/ny.jpg)<br>Manhattan | ![Tampa](docs/images/maps/fl.jpg)<br>Tampa |
+| ![San Diego](docs/images/maps/sd.jpg)<br>San Diego | ![Hawaii](docs/images/maps/hi.jpg)<br>Hawaii | ![Vancouver](docs/images/maps/vc.jpg)<br>Vancouver |
+| ![Slam City Jam](docs/images/maps/sj.jpg)<br>Slam City Jam | ![Moscow](docs/images/maps/ru.jpg)<br>Moscow | ![HN](docs/images/maps/hn.jpg)<br>HN |
+| ![PH](docs/images/maps/ph.jpg)<br>PH | ![SE](docs/images/maps/se.jpg)<br>SE | ![SC](docs/images/maps/sc.jpg)<br>SC |
+| ![SC2](docs/images/maps/sc2.jpg)<br>SC2 | ![DJ](docs/images/maps/dj.jpg)<br>DJ | ![VN](docs/images/maps/vn.jpg)<br>VN |
+
+Two players, split screen:
+
+![Split screen](docs/images/split_screen.jpg)
 
 ## HD textures
 

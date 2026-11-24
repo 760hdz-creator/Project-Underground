@@ -178,6 +178,11 @@ SESSION 2026-11-24 (polish, after the graphics options):
   The older line "all clocks real-time ... above 60 untested" below is superseded.
 - Debug: UG_INPUT2 (pad 1), UG_CAPTUREEVERY=N, UG_POSLOG, UG_TMRLOG, UG_FRAMESTEP=0. Second build and run folder that
   does not disturb a sweep: out/dev (build.py, run.sh <name> <s> VAR=..., own out/hdd; free-skate route in hz runs).
+- DROPPED DRAWS: the 24 MB uniform ring held ~3700 draws; Vancouver averages up to 7556 per frame, San Diego overflowed too.
+  DrawUBO now ends with prog/cst (only vertex-program draws upload them; DRAW_HEAD otherwise), ring 48 MB, 16384 sets, and it is
+  built in normal memory (reading back write-combined memory took about a third of the samples): vc 49 -> 58-60 fps, no drops.
+- Sweep out/levels3: 15 of 15 maps with all options, no fatal, nothing wrong seen. README: map gallery (docs/images/maps), split
+  screen picture, new launcher_settings.jpg. Free-skate route for any level: out/dev/free.txt with UG_LEVEL=<code>.
 - PINK HOUSE LEAD: out/pink/across_10500.ppm (4x, seen across the school yard): single TRIANGLES are missing inside one
   wall (slanted edges), so not whole meshes and not an occluder. Look at index lists / strips / fetch_vertex for that
   draw. UG_CAPTUREEVERY=600 on a story run, then pick the frame by eye. User wants to do it at the PC.
