@@ -1849,6 +1849,18 @@ static void draw_impl(int topo, const KVertex *v, uint32_t nv, const uint32_t *i
         if (skipt && ((frame_no + 150) / 300 & 1) && (KREG(K_TEXMAT_EN) & 1 || KREG(K_TEXMAT_EN + 4) & 1 ||
                                                        KREG(K_TEXMAT_EN + 8) & 1 || KREG(K_TEXMAT_EN + 12) & 1)) return;
     }
+    if ((nv == 15 || nv == 57) && !(KREG(K_DEPTH_MASK) & 1) && (KREG(K_TRANSFORM_MODE) & 3) != 2) {
+        /* Santa Cruz: the sky scene holds a second, misplaced upper dome (sector 6D10C4BB, center -63 -85) drawn over the
+         * seamless one (its 8 panels and cap join to within 4/255). Dropped by its exact shape; UG_SKYFIX=0 keeps it. */
+        static int sf = -1;
+        if (sf < 0) { const char *e = getenv("UG_SKYFIX"); sf = !(e && *e == '0'); }
+        uint32_t fm = KREG(K_TEX_FORMAT(0));
+        if (sf && (fm == 0x06710C29 || fm == 0x07710C29)) {
+            float lo = 1e30f, hi = -1e30f;
+            for (uint32_t i = 0; i < nv; i++) { if (v[i].a[0][1] < lo) lo = v[i].a[0][1]; if (v[i].a[0][1] > hi) hi = v[i].a[0][1]; }
+            if (nv == 15 ? lo == 54.5f && hi > 476.9f && hi < 477.2f : lo == 411.25f && hi > 696.0f && hi < 696.2f) return;
+        }
+    }
     if (!select_targets()) return;
     fx_watch(v);
     Frame *f = &frames[fi];

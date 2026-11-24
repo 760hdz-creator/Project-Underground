@@ -209,6 +209,16 @@ SESSION 2026-11-24 (polish, after the graphics options):
   (ambient 0.51, both lights 0) is now half as bright on its right part, with a soft edge. Debug: UG_LIGHT=0 off, 2 = off in odd
   frames; captures log "lit:" and "light n" lines.
   UBO ring 48 -> 64 MB: Vancouver dropped draws once at 8833 draws in a frame. FPS dips to 52 there on a 6000-draw spike.
+- SC SKY SEAMS FIXED (2026-11-24): not our renderer and not "cloud photos that do not match" (wrong in the sweep notes): the
+  sky scene has a stray second upper dome (sector 6D10C4BB) over the seamless one, also on Xbox. 9 exact draws dropped in draw_impl
+  (UG_SKYFIX=0 keeps them). Tools: out/badattr/skyj.py, skygeo.py, skycap.py.
+- SWEEP 4 (2026-11-24, lighting + wall fix, AO + FXAA + draw distance): 15 of 15 maps, no warnings. One black block at an sc pool
+  (out/dev/s4_sc/shot_04800): probably the game's black box mesh (texture average 0,0,4), not proven.
+- SPEED (e9b99d7): texture hash once per frame (stable textures), descriptor sets shared, dynamic state cached, vertex fetch
+  resolved per batch (855 M vertices compared with the old code: 0 differences). Vancouver ~7000 draws: 15.0 -> 10.4 ms busy.
+  Log line "[gpu] busy". Debug: UG_OPTAB=1 (caches off in odd frames), UG_TEXHASH=1.
+- HD pack A/B on ny sd hi ru vn: correct. The free-skate route needs +4 s (out/dev/free4.txt) with the pack; a run only
+  counts when its log has "[level] load_" AND the level's own textures (a run without it stays in NJ or a menu).
 D. Pushed to both remotes 2026-11-24 (no tag, no release).
 1. Sky wedge (cosmetic); pool-floor rectangle (UG_DBGCOLOR=7). Neither showed in 16 NJ shots on 2026-11-23
    (run_texgen, run_dbg7); a quarter-pipe light/dark split at f14400 is not a shadow draw (baked lighting).
