@@ -113,7 +113,13 @@ print(','.join(ev))")" UG_SHOT=1200 ./out/underground.exe   (NJ level by ~frame 
 1. Sky wedge (cosmetic); pool-floor rectangle (UG_DBGCOLOR=7). Neither showed in 16 NJ shots on 2026-11-23
    (run_texgen, run_dbg7); a quarter-pipe light/dark split at f14400 is not a shadow draw (baked lighting).
 2. Renderer gaps (not seen in NJ so far: check other levels first): FF lighting, cube maps, eye/object-linear and
-   sphere texgen, MSAA, widescreen, CPU-drawn loading bar (writes guest framebuffer RAM directly).
+   sphere texgen, MSAA. Widescreen done. CPU-drawn loading bar: not worth it, a level load takes < 0.3 s here
+   (NJ: one 292 ms frame between f3000 and f3300), the loading screen is barely on screen.
+0. STATUS 2026-11-23 (end of late session): user todo 2-5 done and committed locally (c3b9de0..287f2c5, NOT
+   pushed). Linux build of all of it (WSL ~/ug-linux, lifted copied from out/lifted incl. *.h to ~/ug-lifted2)
+   verified: menu opens/fullscreen on-off/toggles/closes (out/linux/menu_test.sh), typing "Kid42" in Save Name
+   (out/linux/type_test.sh, UG_TYPE). Waiting on the user: todo 1 (where the black wedge still shows: screenshot),
+   by-ear check of cutscene speech sync, phone test (adb), push/release decision.
 3. Lifter sites: fnsave/frstor/fnstenv/fldenv implemented 2026-11-23 (MSVC CRT pow error path 182F30 uses
    fnsave/frstor around its handler). Remaining 41 unimplemented sites are all junk decodes (enter with nonzero
    level, nonsense segment movs, ltr/sgdt/ljmp/int1/fstpnce): nothing to do.
