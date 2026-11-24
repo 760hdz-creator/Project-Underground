@@ -215,6 +215,30 @@ print(','.join(ev))")" UG_SHOT=1200 ./out/underground.exe   (NJ level by ~frame 
   docs/installer.md "HD texture packs"): UG_HDTEX=<folder>, F10 toggle, UG_SHOTAB A/B shots, UG_HDLOG. NJ: 597
   matched / 272 skipped, 60 fps, A/B correct (after the UG_SHOTAB off-by-one fix 9782935: earlier A/B pairs were HD vs HD); visibly sharper roads/grass/wood. UG_ANISO (16x default) added. Launcher "HD texture pack" row,
   Linux setup.sh --hd. Not done: Android (pack not in the APK), other levels' A/B.
+- SESSION 2026-11-23 (late), all LOCAL commits (not pushed; push only when the user says):
+  e44b9cd audio streams (RtlNtStatusToDosError table, ADPCM streams, packet completion), HD worker thread, SDL3
+  controllers on Windows (pad_sdl.c shared, SDL3.dll + gamecontrollerdb in payload); b0710f8 / aaec64a shadow wedge
+  (float attrs that read past the vertex array -> previous vertex's value, nv2a.c fetch_vertex); 3c3af88 / 447c430
+  skateboard progress bar (GDI+, % on the deck); 8c04593 SAVES FIXED (fs.c: FILE_CREATE on a dir just made returned
+  COLLISION -> XCreateSaveGame failed), UG_INVERTY/X + launcher "Camera (right stick)", XInput pad navigation in
+  setup/launcher (untested with a real pad).
+  Debug added: UG_HITCHLOG, UG_SHADOWSKIP, UG_DBGCOLOR=8/9, UG_SHOTRANGE, UG_STREAMLOG, UG_FSLOG creates/writes,
+  draw log attr formats. Save route script: out/save (UG_INPUT ... 52:DOWN 56:A ... see session; works WITHOUT
+  UG_KLOG/heavy logging: timing shifts otherwise).
+  USER TODO LIST (2026-11-23, in this order):
+  1. Black-line wedge "still visible": the window-scene wedge is fixed in aaec64a; ask the user where they still see
+     it (screenshot) - may be other receivers / other scenes.
+  2. Voice "off by a little": cutscene speech lag. Suspects: mixer latency (waveOut 4 x 20 ms + FIFO), speech stream
+     starts only after 8 packets queued, GetCurrentPosition / cutscene clock. Measure: compare stream start time
+     vs cutscene start.
+  3. Keyboard typing in the name entry (on-screen keyboard): today arrows/Z navigate (pad emulation). Typing needs a
+     hook on the keyboard UI (or XInput debug keyboard if THUG supports it).
+  4. In-game overlay menu: F1 or L3+R3, settings usable during play (fullscreen, camera invert = g_invert_x/y in
+     hle.c, HD on/off = g_hd_hidden, fps). Plan: layered Win32 window over the game (GDI like the launcher), game
+     paused while open; Linux later.
+  5. Cheat menu in that overlay: unlock all (levels/skaters/gear: THUG global flags / cheat flags from qb scripts),
+     THUG has no money (check), plus always special, perfect balance, moon physics etc. (THUG's own cheat flags).
+  6. Controller support in the launcher: done 8c04593 (needs a real-pad test).
 - Pushed to both remotes 2026-11-23 (README, avatars, display settings, level cheat). HD textures: local commit,
   push when the user says. No release until all three ports are ready.
 - Repos: origin gitlab.com/octagram-labs-group/Project-Underground, forge 8gramlabs/Project-Underground (both public).
