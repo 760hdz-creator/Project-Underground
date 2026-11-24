@@ -1725,6 +1725,11 @@ static void draw_impl(int topo, const KVertex *v, uint32_t nv, const uint32_t *i
     float bc[4];
     argb_to_f4(KREG(K_BLEND_COLOR), bc);
     vkCmdSetBlendConstants(cb, bc);
+    {   /* UG_SHADOWSKIP=1: drop shadow-receiver draws (debug) */
+        static int ss = -1;
+        if (ss < 0) ss = getenv("UG_SHADOWSKIP") != NULL;
+        if (ss && (u->tmode[0] == 4 || u->tmode[1] == 4 || u->tmode[2] == 4 || u->tmode[3] == 4)) return;
+    }
     vkCmdDrawIndexed(cb, ni, 1, 0, 0, 0);
 }
 
@@ -2038,6 +2043,11 @@ static void flip_impl(uint32_t addr) {
             uint32_t ms10 = (uint32_t)((now - last) / 1000);   /* 0.1 ms */
             if (ms10 > st_worst) st_worst = ms10;
             if (ms10 > 250) st_slow++;
+            static int hl = -1;   /* UG_HITCHLOG=1: every frame over 25 ms, with what it did (debug) */
+            if (hl < 0) hl = getenv("UG_HITCHLOG") != NULL;
+            if (hl && ms10 > 250)
+                LOG("[hitch] frame %u: %.1f ms, new textures so far %u, pipelines %d\n", frame_no, ms10 / 10.0, st_newtex,
+                    n_pipes);
         }
         last = now;
     }
