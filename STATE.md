@@ -139,26 +139,26 @@ B. Also seen (debug run, NJ pool by a brick wall): the wall's brick pattern draw
    2026-11-24: in out/pink/shot.png the fence next to the wall shows on the ground too: looks like the game's own
    planar reflection in the wet floor (not proven).
    GRAPHICS REQUEST (user, 2026-11-24): supersampling, anti-aliasing, ambient occlusion, anisotropic filtering,
-   unlimited draw distance. DONE (8a5991b + next commit, not pushed) except draw distance:
+   unlimited draw distance. ALL DONE (from 8a5991b, not pushed):
    - Supersampling: downsample() in gpu_vulkan.c halves per axis until <= 2x, then the linear blit. Launcher row
      "Supersampling" 1x..8x (launcher only: a runtime change would recreate every surface). 8x checked, 60 fps.
    - UG_FXAA / UG_AO (both off by default): fx_watch / fx_apply in gpu_vulkan.c, shaders ao.frag and post.frag, drawn
      before the first HUD draw (vertex program, v0 z = w = 0, no z write); at the flip when the frame has no HUD draw.
      Projection (depth range, focal) derived from each frame's composite matrix: no near/far constants.
      Frames whose only 3D is vertex-program drawn get FXAA but no AO (no composite matrix to read).
-   - UG_ANISO can change at run time (sampler key includes it). In-game menu + launcher rows for all three.
+   - UG_ANISO can change at run time (sampler key includes it). In-game menu + launcher rows (supersampling: launcher).
    - Debug: UG_FXDEBUG=1 (AO alone) / 2 (projections), UG_FXAB=1 (off in odd frames; with UG_SHOTAB=1 gives A/B pairs),
      UG_AORADIUS, UG_AOSTRENGTH, UG_SHOTOUT=1 (UG_SHOT saves the window image). Runner: out/fx/run.sh <name> <s> VAR=...
      Linux build OK (WSL); not run there. Android: not built with it. Split screen AO uses one view's projection.
-   - Draw distance: the far plane is not the limit (NJ is about +-16000 units, far about 32000) and fog was off in
-     every captured NJ draw. Camera near/far = camera object +0xA8 / +0xAC (camera list [0x229C28],
-     SetClippingDistances 0x11C240, defaults 12 / 12000; in NJ the matrices show about 2 / 32000).
-     Suspend component: +0x1C / +0x20 suspend distance and its square, +0x24 squared camera distance, +0x30 suspended
-     (IsSuspended 0x4CB70, 6 callers), +0x34..+0x40 lod_dist1..4; init 0x4C960; its manager writes +0x24 / +0x30 at
-     0x4CF78..0x4CFF0: READ THAT NEXT. Model LODs: LODDistance read at 0x96F63 (last LOD forced to 3.4e38).
-     TRIED AND REVERTED: hook on 0x4CB80 (distance > lod_dist2): never called in NJ, its only caller 0x9C460 skips an
-     update, it does not hide anything. Raising the suspend distance itself also wakes far AI: gameplay change, avoid.
-     First measure which objects disappear with distance; nothing proves yet that anything visible is cut in NJ.
+   - Draw distance DONE: UG_DRAWDIST=1 (off by default; menu "Draw distance", launcher "Max draw distance"). Level geometry
+     was never distance-cut (far 32000, no fog in NJ). Models were: 0x4CD00 (called by the suspend manager 0x4CF40 each
+     frame) hides a model when +0x24 (squared distance) >= lod_dist2 (+0x38) squared; NJ limits 1800..6012 units, about
+     half of all checks hidden. Hook lod_hide_hook (hle.c) keeps +0x24 just under the limit; frustum test and suspension
+     (+0x30) unchanged, so AI beyond the suspend distance stays frozen, as on Xbox. Measured (NJ): up to +190 draws per
+     frame, 60 fps; distant people/cars seen correct, no broken poses in the shots looked at. NOT proven: one model shown
+     in a static on/off pair (skater never stands still); levels other than NJ. The limit also has a script scale
+     (0x4CB33: globals D3D072F9, 0432F2A1), unused here. Debug: UG_DDLOG=1, UG_DDAB=1 (off in odd 300-frame windows),
+     UG_FXAB=1 logs "[ab] draws per frame", screenshots log their draw count.
    - Gotcha (again): a backslash-n inside a bash heredoc became a real newline in C strings and broke three builds;
      write such patches with the Write tool, and never run the exe unless the build printed "linked".
 C. README pictures (user asked): hd_compare.jpg REPLACED (static UG_SHOTAB pair 09600/09601 of a NJ run with the

@@ -1484,6 +1484,7 @@ static int vk_init(void) {
 }
 
 volatile int g_fxaa, g_ao;      /* UG_FXAA, UG_AO: also the in-game menu (menu.c) */
+uint32_t gpu_frame(void) { return frame_no; }
 int gpu_has_aniso(void) { return has_aniso; }
 
 void gpu_init(void) {
@@ -2325,7 +2326,7 @@ static void submit_and_present(Surface *s) {
                 fwrite(rgb, 1, 3, fp);
             }
             fclose(fp);
-            LOG("[gpu] screenshot %s\n", path);
+            LOG("[gpu] screenshot %s (%u draws)\n", path, g_draw_idx);
         }
     }
     if (img != UINT32_MAX) {
@@ -2376,6 +2377,17 @@ static void flip_impl(uint32_t addr) {
     Surface *s = find_rt(addr);
     if (!s) s = cur_rt;
     last_present = s;
+    {   /* UG_FXAB=1: draws per frame, on (even) against off (odd) */
+        static int ab = -1;
+        static uint32_t sum[2], cnt[2];
+        if (ab < 0) ab = getenv("UG_FXAB") != NULL;
+        /* frame_no has just advanced: the frame drawn is frame_no - 1 */
+        if (ab) { int o = (frame_no - 1) & 1; sum[o] += g_draw_idx; cnt[o]++; }
+        if (ab && frame_no % 300 == 0 && cnt[0] && cnt[1]) {
+            LOG("[ab] draws per frame: even (on) %.1f, odd (off) %.1f\n", sum[0] / (double)cnt[0], sum[1] / (double)cnt[1]);
+            sum[0] = sum[1] = cnt[0] = cnt[1] = 0;
+        }
+    }
     if (fx_rt && fx_rt == s && !fx_done && !fx_hud) fx_apply();   /* no HUD this frame */
     fx_rt = NULL; fx_zs = NULL;
     fx_proj_ok = fx_done = fx_hud = 0;

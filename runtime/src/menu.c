@@ -47,6 +47,8 @@ extern int hdtex_enabled(void);
 extern volatile int g_fxaa, g_ao;
 extern volatile float g_aniso;
 int gpu_has_aniso(void);
+extern volatile int g_drawdist;
+int drawdist_on(void);
 int plat_fullscreen_get(void);
 void plat_fullscreen_toggle(void);
 uint32_t menu_pad_buttons(void);         /* pad 0, XInput layout, stick folded into the D-pad bits (hle.c) */
@@ -118,7 +120,7 @@ static void text(int x, int y, const char *s, uint32_t rgb) {
 }
 
 /* ------------------------------------------------------------------ items */
-enum { IT_RESUME, IT_FULLSCREEN, IT_FPS, IT_INVX, IT_INVY, IT_FXAA, IT_AO, IT_ANISO, IT_HD, IT_UNLOCK, IT_SPECIAL, IT_RAIL, IT_MANUAL, IT_MOON,
+enum { IT_RESUME, IT_FULLSCREEN, IT_FPS, IT_INVX, IT_INVY, IT_FXAA, IT_AO, IT_ANISO, IT_DRAWDIST, IT_HD, IT_UNLOCK, IT_SPECIAL, IT_RAIL, IT_MANUAL, IT_MOON,
        IT_SKITCH, IT_QUIT, IT_COUNT };
 static int sel, quit_armed;
 
@@ -182,6 +184,7 @@ static const char *item_label(int i, char *buf, size_t n) {
         if (g_aniso > 0) snprintf(buf, n, "Texture filtering  < %dx >", (int)g_aniso);
         else snprintf(buf, n, "Texture filtering  < Off >");
         return buf;
+    case IT_DRAWDIST: snprintf(buf, n, "Draw distance      < %s >", drawdist_on() ? "Max" : "Xbox"); return buf;
     case IT_HD: snprintf(buf, n, "HD textures        < %s >", g_hd_hidden ? "Off" : "On "); return buf;
     case IT_UNLOCK: return unlock_done ? "Unlock everything: done" : "Unlock everything";
     case IT_SPECIAL: case IT_RAIL: case IT_MANUAL: case IT_MOON: case IT_SKITCH: {
@@ -223,6 +226,7 @@ static int item_change(int i, int dir) {
         ini_set("UG_ANISO", a == 16 ? "" : val);
         break;
     }
+    case IT_DRAWDIST: g_drawdist = !drawdist_on(); ini_set("UG_DRAWDIST", g_drawdist ? "1" : ""); break;
     case IT_HD: g_hd_hidden = !g_hd_hidden; break;   /* session only: the launcher's UG_HDTEX holds the pack folder */
     case IT_UNLOCK:
         if (dir == 0 && !unlock_done) { g_unlock_req = 1; unlock_done = 1; }

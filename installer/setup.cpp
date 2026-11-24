@@ -54,7 +54,7 @@ static const wchar_t kShortcut[] = L"Project Underground.lnk";
 enum { ID_ISO_BROWSE = 200, ID_DIR_BROWSE, ID_DESKTOP, ID_STARTMENU, ID_INSTALL, ID_PROGRESS,
        ID_STATUS, ID_PLAY, ID_UPDATE, ID_UNINSTALL, ID_FULLSCREEN, ID_SCALE, ID_PADS, ID_FPS60, ID_VSYNC, ID_LOGS,
        ID_MONITOR, ID_ANDROID, ID_SETTINGS, ID_QUIT, ID_CLOSE, ID_WINSIZE, ID_SCREEN, ID_FIT, ID_LEVEL, ID_HD, ID_CAMERA,
-       ID_ANISO, ID_FXAA, ID_AO };
+       ID_ANISO, ID_FXAA, ID_AO, ID_DRAWDIST };
 #define WM_APP_STATUS (WM_APP + 1)
 #define WM_APP_PROGRESS (WM_APP + 2)
 #define WM_APP_DONE (WM_APP + 3)
@@ -563,6 +563,7 @@ static void LoadSettings() {
     SetOn(ID_FULLSCREEN, IniGet(g_instDir, L"settings", L"UG_FULLSCREEN") == L"1");
     SetOn(ID_FPS60, IniGet(g_instDir, L"settings", L"UG_FPS") != L"30");     // 60 fps is the default
     SetOn(ID_FXAA, IniGet(g_instDir, L"settings", L"UG_FXAA") == L"1");
+    SetOn(ID_DRAWDIST, IniGet(g_instDir, L"settings", L"UG_DRAWDIST") == L"1");
     SetOn(ID_AO, IniGet(g_instDir, L"settings", L"UG_AO") == L"1");
     SetOn(ID_VSYNC, IniGet(g_instDir, L"settings", L"UG_VSYNC") != L"0");    // vsync (FIFO) is the default
 }
@@ -581,6 +582,7 @@ static void SaveSettings() {
     IniSet(g_instDir, L"settings", L"UG_FULLSCREEN", IsOn(ID_FULLSCREEN) ? L"1" : L"");
     IniSet(g_instDir, L"settings", L"UG_FPS", IsOn(ID_FPS60) ? L"" : L"30");
     IniSet(g_instDir, L"settings", L"UG_FXAA", IsOn(ID_FXAA) ? L"1" : L"");
+    IniSet(g_instDir, L"settings", L"UG_DRAWDIST", IsOn(ID_DRAWDIST) ? L"1" : L"");
     IniSet(g_instDir, L"settings", L"UG_AO", IsOn(ID_AO) ? L"1" : L"");
     // runtime/src/gpu_vulkan.c: UG_VSYNC=0 picks an immediate/mailbox present mode; unset keeps FIFO (vsync on)
     IniSet(g_instDir, L"settings", L"UG_VSYNC", IsOn(ID_VSYNC) ? L"" : L"0");
@@ -919,7 +921,7 @@ static void Launch(const std::wstring& dir) {
 
 // Launcher settings controls (shown on the panel over the art when the SETTINGS board is on).
 static HWND g_settingsBtn;
-static const int kSettingIds[] = {ID_FXAA, ID_AO, ID_ANISO, ID_FULLSCREEN, ID_FPS60, ID_VSYNC, ID_MONITOR, ID_WINSIZE, ID_SCREEN, ID_FIT, ID_SCALE,
+static const int kSettingIds[] = {ID_DRAWDIST, ID_FXAA, ID_AO, ID_ANISO, ID_FULLSCREEN, ID_FPS60, ID_VSYNC, ID_MONITOR, ID_WINSIZE, ID_SCREEN, ID_FIT, ID_SCALE,
                                   ID_PADS, ID_CAMERA, ID_LEVEL, ID_HD};
 // HD texture pack (UG_HDTEX=<folder>, runtime/src/hdtex.c): a PCSX2 replacement pack made for the PS2 version, used
 // where it is. Combo: Off / the folder / Choose folder... The folder is remembered in [launcher] HdFolder while off.
@@ -1098,6 +1100,7 @@ static bool LauncherCommand(HWND h, int id, int code) {
         g_worker = std::thread(BuildAndroid);
         return true;
     case ID_FULLSCREEN: case ID_FPS60: case ID_VSYNC: case ID_FXAA: case ID_AO:
+    case ID_DRAWDIST:
         if (code == BN_CLICKED) SaveSettings();
         return true;
     case ID_HD:
@@ -1361,8 +1364,9 @@ static void CreateLauncherControls() {
     MakeCheck(L"Fullscreen", ID_FULLSCREEN, 260, 690, 380);
     MakeCheck(L"60 fps", ID_FPS60, 700, 690, 300);
     MakeCheck(L"VSync", ID_VSYNC, 1060, 690, 300);
-    MakeCheck(L"Anti-aliasing", ID_FXAA, 260, 742, 420);
-    MakeCheck(L"Ambient occlusion", ID_AO, 700, 742, 600);
+    MakeCheck(L"Anti-aliasing", ID_FXAA, 260, 742, 400);
+    MakeCheck(L"Ambient occl.", ID_AO, 700, 742, 350);
+    MakeCheck(L"Max draw distance", ID_DRAWDIST, 1060, 742, 440);
     MakeCombo(ID_MONITOR, kMonitor, g_nMonitors, 720, 800, 780);
     MakeCombo(ID_WINSIZE, kWinSize, N_WINSIZE, 720, 860, 780);
     MakeCombo(ID_SCREEN, kScreen, 2, 720, 920, 780);

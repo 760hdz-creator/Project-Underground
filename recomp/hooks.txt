@@ -8,3 +8,4 @@ F1D60 ChangeLevel
 34C70 StopAllStreams
 106C10 CutsceneUpdate
 31C60 StartPreloadedStream
+4CD00 ModelVisibility

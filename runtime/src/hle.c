@@ -249,8 +249,50 @@ static void change_level_hook(X86Context *c) {
     LOG("[level] ChangeLevel without a level name\n");
 }
 
+/* Draw distance (UG_DRAWDIST=1, in-game menu). 0x4CD00 (this = suspend component, ecx) decides each frame whether a
+ * model is shown: hidden once its squared camera distance (+0x24) reaches lod_dist2 (+0x38) squared; +0x3C = 1000002
+ * means no limit. With the option on the distance it sees stays just under that limit, so people, cars and props no
+ * longer vanish; frustum culling and suspension (+0x30, set before from the true distance) are untouched.
+ * UG_DDLOG=1 logs what the limit hides. */
+uint32_t gpu_frame(void);
+volatile int g_drawdist = -1;
+int drawdist_on(void) {
+    if (g_drawdist < 0) { const char *e = getenv("UG_DRAWDIST"); g_drawdist = e && *e == '1'; }
+    return g_drawdist;
+}
+static void lod_hide_hook(X86Context *c) {
+    uint32_t t = c->ecx, v;
+    float d2, lod, lod3;
+    v = RD32(t + 0x24); memcpy(&d2, &v, 4);
+    v = RD32(t + 0x38); memcpy(&lod, &v, 4);
+    v = RD32(t + 0x3C); memcpy(&lod3, &v, 4);
+    int cut = RD32(t + 0x2C) && !(d2 < lod * lod);
+    static int dl = -1;
+    if (dl < 0) dl = getenv("UG_DDLOG") != NULL;
+    if (dl) {
+        static uint32_t n, ncut, nfree, calls;
+        static float seen[64]; static int ns;
+        n++;
+        if (lod3 == 1000002.0f) nfree++; else if (cut) ncut++;
+        int k = 0;
+        while (k < ns && seen[k] != lod) k++;
+        if (k == ns && ns < 64) { seen[ns++] = lod; LOG("[dd] lod_dist2 %.0f units (lod3 %.0f)\n", lod, lod3); }
+        if (++calls % 60000 == 0) { LOG("[dd] %u checks: %u hidden by distance, %u unlimited\n", n, ncut, nfree); n = ncut = nfree = 0; }
+        if (cut && lod3 != 1000002.0f && calls % 5000 < 40)
+            LOG("[dd]   hidden: object %08X at %.0f units, limit %.0f, suspended %u\n", RD32(t + 0xC), sqrt(d2), lod, RD8(t + 0x30));
+    }
+    static int ab = -1;   /* UG_DDAB=1: off in odd 300-frame windows (debug) */
+    if (ab < 0) ab = getenv("UG_DDAB") != NULL;
+    if (cut && drawdist_on() && lod > 0 && !(ab && (gpu_frame() / 300 & 1))) {
+        d2 = lod * lod * 0.99f;
+        memcpy(&v, &d2, 4);
+        WR32(t + 0x24, v);
+    }
+}
+
 /* recomp/hooks.txt entry hooks (UG_HOOKLOG=1 logs registers and the first stack slots) */
 void x86_hook(X86Context *c, uint32_t va) {
+    if (va == 0x4CD00) { lod_hide_hook(c); return; }
     if (va == 0xF1D60) { change_level_hook(c); return; }
     if (va == 0x34F80 && getenv("UG_STREAMLOG")) {   /* PlayStreamById(checksum): table at [29E83C], count [29E840] */
         uint32_t id = RD32(c->esp + 4), n = RD32(0x29E840), t = RD32(0x29E83C), found = 0xFFFFFFFF;
