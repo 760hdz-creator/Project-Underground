@@ -115,8 +115,39 @@ static void text(int x, int y, const char *s, uint32_t rgb) {
 }
 
 /* ------------------------------------------------------------------ items */
-enum { IT_RESUME, IT_FULLSCREEN, IT_FPS, IT_INVX, IT_INVY, IT_HD, IT_QUIT, IT_COUNT };
+enum { IT_RESUME, IT_FULLSCREEN, IT_FPS, IT_INVX, IT_INVY, IT_HD, IT_UNLOCK, IT_SPECIAL, IT_RAIL, IT_MANUAL, IT_MOON,
+       IT_SKITCH, IT_QUIT, IT_COUNT };
 static int sel, quit_armed;
+
+/* Cheats. The game's own cheat flags are career global flags (SetGlobalFlag 0x1298B0 -> 0x113820): a bitset at
+ * career + 0x584, career = [[0x2FCD68] + 0x20]. Numbers from scripts/game/misc/cheats.qb + global_flags.qb
+ * (CHEAT_ALWAYS_SPECIAL = CHEAT_ON_2 = 186 ...). The game is paused while the menu runs, so they are set directly.
+ * "Unlock everything" runs the game's own script unlock_all_cheats (levels, skaters, movies, cheat codes,
+ * chapters, sponsors, cutscenes); a script needs a guest thread, so hle.c runs it at the next XInputGetState. */
+volatile int g_unlock_req;
+static int unlock_done;
+static uint32_t career(void) {
+    uint32_t sk = RD32(0x2FCD68u);   /* heap pointers are 0x80xxxxxx (RAM mirror) */
+    return sk ? RD32(sk + 0x20) : 0;
+}
+static int cheat_flag(int i) {
+    switch (i) {
+    /* CHEAT_ON_n = 184 + n for n = 1..15 (global_flags.qb) */
+    case IT_SPECIAL: return 186;   /* CHEAT_ALWAYS_SPECIAL = CHEAT_ON_2 */
+    case IT_RAIL: return 187;      /* CHEAT_PERFECT_RAIL = CHEAT_ON_3 */
+    case IT_MANUAL: return 191;    /* CHEAT_PERFECT_MANUAL = CHEAT_ON_7 */
+    case IT_MOON: return 193;      /* CHEAT_MOON = CHEAT_ON_9 */
+    case IT_SKITCH: return 196;    /* CHEAT_PERFECT_SKITCH = CHEAT_ON_12 */
+    }
+    return -1;
+}
+static int flag_get(int f) { uint32_t ca = career(); return ca && (RD32(ca + 0x584 + (uint32_t)(f >> 5) * 4) >> (f & 31) & 1); }
+static void flag_set(int f, int on) {
+    uint32_t ca = career(), a = ca + 0x584 + (uint32_t)(f >> 5) * 4;
+    if (!ca) return;
+    WR32(a, on ? RD32(a) | 1u << (f & 31) : RD32(a) & ~(1u << (f & 31)));
+    LOG("[menu] cheat flag %d %s\n", f, on ? "on" : "off");
+}
 
 static int on_x(void) {
     if (g_invert_x >= 0) return g_invert_x;
@@ -128,7 +159,11 @@ static int on_y(void) {
     const char *e = getenv("UG_INVERTY");
     return e && *e == '1';
 }
-static int item_shown(int i) { return i != IT_HD || hdtex_enabled(); }
+static int item_shown(int i) {
+    if (i == IT_HD) return hdtex_enabled();
+    if (i >= IT_UNLOCK && i <= IT_SKITCH) return career() != 0;
+    return 1;
+}
 
 static const char *item_label(int i, char *buf, size_t n) {
     switch (i) {
@@ -138,6 +173,12 @@ static const char *item_label(int i, char *buf, size_t n) {
     case IT_INVX: snprintf(buf, n, "Invert camera X    < %s >", on_x() ? "On " : "Off"); return buf;
     case IT_INVY: snprintf(buf, n, "Invert camera Y    < %s >", on_y() ? "On " : "Off"); return buf;
     case IT_HD: snprintf(buf, n, "HD textures        < %s >", g_hd_hidden ? "Off" : "On "); return buf;
+    case IT_UNLOCK: return unlock_done ? "Unlock everything: done" : "Unlock everything";
+    case IT_SPECIAL: case IT_RAIL: case IT_MANUAL: case IT_MOON: case IT_SKITCH: {
+        static const char *nm[] = {"Always special", "Perfect rails", "Perfect manuals", "Moon gravity", "Perfect skitch"};
+        snprintf(buf, n, "%-19s< %s >", nm[i - IT_SPECIAL], flag_get(cheat_flag(i)) ? "On " : "Off");
+        return buf;
+    }
     case IT_QUIT: return quit_armed ? "Quit game: press again" : "Quit game";
     }
     return "";
@@ -161,6 +202,12 @@ static int item_change(int i, int dir) {
     case IT_INVX: g_invert_x = !on_x(); ini_set("UG_INVERTX", g_invert_x ? "1" : ""); break;
     case IT_INVY: g_invert_y = !on_y(); ini_set("UG_INVERTY", g_invert_y ? "1" : ""); break;
     case IT_HD: g_hd_hidden = !g_hd_hidden; break;   /* session only: the launcher's UG_HDTEX holds the pack folder */
+    case IT_UNLOCK:
+        if (dir == 0 && !unlock_done) { g_unlock_req = 1; unlock_done = 1; }
+        break;
+    case IT_SPECIAL: case IT_RAIL: case IT_MANUAL: case IT_MOON: case IT_SKITCH:
+        flag_set(cheat_flag(i), !flag_get(cheat_flag(i)));
+        break;
     case IT_QUIT:
         if (dir) break;
         if (quit_armed) { LOG("[menu] quit\n"); ExitProcess(0); }
@@ -178,7 +225,7 @@ static void draw(void) {
     sc = H >= 1400 ? 4 : H >= 900 ? 3 : 2;
     int cols = 30, line = 14 * sc, pad = 12 * sc;
     pw = cols * 8 * sc + 2 * pad;
-    ph = (nv + 3) * line + 2 * pad;
+    ph = (nv + 3 + (career() ? 1 : 0)) * line + 2 * pad;
     static size_t cap;
     if ((size_t)pw * ph * 4 > cap) { free(px); cap = (size_t)pw * ph * 4; px = malloc(cap); }
     if (!px) return;
@@ -186,8 +233,14 @@ static void draw(void) {
     fill(sc, sc, pw - 2 * sc, ph - 2 * sc, 0x16161A);    /* panel */
     text(pad, pad, "PAUSED", 0xF07828);
     char buf[64];
-    for (int k = 0; k < nv; k++) {
-        int i = vis[k], y = pad + (k + 2) * line;
+    for (int k = 0, gap = 0; k < nv; k++) {
+        int i = vis[k];
+        if (i == IT_UNLOCK) {   /* cheats section */
+            gap = 1;
+            text(pad, pad + (k + 2) * line, "CHEATS", 0xF07828);
+        }
+        if (i == IT_QUIT && gap == 1) gap = 2;
+        int y = pad + (k + 2 + (gap ? 1 : 0)) * line;
         if (i == sel) fill(pad - 4 * sc, y - 3 * sc, pw - 2 * pad + 8 * sc, 14 * sc, 0x3A2416);
         text(pad, y, item_label(i, buf, sizeof buf), i == sel ? 0xFFFFFF : 0xB4B4BE);
     }

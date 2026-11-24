@@ -317,6 +317,19 @@ void x86_hle(X86Context *c, uint32_t va) {
         ret_std(c, 1, 0);
         return;
     case 0x2015F4: /* DWORD XInputGetState(HANDLE, PXINPUT_STATE) */
+        {   /* in-game menu "Unlock everything" (menu.c): the game's script unlock_all_cheats, run on this guest thread
+             * with RunScript(checksum, params, object, 0) = 0x1F4B0 */
+            extern volatile int g_unlock_req;
+            if (g_unlock_req) {
+                g_unlock_req = 0;
+                uint32_t args[4] = {qb_crc("unlock_all_cheats"), 0, 0, 0};
+                X86Context sub = *c;
+                sub.esp = c->esp - 64;
+                guest_call(&sub, 0x1F4B0u, 4, args);
+                uint32_t sk = RD32(0x2FCD68u), ca = sk ? RD32(sk + 0x20) : 0;   /* CHEAT_UNLOCKED_1 = flag 120 */
+                LOG("[menu] unlock_all_cheats done (flag 120 = %u)\n", ca ? RD32(ca + 0x584 + 12) >> 24 & 1 : 9);
+            }
+        }
         if (!pad_ok(ARG(0))) { ret_std(c, 2, ERROR_DEVICE_NOT_CONNECTED_); return; }
         fill_state(ARG(1), (int)(ARG(0) & 3));
         ret_std(c, 2, 0);

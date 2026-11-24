@@ -259,8 +259,15 @@ print(','.join(ev))")" UG_SHOT=1200 ./out/underground.exe   (NJ level by ~frame 
      in NJ gameplay resumes seamlessly (shots 7420-7480), 0 audio underruns. Not tested: Linux run (builds), real
      pad L3+R3, fullscreen toggle from the menu, settings.ini write in an install. NEVER screen-capture the desktop
      for tests (a DPI-wrong CopyFromScreen grabbed other windows; deleted): use UG_MENUSHOT / UG_SHOT only.
-  5. Cheat menu in that overlay: unlock all (levels/skaters/gear: THUG global flags / cheat flags from qb scripts),
-     THUG has no money (check), plus always special, perfect balance, moon physics etc. (THUG's own cheat flags).
+  5. DONE 2026-11-23 (late): CHEATS in the in-game menu (shown once a career exists). Cheat flags = career global
+     flags: bitset at [[0x2FCD68]+0x20] + 0x584 (SetGlobalFlag 0x1298B0 -> 0x113820), set directly while paused:
+     CHEAT_ON_n = 184 + n (n 1..15): always special ON_2 186, perfect rail ON_3 187, stats-13 ON_4 188, perfect
+     manual ON_7 191, moon ON_9 193, sim ON_10 194, perfect skitch ON_12 196, bighead ON_13 197, slomo ON_15 199
+     (cheats.qb aliases, global_flags.qb numbers). "Unlock everything" runs the game's own script
+     unlock_all_cheats via RunScript-by-checksum 0x1F4B0(crc, 0, 0, 0) from the next XInputGetState (guest thread).
+     Verified in NJ: moon toggle sets its flag, unlock ran (flag 120 set), no fatal. Effects (moon jump etc.) not eyeballed.
+     Script tools (scratchpad): prx.py (unpack .prx), qbscript.py <xbe> <qb> <script...> (decompile a script),
+     qbctx.py. Unpacked qb in scratchpad/qb (re-run prx.py if the scratchpad is gone).
   6. Controller support in the launcher: done 8c04593 (needs a real-pad test).
 - Pushed to both remotes 2026-11-23 (README, avatars, display settings, level cheat). HD textures: local commit,
   push when the user says. No release until all three ports are ready.
