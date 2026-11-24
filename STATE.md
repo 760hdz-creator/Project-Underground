@@ -110,6 +110,23 @@ print(','.join(ev))")" UG_SHOT=1200 ./out/underground.exe   (NJ level by ~frame 
   random count; 6A330 NaN-vs-NaN payload only (clang swaps commutative mulss operands). No lifter bug found.
 
 ## Next
+RESUME HERE (paused 2026-11-24 ~00:30, user's request):
+A. PINK HOUSE (NJ, user screenshot): a pink house wall shows a diagonal split, an untextured flat-pink part and
+   sky through the wall (also in our A/B shot 12300 of the HD run: skater standing in front of it). Tool ready
+   (4cd0dc8): F9 or UG_CAPTURE=<frame> -> out/capture.log (every draw of that frame, "[draw] #n ...") + shot N
+   (normal) + shot N+1 (UG_DBGCOLOR=10: draw index = r + 256*g). Asked the user to run
+   `cd "G:\Project Underground"; .\out\underground.exe`, stand there, press F9. Then: read the pixel id on the
+   wall, find "#id" in capture.log, see what is wrong (texture/stage state, vertex attrs, clip). The scripted
+   NJ route does not land in the same spot every run.
+B. Also seen (debug run, NJ pool by a brick wall): the wall's brick pattern drawn on the ground in front of it.
+   Unknown whether it is a bug or the game's effect.
+C. README pictures (user asked): hd_compare.jpg REPLACED (static UG_SHOTAB pair 09600/09601 of a NJ run with the
+   HD pack, box on the ramp: graffiti only in HD; scratchpad hdcompose.py, hdpairs.py). TODO: all 15 maps
+   (nj ny fl sd hi vc sj ru hn ph se sc sc2 dj vn; not testlevel, not sp = cut/empty): out/levels2/sweep.sh
+   (UG_LEVEL redirect, UG_SHOT=600 from 4200; ~65 min). Do NOT run anything else meanwhile (shared out/shot_*,
+   route timing). TaskStop does not kill the bash loop: kill bash + timeout + underground.exe by PID. Then pick
+   the best widescreen shot per map (resize to 16:9), README gallery (docs/images/maps/*.jpg), commit, push.
+D. Not pushed: 4cd0dc8 (F9 capture) and the new hd_compare.jpg.
 1. Sky wedge (cosmetic); pool-floor rectangle (UG_DBGCOLOR=7). Neither showed in 16 NJ shots on 2026-11-23
    (run_texgen, run_dbg7); a quarter-pipe light/dark split at f14400 is not a shadow draw (baked lighting).
 2. Renderer gaps (not seen in NJ so far: check other levels first): FF lighting, cube maps, eye/object-linear and
