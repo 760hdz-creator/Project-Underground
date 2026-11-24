@@ -183,6 +183,9 @@ SESSION 2026-11-24 (polish, after the graphics options):
   built in normal memory (reading back write-combined memory took about a third of the samples): vc 49 -> 58-60 fps, no drops.
 - Sweep out/levels3: 15 of 15 maps with all options, no fatal, nothing wrong seen. README: map gallery (docs/images/maps), split
   screen picture, new launcher_settings.jpg. Free-skate route for any level: out/dev/free.txt with UG_LEVEL=<code>.
+- Linux package rebuilt from 39d4c8e (WSL ~/ug-chk/dist, 8.4 MB; new icon and options): --iso install ~2 min, NJ free skate on
+  llvmpipe with FXAA + AO + draw distance OK (out/linux/new). Uninstalled again (WSL ~/ug-inst2/out left). setup.sh without a
+  terminal ends on a zenity dialog: run tests with DISPLAY= WAYLAND_DISPLAY= .
 - PINK HOUSE LEAD: out/pink/across_10500.ppm (4x, seen across the school yard): single TRIANGLES are missing inside one
   wall (slanted edges), so not whole meshes and not an occluder. Look at index lists / strips / fetch_vertex for that
   draw. UG_CAPTUREEVERY=600 on a story run, then pick the frame by eye. User wants to do it at the PC.
