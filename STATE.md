@@ -115,8 +115,8 @@ print(','.join(ev))")" UG_SHOT=1200 ./out/underground.exe   (NJ level by ~frame 
 2. Renderer gaps (not seen in NJ so far: check other levels first): FF lighting, cube maps, eye/object-linear and
    sphere texgen, MSAA. Widescreen done. CPU-drawn loading bar: not worth it, a level load takes < 0.3 s here
    (NJ: one 292 ms frame between f3000 and f3300), the loading screen is barely on screen.
-0. STATUS 2026-11-23 (end of late session): user todo 2-5 done and committed locally (c3b9de0..287f2c5, NOT
-   pushed). Linux build of all of it (WSL ~/ug-linux, lifted copied from out/lifted incl. *.h to ~/ug-lifted2)
+0. STATUS 2026-11-23 (end of late session): user todo 2-5 done and committed (c3b9de0..287f2c5), PUSHED to both remotes
+   2026-11-23 (no tag/release). Linux build of all of it (WSL ~/ug-linux, lifted copied from out/lifted incl. *.h to ~/ug-lifted2)
    verified: menu opens/fullscreen on-off/toggles/closes (out/linux/menu_test.sh), typing "Kid42" in Save Name
    (out/linux/type_test.sh, UG_TYPE). Waiting on the user: todo 1 (where the black wedge still shows: screenshot),
    by-ear check of cutscene speech sync, phone test (adb), push/release decision.
@@ -283,7 +283,7 @@ print(','.join(ev))")" UG_SHOT=1200 ./out/underground.exe   (NJ level by ~frame 
      Script tools (scratchpad): prx.py (unpack .prx), qbscript.py <xbe> <qb> <script...> (decompile a script),
      qbctx.py. Unpacked qb in scratchpad/qb (re-run prx.py if the scratchpad is gone).
   6. Controller support in the launcher: done 8c04593 (needs a real-pad test).
-- Pushed to both remotes 2026-11-23 (README, avatars, display settings, level cheat). HD textures: local commit,
-  push when the user says. No release until all three ports are ready.
+- Pushed to both remotes 2026-11-23 (all commits up to 14d0e3a incl. HD textures, audio, typing, menu, cheats).
+  No release until all three ports are ready.
 - Repos: origin gitlab.com/octagram-labs-group/Project-Underground, forge 8gramlabs/Project-Underground (both public).
   Homepage card live (placeholder image landing/img/thug.jpg: replace with a screenshot later). release-sync REPOS updated.
