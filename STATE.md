@@ -238,10 +238,12 @@ print(','.join(ev))")" UG_SHOT=1200 ./out/underground.exe   (NJ level by ~frame 
   3. DONE 2026-11-23 (late): keyboard typing. THUG keeps the PS2 USB-keyboard path: create_onscreen_keyboard
      (scripts/engine/menu/keyboard.qb) calls StartKeyboardHandler; its task 0xFA660 polls GetKeyboardInput 0x8BE20
      (Xbox stub returning 0, now HLE in hle.c/hle.txt) and runs handle_keyboard_input per char (0x20..0x7E, 0x19
-     enter, 0x18 backspace; 0x14..0x17 = arrows for menus at 0xF9A60). Several tasks poll it each frame, so the HLE
-     hands every caller between two NV2A flips the same char (g_guest_flips), one char per frame. Typing mode
-     (letters stop driving the pad) = handler task (return 0xFA688) polled in the last second. Windows WM_CHAR,
-     Linux SDL text input. Verified: Save Skater -> Create New -> typed "Kid42" + Enter -> SaveMeta "Name=Kid42".
+     enter, 0x18 backspace; 0x14..0x17 = arrows for menus at 0xF9A60). Other tasks poll it too: only the handler
+     task (return address 0xFA688) gets chars, one per call (a per-flip snapshot lost chars). Typing mode (letters
+     stop driving the pad) = handler polled in the last second. Windows WM_CHAR (UG_KBDLOG=1 logs them), Linux SDL
+     text input. Verified: UG_TYPE "Kid42" + Enter -> SaveMeta "Name=Kid42"; real keystrokes (SendKeys from
+     scratchpad sendkeys.ps1, game launched from bash) BS BS x z x -> "Custom Skatxzx", keyboard stayed open (x is
+     B = Cancel on the pad map: suppressed). Skater name in Edit Skater > Information: not tested.
      UG_TYPE="<s>:<text>,..." scripted typing ('<' backspace, '|' enter). Route: A 6..30 step 3, 52:DOWN, 56:A,
      61:A (Create New), then the keyboard is up at ~61 s. qb.prx unpacker: scratchpad prx.py (LZSS, N=4096 F=18).
   4. In-game overlay menu: F1 or L3+R3, settings usable during play (fullscreen, camera invert = g_invert_x/y in

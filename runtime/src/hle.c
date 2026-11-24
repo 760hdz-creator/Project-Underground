@@ -53,10 +53,10 @@ static int key(int vk) { return vk && (GetAsyncKeyState(vk) & 0x8000) != 0; }
 /* Typing on the PC keyboard. THUG keeps the PS2 USB-keyboard path: the on-screen keyboard script
  * (create_onscreen_keyboard, scripts/engine/menu/keyboard.qb) calls StartKeyboardHandler, whose task (0xFA660) polls
  * GetKeyboardInput(buf) every frame and runs the script handle_keyboard_input for each char: 0x20..0x7E text, 0x19
- * enter (got_enter), 0x18 backspace (got_backspace). Other tasks poll it too (menu arrows 0x14..0x17 at 0xF9A60), so
- * like a per-frame keyboard buffer every caller between two flips gets the same chars. On Xbox the function is a stub
- * returning 0; here it returns what the window received (WM_CHAR / SDL text input), one char per frame. While the
- * handler task polls, the letter keys stop driving the pad so typing does not also press buttons. */
+ * enter (got_enter), 0x18 backspace (got_backspace). On Xbox the function is a stub returning 0; here the handler task
+ * gets what the window received (WM_CHAR / SDL text input), one char per call. Other tasks poll it too (menu arrows
+ * 0x14..0x17 at 0xF9A60, and more) and get nothing, so they cannot eat typed chars. While the handler task polls, the
+ * letter keys stop driving the pad so typing does not also press buttons. */
 static char kbd_q[256];
 static volatile unsigned kbd_head, kbd_tail;   /* window thread writes head, guest thread reads tail */
 static volatile uint32_t kbd_poll_ms;           /* last poll by the keyboard handler task (GetTickCount) */
@@ -309,15 +309,11 @@ void x86_hle(X86Context *c, uint32_t va) {
         ret_std(c, 2, 997);   /* ERROR_IO_PENDING; dwStatus already says done */
         return;
     }
-    case 0x8BE20: { /* int GetKeyboardInput(char *buf) (cdecl): this frame's typed chars */
-        static uint32_t snap_flip = ~0u;
-        static int snap_n;
-        static char snap;
-        uint32_t buf = ARG(0);
-        if (RD32(c->esp) == 0xFA688u) {   /* the keyboard handler task: a text entry is open */
-            if (!kbd_typing()) LOG("[input] text entry open: typing goes to the game\n");
-            kbd_poll_ms = GetTickCount() | 1;
-        }
+    case 0x8BE20: { /* int GetKeyboardInput(char *buf) (cdecl): typed chars, for the keyboard handler task only */
+        uint32_t buf = ARG(0), n = 0;
+        if (RD32(c->esp) != 0xFA688u) { c->eax = 0; c->esp += 4; return; }
+        if (!kbd_typing()) LOG("[input] text entry open: typing goes to the game\n");
+        kbd_poll_ms = GetTickCount() | 1;
         {   /* UG_TYPE=<s>:<text>[,...] scripted typing (guest seconds; '|' = Enter, '<' = Backspace) */
             static struct { double t; char s[64]; } ev[16];
             static int nev = -1;
@@ -335,13 +331,13 @@ void x86_hle(X86Context *c, uint32_t va) {
                 ev[i].s[0] = 0;
             }
         }
-        if (g_guest_flips != snap_flip) {
-            snap_flip = g_guest_flips;
-            snap_n = 0;
-            if (kbd_tail != kbd_head) { __atomic_thread_fence(__ATOMIC_ACQUIRE); snap = kbd_q[kbd_tail % sizeof kbd_q]; kbd_tail++; snap_n = 1; }
+        if (kbd_tail != kbd_head) {
+            __atomic_thread_fence(__ATOMIC_ACQUIRE);
+            WR8(buf, (uint8_t)kbd_q[kbd_tail % sizeof kbd_q]);
+            kbd_tail++;
+            n = 1;
         }
-        if (snap_n) WR8(buf, (uint8_t)snap);
-        c->eax = (uint32_t)snap_n;
+        c->eax = n;
         c->esp += 4;
         return;
     }
