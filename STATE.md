@@ -228,9 +228,13 @@ print(','.join(ev))")" UG_SHOT=1200 ./out/underground.exe   (NJ level by ~frame 
   USER TODO LIST (2026-11-23, in this order):
   1. Black-line wedge "still visible": the window-scene wedge is fixed in aaec64a; ask the user where they still see
      it (screenshot) - may be other receivers / other scenes.
-  2. Voice "off by a little": cutscene speech lag. Suspects: mixer latency (waveOut 4 x 20 ms + FIFO), speech stream
-     starts only after 8 packets queued, GetCurrentPosition / cutscene clock. Measure: compare stream start time
-     vs cutscene start.
+  2. DONE 2026-11-23 (late): voice "off by a little". Measured with UG_AVSYNCLOG=1 (hooks 106C10 cutscene start,
+     31C60 start-preloaded-stream; dsound logs first mixed sample + waveOut queue): the cutscene (106E50) runs on its
+     own clock and starts the speech stream the same ms as frame 0, first sample mixed +6..8 ms; the lag was the
+     output queue, 80 ms (4 x 20 ms). Now 10 ms buffers, UG_AUDIOBUFS (default 4 = 38 ms; 3 underruns constantly
+     through waveOut; Android 6), mixer thread TIME_CRITICAL, underruns logged. NJ route 290 s: 0 underruns.
+     Linux SDL path: same queue, builds; not run (WSL audio). User should confirm by ear. If still late: WASAPI
+     exclusive/low-latency path (~10-20 ms).
   3. Keyboard typing in the name entry (on-screen keyboard): today arrows/Z navigate (pad emulation). Typing needs a
      hook on the keyboard UI (or XInput debug keyboard if THUG supports it).
   4. In-game overlay menu: F1 or L3+R3, settings usable during play (fullscreen, camera invert = g_invert_x/y in

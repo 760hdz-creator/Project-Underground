@@ -6,3 +6,5 @@ F1D60 ChangeLevel
 34F80 PlayStreamById
 34990 PlayMusicTrack
 34C70 StopAllStreams
+106C10 CutsceneUpdate
+31C60 StartPreloadedStream

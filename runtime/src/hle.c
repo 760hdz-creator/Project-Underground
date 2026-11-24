@@ -223,6 +223,18 @@ void x86_hook(X86Context *c, uint32_t va) {
             a0 = a; b0 = b;
         }
     }
+    if ((va == 0x106C10 || va == 0x31C60) && getenv("UG_AVSYNCLOG")) {   /* cutscene frame / start preloaded stream */
+        static double last;
+        static int frames;
+        double now = host_ms();
+        if (va == 0x31C60) LOG("[avsync] %.1f ms start preloaded stream (cutscene frame %d)\n", now, frames);
+        else {
+            if (now - last > 1000) { frames = 0; LOG("[avsync] %.1f ms cutscene frame 0\n", now); }
+            if (++frames % 300 == 0) LOG("[avsync] %.1f ms cutscene frame %d\n", now, frames);
+            last = now;
+        }
+        return;
+    }
     if (va == 0x34490) {   /* music / speech stream update (this = ecx): UG_STREAMLOG=1 logs its state (debug) */
         static int on = -1;
         static uint32_t last;

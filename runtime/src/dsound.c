@@ -20,8 +20,25 @@
 #include "rt.h"
 
 #define OUT_RATE    48000
-#define OUT_FRAMES  960          /* 20 ms per waveOut buffer */
-#define OUT_BUFS    4
+#define OUT_FRAMES  480          /* 10 ms per output buffer */
+#define OUT_BUFS_MAX 8
+/* Output buffers queued ahead (UG_AUDIOBUFS, 2..8). Each is 10 ms of latency between the mixer, which is in step
+ * with the game, and the speakers: cutscene speech measured ~80 ms behind the picture with 4 x 20 ms. */
+static int out_bufs(void) {
+    static int n;
+    if (!n) {
+        const char *e = getenv("UG_AUDIOBUFS");
+#ifdef __ANDROID__
+        n = 6;
+#else
+        n = 4;   /* 3 underruns through waveOut */
+#endif
+        if (e && *e) n = atoi(e);
+        if (n < 2) n = 2;
+        if (n > OUT_BUFS_MAX) n = OUT_BUFS_MAX;
+    }
+    return n;
+}
 
 #define MAX_BUFFERS 512
 #define DSBSTATUS_PLAYING 0x1
@@ -77,6 +94,7 @@ typedef struct {
     uint8_t *fifo;               /* raw packet bytes in fmt */
     uint32_t rd, wr;             /* byte counters, wrap at FIFO_BYTES */
     double frac;                 /* fractional source frame */
+    int started;                 /* mixing (UG_AVSYNCLOG: logs the first sample after an underrun) */
 } Stream;
 #define MAX_STREAMS 16
 static Stream g_streams[MAX_STREAMS];
@@ -86,6 +104,19 @@ static uint32_t g_stream_vtbl;
 #define STREAM_SLOTS 32
 
 /* ------------------------------------------------------------------ helpers */
+
+double host_ms(void) {
+    static LARGE_INTEGER f;
+    LARGE_INTEGER t;
+    if (!f.QuadPart) QueryPerformanceFrequency(&f);
+    QueryPerformanceCounter(&t);
+    return (double)t.QuadPart * 1000.0 / (double)f.QuadPart;
+}
+
+/* UG_AVSYNCLOG=1: cutscene/stream timing (hle.c hooks) plus, here, when each stream's first sample is mixed and
+ * how much audio sits in the output queue (mixed but not yet heard). */
+static int g_avlog = -1;
+static int avlog(void) { if (g_avlog < 0) { const char *e = getenv("UG_AVSYNCLOG"); g_avlog = e && *e == '1'; } return g_avlog; }
 
 static void ret_std(X86Context *c, int nargs, uint32_t eax) {
     c->eax = eax;
@@ -221,7 +252,11 @@ static void mix_stream(Stream *s, float *out, int n) {
     if (f->tag != WAVE_FORMAT_PCM_ || !f->block_align) return;
     double step = (double)f->rate / OUT_RATE;
     for (int i = 0; i < n; i++) {
-        if (s->wr - s->rd < f->block_align) return;   /* underrun */
+        if (s->wr - s->rd < f->block_align) { s->started = 0; return; }   /* underrun */
+        if (!s->started) {
+            s->started = 1;
+            if (avlog()) LOG("[avsync] %.1f ms stream %08X first sample mixed (out frame +%d)\n", host_ms(), s->guest, i);
+        }
         const uint8_t *p = s->fifo + (s->rd % FIFO_BYTES);
         float l, r;
         if (f->bits == 8) { l = (p[0] - 128) / 128.0f; r = f->channels == 2 ? (p[1] - 128) / 128.0f : l; }
@@ -266,7 +301,7 @@ static void mix(int16_t *dst, int n) {
 }
 
 #ifndef _WIN32
-/* Linux: SDL3 audio stream, kept 3 buffers (60 ms) ahead like the waveOut queue. */
+/* Linux: SDL3 audio stream, kept out_bufs() buffers ahead like the waveOut queue. */
 #include <SDL3/SDL.h>
 static DWORD WINAPI mixer_thread(void *arg) {
     (void)arg;
@@ -283,17 +318,19 @@ static DWORD WINAPI mixer_thread(void *arg) {
         for (;;) { mix(pcm, OUT_FRAMES); Sleep(OUT_FRAMES * 1000 / OUT_RATE); }
     }
     for (;;) {
-        while (SDL_GetAudioStreamQueued(st) < OUT_BUFS * (int)sizeof pcm) {
+        while (SDL_GetAudioStreamQueued(st) < out_bufs() * (int)sizeof pcm) {
             mix(pcm, OUT_FRAMES);
             SDL_PutAudioStreamData(st, pcm, sizeof pcm);
         }
-        Sleep(5);
+        Sleep(2);
     }
 }
 #else
 static DWORD WINAPI mixer_thread(void *arg) {
     (void)arg;
-    static int16_t pcm[OUT_BUFS][2 * OUT_FRAMES];
+    static int16_t pcm[OUT_BUFS_MAX][2 * OUT_FRAMES];
+    const int nbufs = out_bufs();
+    SetThreadPriority(GetCurrentThread(), THREAD_PRIORITY_TIME_CRITICAL);
     HWAVEOUT wo = NULL;
     HANDLE ev = CreateEventA(NULL, FALSE, FALSE, NULL);
     const char *no = getenv("UG_NOAUDIO");
@@ -305,21 +342,37 @@ static DWORD WINAPI mixer_thread(void *arg) {
     if (!wo) {
         for (;;) { mix(pcm[0], OUT_FRAMES); Sleep(OUT_FRAMES * 1000 / OUT_RATE); }
     }
-    WAVEHDR hdr[OUT_BUFS];
+    WAVEHDR hdr[OUT_BUFS_MAX];
     memset(hdr, 0, sizeof hdr);
-    for (int i = 0; i < OUT_BUFS; i++) {
+    LOG("[dsound] output queue %d x %d ms\n", nbufs, OUT_FRAMES * 1000 / OUT_RATE);
+    for (int i = 0; i < nbufs; i++) {
         hdr[i].lpData = (LPSTR)pcm[i];
         hdr[i].dwBufferLength = sizeof pcm[i];
         waveOutPrepareHeader(wo, &hdr[i], sizeof hdr[i]);
         mix(pcm[i], OUT_FRAMES);
         waveOutWrite(wo, &hdr[i], sizeof hdr[i]);
     }
+    uint64_t written = (uint64_t)nbufs * OUT_FRAMES;
+    double lag_t = 0;
+    int underruns = 0;
     for (;;) {
         WaitForSingleObject(ev, 100);
-        for (int i = 0; i < OUT_BUFS; i++) {
+        int done = 0;
+        for (int i = 0; i < nbufs; i++) done += (hdr[i].dwFlags & WHDR_DONE) != 0;
+        if (done == nbufs && ++underruns <= 20)   /* the device ran dry: audible gap (raise UG_AUDIOBUFS) */
+            LOG("[dsound] output underrun %d\n", underruns);
+        for (int i = 0; i < nbufs; i++) {
             if (!(hdr[i].dwFlags & WHDR_DONE)) continue;
             mix(pcm[i], OUT_FRAMES);
             waveOutWrite(wo, &hdr[i], sizeof hdr[i]);
+            written += OUT_FRAMES;
+        }
+        if (avlog() && host_ms() - lag_t > 2000) {   /* mixed but not yet played by the device */
+            MMTIME mt = { TIME_SAMPLES };
+            lag_t = host_ms();
+            if (waveOutGetPosition(wo, &mt, sizeof mt) == MMSYSERR_NOERROR && mt.wType == TIME_SAMPLES)
+                LOG("[avsync] %.1f ms output queue %.1f ms, underruns %d\n", lag_t,
+                    (double)(written - mt.u.sample) * 1000.0 / OUT_RATE, underruns);
         }
     }
 }
