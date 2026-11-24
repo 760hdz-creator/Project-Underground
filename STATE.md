@@ -138,6 +138,28 @@ B. Also seen (debug run, NJ pool by a brick wall): the wall's brick pattern draw
    Unknown whether it is a bug or the game's effect.
    2026-11-24: in out/pink/shot.png the fence next to the wall shows on the ground too: looks like the game's own
    planar reflection in the wet floor (not proven).
+   GRAPHICS REQUEST (user, 2026-11-24): supersampling, anti-aliasing, ambient occlusion, anisotropic filtering,
+   unlimited draw distance. NOTHING OF IT WRITTEN YET. State and plan:
+   - Anisotropic: already in (UG_ANISO, 16x default). Missing: a launcher / in-game menu entry.
+   - Supersampling: UG_SCALE (1..8, default 2; launcher combo exists). Missing: submit_and_present downsamples with ONE
+     linear blit, which skips texels above 2x the window: step down by halves first.
+   - AA (FXAA) + ambient occlusion (from ZSurface.dview): one fullscreen pass at the world -> HUD boundary (after the
+     last perspective world draw, before the first HUD draw) so the HUD stays sharp. Find that boundary first
+     (perspective = comp row 3 not 0,0,0,x; beware letterbox / cutscene frames and render-to-texture). Needs a colour
+     copy image, a new pipeline (touch_pipeline() is the template) and new shaders (python -I tools/shaders.py).
+     Near plane 2, far about 32000 (measured from the composite matrices): use them to linearize depth.
+     All three off by env; settings in the in-game menu and the launcher.
+   - Draw distance: the far plane is not the limit (NJ is about +-16000 units, far about 32000) and fog was off in
+     every captured NJ draw. Camera near/far = camera object +0xA8 / +0xAC (camera list [0x229C28],
+     SetClippingDistances 0x11C240, defaults 12 / 12000; in NJ the matrices show about 2 / 32000).
+     Suspend component: +0x1C / +0x20 suspend distance and its square, +0x24 squared camera distance, +0x30 suspended
+     (IsSuspended 0x4CB70, 6 callers), +0x34..+0x40 lod_dist1..4; init 0x4C960; its manager writes +0x24 / +0x30 at
+     0x4CF78..0x4CFF0: READ THAT NEXT. Model LODs: LODDistance read at 0x96F63 (last LOD forced to 3.4e38).
+     TRIED AND REVERTED: hook on 0x4CB80 (distance > lod_dist2): never called in NJ, its only caller 0x9C460 skips an
+     update, it does not hide anything. Raising the suspend distance itself also wakes far AI: gameplay change, avoid.
+     First measure which objects disappear with distance; nothing proves yet that anything visible is cut in NJ.
+   - Gotcha (again): a backslash-n inside a bash heredoc became a real newline in C strings and broke three builds;
+     write such patches with the Write tool, and never run the exe unless the build printed "linked".
 C. README pictures (user asked): hd_compare.jpg REPLACED (static UG_SHOTAB pair 09600/09601 of a NJ run with the
    HD pack, box on the ramp: graffiti only in HD; scratchpad hdcompose.py, hdpairs.py). TODO: all 15 maps
    (nj ny fl sd hi vc sj ru hn ph se sc sc2 dj vn; not testlevel, not sp = cut/empty): out/levels2/sweep.sh
