@@ -64,7 +64,11 @@ HWND linux_create_window(void) {
     int ww = ug_widescreen() ? wh * 16 / 9 : wh * 4 / 3;
     const char *wsz = getenv("UG_WINDOW");
     int qw = 0, qh = 0;
-    if (wsz && sscanf(wsz, "%dx%d", &qw, &qh) == 2 && qw >= 320 && qh >= 240) { ww = qw; wh = qh; }
+    if (wsz && sscanf(wsz, "%dx%d", &qw, &qh) == 2 && qw >= 320 && qh >= 240) { ww = qw; wh = qh; } {   /* larger than the monitor: scaled down to fit, same aspect */
+        int mw = r.w - 16, mh = r.h - 64;
+        if (ww > mw) { wh = wh * mw / ww; ww = mw; }
+        if (wh > mh) { ww = ww * mh / wh; wh = mh; }
+    }
     SDL_PropertiesID p = SDL_CreateProperties();
     SDL_SetStringProperty(p, SDL_PROP_WINDOW_CREATE_TITLE_STRING, "Tony Hawk's Underground (recomp)");
     SDL_SetNumberProperty(p, SDL_PROP_WINDOW_CREATE_X_NUMBER, SDL_WINDOWPOS_CENTERED_DISPLAY(pick));

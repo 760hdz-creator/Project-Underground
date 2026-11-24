@@ -146,7 +146,11 @@ static DWORD WINAPI window_thread(LPVOID ev) {
     int wh = mh * 2 / 3, ww = ug_widescreen() ? wh * 16 / 9 : wh * 4 / 3;
     const char *wsz = getenv("UG_WINDOW");
     int qw = 0, qh = 0;
-    if (wsz && sscanf(wsz, "%dx%d", &qw, &qh) == 2 && qw >= 320 && qh >= 240) { ww = qw; wh = qh; }
+    if (wsz && sscanf(wsz, "%dx%d", &qw, &qh) == 2 && qw >= 320 && qh >= 240) { ww = qw; wh = qh; } {   /* larger than the monitor: scaled down to fit, same aspect */
+        int mw = (int)(mi.rcWork.right - mi.rcWork.left) - 16, mh = (int)(mi.rcWork.bottom - mi.rcWork.top) - 64;
+        if (ww > mw) { wh = wh * mw / ww; ww = mw; }
+        if (wh > mh) { ww = ww * mh / wh; wh = mh; }
+    }
     /* the frame at the monitor's own DPI (per-monitor aware: sizes are physical pixels) */
     RECT r = {0, 0, ww, wh};
     typedef BOOL(WINAPI * AdjForDpi)(RECT *, DWORD, BOOL, DWORD, UINT);

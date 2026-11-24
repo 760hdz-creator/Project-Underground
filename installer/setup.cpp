@@ -469,10 +469,41 @@ static const Choice kScale[] = {{L"2x  (960 lines, default)", nullptr}, {L"1x  (
                                 {L"4x  (1920 lines)", L"4"}, {L"5x  (2400 lines)", L"5"}, {L"6x  (2880 lines)", L"6"}};
 static const Choice kPads[] = {{L"1 (default)", nullptr}, {L"2", L"2"}, {L"3", L"3"}, {L"4", L"4"}};
 // UG_WINDOW: windowed client size (default: 2/3 of the monitor's height at the game's aspect)
-static const Choice kWinSize[] = {{L"Auto (2/3 of the monitor, default)", nullptr}, {L"1280 x 720", L"1280x720"},
-                                  {L"1600 x 900", L"1600x900"}, {L"1920 x 1080", L"1920x1080"},
-                                  {L"2560 x 1440", L"2560x1440"}, {L"3840 x 2160", L"3840x2160"},
-                                  {L"960 x 720  (4:3)", L"960x720"}, {L"1440 x 1080  (4:3)", L"1440x1080"}};
+// UG_WINDOW: windowed resolution (client size in pixels); larger than the monitor is scaled down to fit, same aspect.
+// Fullscreen always uses the monitor's own resolution.
+static const Choice kWinSize[] = {{L"Auto (2/3 of the monitor, default)", nullptr},
+                                  {L"1280 x 720  (16:9)", L"1280x720"},
+                                  {L"1366 x 768  (16:9)", L"1366x768"},
+                                  {L"1600 x 900  (16:9)", L"1600x900"},
+                                  {L"1920 x 1080  (16:9)", L"1920x1080"},
+                                  {L"2560 x 1440  (16:9)", L"2560x1440"},
+                                  {L"3200 x 1800  (16:9)", L"3200x1800"},
+                                  {L"3840 x 2160  (16:9)", L"3840x2160"},
+                                  {L"5120 x 2880  (16:9)", L"5120x2880"},
+                                  {L"7680 x 4320  (16:9)", L"7680x4320"},
+                                  {L"1280 x 800  (16:10)", L"1280x800"},
+                                  {L"1440 x 900  (16:10)", L"1440x900"},
+                                  {L"1680 x 1050  (16:10)", L"1680x1050"},
+                                  {L"1920 x 1200  (16:10)", L"1920x1200"},
+                                  {L"2560 x 1600  (16:10)", L"2560x1600"},
+                                  {L"2880 x 1800  (16:10)", L"2880x1800"},
+                                  {L"3840 x 2400  (16:10)", L"3840x2400"},
+                                  {L"2560 x 1080  (21:9)", L"2560x1080"},
+                                  {L"3440 x 1440  (21:9)", L"3440x1440"},
+                                  {L"3840 x 1600  (21:9)", L"3840x1600"},
+                                  {L"5120 x 2160  (21:9)", L"5120x2160"},
+                                  {L"3840 x 1080  (32:9)", L"3840x1080"},
+                                  {L"5120 x 1440  (32:9)", L"5120x1440"},
+                                  {L"7680 x 2160  (32:9)", L"7680x2160"},
+                                  {L"640 x 480  (4:3)", L"640x480"},
+                                  {L"800 x 600  (4:3)", L"800x600"},
+                                  {L"1024 x 768  (4:3)", L"1024x768"},
+                                  {L"1280 x 960  (4:3)", L"1280x960"},
+                                  {L"1400 x 1050  (4:3)", L"1400x1050"},
+                                  {L"1600 x 1200  (4:3)", L"1600x1200"},
+                                  {L"2048 x 1536  (4:3)", L"2048x1536"},
+                                  {L"1280 x 1024  (5:4)", L"1280x1024"}};
+#define N_WINSIZE 32
 // UG_WIDESCREEN: the game's own 16:9 mode (Xbox widescreen flag), on by default; UG_ASPECT=stretch fills the window
 static const Choice kScreen[] = {{L"16:9 widescreen (default)", nullptr}, {L"4:3 original", L"0"}};
 // UG_INVERTY: the game's right stick up/down (walking camera) flipped
@@ -502,7 +533,7 @@ static BOOL CALLBACK MonEnum(HMONITOR m, HDC, LPRECT, LPARAM) {
     return TRUE;
 }
 struct ComboSetting { int id; const wchar_t* key; const Choice* c; int n; };
-static ComboSetting kCombos[] = {{ID_MONITOR, L"UG_MONITOR", kMonitor, 1}, {ID_WINSIZE, L"UG_WINDOW", kWinSize, 8},
+static ComboSetting kCombos[] = {{ID_MONITOR, L"UG_MONITOR", kMonitor, 1}, {ID_WINSIZE, L"UG_WINDOW", kWinSize, N_WINSIZE},
                                  {ID_SCREEN, L"UG_WIDESCREEN", kScreen, 2}, {ID_FIT, L"UG_ASPECT", kFit, 2},
                                  {ID_SCALE, L"UG_SCALE", kScale, 6}, {ID_PADS, L"UG_PADS", kPads, 4},
                                  {ID_LEVEL, L"UG_LEVEL", kLevel, 18}, {ID_CAMERA, L"UG_INVERTY", kCamera, 2}};
@@ -638,7 +669,7 @@ static void BuildArt(int w, int h) {
         SelectObject(pd, op); SelectObject(pd, ob);
         DeleteObject(pen);
         ArtText(pd, {260, 665, 1500, 755}, g_titleFont, kAccent, L"SETTINGS", DT_SINGLELINE | DT_VCENTER);
-        static const wchar_t* rows[] = {L"Monitor", L"Window size", L"Screen", L"Picture", L"Render scale",
+        static const wchar_t* rows[] = {L"Monitor", L"Resolution", L"Screen", L"Picture", L"Render scale",
                                         L"Players (gamepads)", L"Camera (right stick)", L"Level (test cheat)",
                                         L"HD texture pack"};
         for (int i = 0; i < 9; i++)
@@ -1309,7 +1340,7 @@ static void CreateLauncherControls() {
     MakeCheck(L"60 fps", ID_FPS60, 700, 772, 300);
     MakeCheck(L"VSync", ID_VSYNC, 1060, 772, 300);
     MakeCombo(ID_MONITOR, kMonitor, g_nMonitors, 720, 841, 780);
-    MakeCombo(ID_WINSIZE, kWinSize, 8, 720, 902, 780);
+    MakeCombo(ID_WINSIZE, kWinSize, N_WINSIZE, 720, 902, 780);
     MakeCombo(ID_SCREEN, kScreen, 2, 720, 963, 780);
     MakeCombo(ID_FIT, kFit, 2, 720, 1024, 780);
     MakeCombo(ID_SCALE, kScale, 6, 720, 1085, 780);
