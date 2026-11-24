@@ -118,8 +118,26 @@ A. PINK HOUSE (NJ, user screenshot): a pink house wall shows a diagonal split, a
    `cd "G:\Project Underground"; .\out\underground.exe`, stand there, press F9. Then: read the pixel id on the
    wall, find "#id" in capture.log, see what is wrong (texture/stage state, vertex attrs, clip). The scripted
    NJ route does not land in the same spot every run.
+   SESSION 2026-11-24 (pink house, NOT FIXED, cause not isolated):
+   - Excluded: position garbage (attr 0 never hit the bad-float path), dropped draws (0 "buffers full" / "pool
+     exhausted" in 20 logs), strips split over several DRAW_ARRAYS (0 cases in 3 NJ runs), wrong winding in the level
+     data (NJ.scn: 13958 triangles agree with their normals, 363 oppose, all of the large strongly opposing ones are
+     two small props), front face state (0x900, cull 1/404 on the walls looked at).
+   - The game culls per mesh (occluders): partly drawn sectors are normal; the 4 checked were hidden behind nearer
+     geometry. Best remaining lead: a mesh judged occluded when it is visible. Next: capture the house itself, then
+     compare with NJ.scn (which mesh is missing), then look at the occlusion code.
+   - Never captured with F9: the holes were only in out/cmp_12300.jpg, and probably in out/badattr/r2 shots 08400/09600
+     (mission spot, skater at the gate). The route is random: 1 run in ~10 got there. Trigger captures on content
+     (pink siding covering > 12 % of the screen), not on a frame number. Camera override (UG_CAM, removed) is useless
+     for this: the game culls with its real camera.
+   - FIXED (proven, but not shown to be this bug): valid texcoords with a denormal component were replaced by the
+     previous vertex's (fetch_vertex). NaN / >1e30 texcoords in the level data (a flat porch trim) still are.
+   - Tools in out/badattr (git-ignored): prx.py (unpack), sector.py / allsec.py (NJ.scn parser: sectors, meshes, index
+     lists), missing.py / partial.py (on-screen meshes not submitted in a capture), crop.py (overlay on the shot).
 B. Also seen (debug run, NJ pool by a brick wall): the wall's brick pattern drawn on the ground in front of it.
    Unknown whether it is a bug or the game's effect.
+   2026-11-24: in out/pink/shot.png the fence next to the wall shows on the ground too: looks like the game's own
+   planar reflection in the wet floor (not proven).
 C. README pictures (user asked): hd_compare.jpg REPLACED (static UG_SHOTAB pair 09600/09601 of a NJ run with the
    HD pack, box on the ramp: graffiti only in HD; scratchpad hdcompose.py, hdpairs.py). TODO: all 15 maps
    (nj ny fl sd hi vc sj ru hn ph se sc sc2 dj vn; not testlevel, not sp = cut/empty): out/levels2/sweep.sh

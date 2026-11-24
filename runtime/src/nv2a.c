@@ -166,12 +166,14 @@ static void fetch_vertex(uint32_t index, KVertex *out) {
         decode_attr(a, type, size, g_mem + p, o);
         if (type == 2) {   /* float garbage (denormal / NaN / inf): an attribute that points at the next vertex in the
                             * array (THUG's cutscene shadow receivers: stride 24, texcoords at +0x18 / +0x20) reads past
-                            * the last vertex; take the previous vertex's value (smeared, it drew dark shadow wedges) */
+                            * the last vertex; take the previous vertex's value (smeared, it drew dark shadow wedges).
+                            * A denormal inside the vertex is real data (NJ has texcoords with u = 5.6e-45): kept. */
             static float last[16][4];
-            int bad = 0;
+            uint32_t rel = (off & 0x7FFFFFFF) - (KREG(0x1720) & 0x7FFFFFFF);
+            int bad = 0, past = rel + 4 * size > stride;
             for (uint32_t i = 0; i < size && i < 4; i++) {
                 float v = o[i], av = v < 0 ? -v : v;
-                if (v != v || av > 1e30f || (av != 0.0f && av < 1e-30f)) bad = 1;
+                if (v != v || av > 1e30f || (past && av != 0.0f && av < 1e-30f)) bad = 1;
             }
             if (bad) memcpy(o, last[a], 16); else memcpy(last[a], o, 16);
         }
