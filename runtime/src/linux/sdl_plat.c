@@ -86,6 +86,9 @@ HWND linux_create_window(void) {
     if (installed) SDL_RaiseWindow(g_win);
     SDL_ShowWindow(g_win);
     SDL_SyncWindow(g_win);
+#ifndef __ANDROID__
+    SDL_StartTextInput(g_win);   /* SDL_EVENT_TEXT_INPUT for the game's text entry (no on-screen keyboard on desktop) */
+#endif
     return (HWND)g_win;
 }
 
@@ -110,7 +113,14 @@ void linux_pump_events(void) {
             linux_surface_lost = 1;   /* the native window was replaced while in the background */
             break;
 #endif
+        case SDL_EVENT_TEXT_INPUT: {   /* typing into the game's text entry (hle.c) */
+            extern void kbd_text_push(int);
+            for (const char *t = e.text.text; t && *t; t++) kbd_text_push((unsigned char)*t);
+            break;
+        }
         case SDL_EVENT_KEY_DOWN:
+            if (e.key.key == SDLK_RETURN && !(e.key.mod & SDL_KMOD_ALT)) { extern void kbd_text_push(int); kbd_text_push(13); }
+            if (e.key.key == SDLK_BACKSPACE) { extern void kbd_text_push(int); kbd_text_push(8); }
             if (e.key.repeat) break;
             if (e.key.key == SDLK_ESCAPE) { LOG("[gpu] escape\n"); ExitProcess(0); }
             if (e.key.key == SDLK_F11 || (e.key.key == SDLK_RETURN && (e.key.mod & SDL_KMOD_ALT))) toggle_fullscreen();

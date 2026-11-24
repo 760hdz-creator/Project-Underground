@@ -235,8 +235,15 @@ print(','.join(ev))")" UG_SHOT=1200 ./out/underground.exe   (NJ level by ~frame 
      through waveOut; Android 6), mixer thread TIME_CRITICAL, underruns logged. NJ route 290 s: 0 underruns.
      Linux SDL path: same queue, builds; not run (WSL audio). User should confirm by ear. If still late: WASAPI
      exclusive/low-latency path (~10-20 ms).
-  3. Keyboard typing in the name entry (on-screen keyboard): today arrows/Z navigate (pad emulation). Typing needs a
-     hook on the keyboard UI (or XInput debug keyboard if THUG supports it).
+  3. DONE 2026-11-23 (late): keyboard typing. THUG keeps the PS2 USB-keyboard path: create_onscreen_keyboard
+     (scripts/engine/menu/keyboard.qb) calls StartKeyboardHandler; its task 0xFA660 polls GetKeyboardInput 0x8BE20
+     (Xbox stub returning 0, now HLE in hle.c/hle.txt) and runs handle_keyboard_input per char (0x20..0x7E, 0x19
+     enter, 0x18 backspace; 0x14..0x17 = arrows for menus at 0xF9A60). Several tasks poll it each frame, so the HLE
+     hands every caller between two NV2A flips the same char (g_guest_flips), one char per frame. Typing mode
+     (letters stop driving the pad) = handler task (return 0xFA688) polled in the last second. Windows WM_CHAR,
+     Linux SDL text input. Verified: Save Skater -> Create New -> typed "Kid42" + Enter -> SaveMeta "Name=Kid42".
+     UG_TYPE="<s>:<text>,..." scripted typing ('<' backspace, '|' enter). Route: A 6..30 step 3, 52:DOWN, 56:A,
+     61:A (Create New), then the keyboard is up at ~61 s. qb.prx unpacker: scratchpad prx.py (LZSS, N=4096 F=18).
   4. In-game overlay menu: F1 or L3+R3, settings usable during play (fullscreen, camera invert = g_invert_x/y in
      hle.c, HD on/off = g_hd_hidden, fps). Plan: layered Win32 window over the game (GDI like the launcher), game
      paused while open; Linux later.

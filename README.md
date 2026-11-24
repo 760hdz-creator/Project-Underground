@@ -127,6 +127,9 @@ Known gaps:
 | START / BACK | Enter / Backspace |
 | | F11 or Alt+Enter: fullscreen, F10: HD textures on/off, Esc: quit |
 
+Name entry (save names, skater names): just type. While the on-screen keyboard is open, letters, digits,
+Backspace and Enter go into the text; the arrow keys still move over the on-screen keys.
+
 Controllers: Xbox, PlayStation, Switch Pro / Joy-Con, Steam, 8BitDo and most other USB and Bluetooth pads work
 (buttons go by position, so the bottom face button is A). SDL3 (`SDL3.dll` next to the game on Windows) and the
 community [SDL_GameControllerDB](https://github.com/mdqinc/SDL_GameControllerDB) (`gamecontrollerdb.txt`) cover a

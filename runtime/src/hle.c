@@ -50,6 +50,27 @@ static int our_focus(void) {
 }
 static int key(int vk) { return vk && (GetAsyncKeyState(vk) & 0x8000) != 0; }
 
+/* Typing on the PC keyboard. THUG keeps the PS2 USB-keyboard path: the on-screen keyboard script
+ * (create_onscreen_keyboard, scripts/engine/menu/keyboard.qb) calls StartKeyboardHandler, whose task (0xFA660) polls
+ * GetKeyboardInput(buf) every frame and runs the script handle_keyboard_input for each char: 0x20..0x7E text, 0x19
+ * enter (got_enter), 0x18 backspace (got_backspace). Other tasks poll it too (menu arrows 0x14..0x17 at 0xF9A60), so
+ * like a per-frame keyboard buffer every caller between two flips gets the same chars. On Xbox the function is a stub
+ * returning 0; here it returns what the window received (WM_CHAR / SDL text input), one char per frame. While the
+ * handler task polls, the letter keys stop driving the pad so typing does not also press buttons. */
+static char kbd_q[256];
+static volatile unsigned kbd_head, kbd_tail;   /* window thread writes head, guest thread reads tail */
+static volatile uint32_t kbd_poll_ms;           /* last poll by the keyboard handler task (GetTickCount) */
+static int kbd_typing(void) { return kbd_poll_ms && GetTickCount() - kbd_poll_ms < 1000; }
+void kbd_text_push(int ch) {
+    if (ch == 13 || ch == 10) ch = 0x19;   /* Enter */
+    else if (ch == 8) ch = 0x18;           /* Backspace */
+    else if (ch < 0x20 || ch > 0x7E) return;
+    if (!kbd_typing() || kbd_head - kbd_tail >= sizeof kbd_q) return;
+    kbd_q[kbd_head % sizeof kbd_q] = (char)ch;
+    __atomic_thread_fence(__ATOMIC_RELEASE);
+    kbd_head++;
+}
+
 /* keyboard on port 0: arrows = D-pad, Enter = START, Backspace = BACK, Z/X/C/V = A/B/X/Y, F/G = Black/White,
  * Q/E = LT/RT, WASD = left stick, IJKL = right stick */
 static const int kb_dpad[6] = {VK_UP, VK_DOWN, VK_LEFT, VK_RIGHT, VK_RETURN, VK_BACK};
@@ -73,8 +94,10 @@ static void fill_state(uint32_t dst, int port) {
         b & 0x1000 ? 255 : 0, b & 0x2000 ? 255 : 0, b & 0x4000 ? 255 : 0, b & 0x8000 ? 255 : 0,
         b & 0x0200 ? 255 : 0, b & 0x0100 ? 255 : 0, h.lt, h.rt};
     if (port == 0 && our_focus()) {
-        for (int i = 0; i < 6; i++) if (key(kb_dpad[i])) buttons |= 1u << i;
-        for (int i = 0; i < 8; i++) if (key(kb_analog[i])) analog[i] = 255;
+        int typing = kbd_typing();   /* text entry polling the keyboard: only the arrows still act as the D-pad */
+        for (int i = 0; i < (typing ? 4 : 6); i++) if (key(kb_dpad[i])) buttons |= 1u << i;
+        for (int i = 0; i < 8 && !typing; i++) if (key(kb_analog[i])) analog[i] = 255;
+        if (typing) goto kb_done;
         if (key('W')) h.ly = 32767;
         if (key('S')) h.ly = -32767;
         if (key('A')) h.lx = -32767;
@@ -83,6 +106,7 @@ static void fill_state(uint32_t dst, int port) {
         if (key('K')) h.ry = -32767;
         if (key('J')) h.rx = -32767;
         if (key('L')) h.rx = 32767;
+    kb_done:;
     }
     if (port == 0) {   /* UG_INPUT=<s>:<button>[:<dur s>],... scripted pad 0 input (guest seconds; default 0.15 s) */
         static struct { double t, d; int btn; } ev[256];
@@ -283,6 +307,42 @@ void x86_hle(X86Context *c, uint32_t va) {
         }
         WR32(fb, 0);
         ret_std(c, 2, 997);   /* ERROR_IO_PENDING; dwStatus already says done */
+        return;
+    }
+    case 0x8BE20: { /* int GetKeyboardInput(char *buf) (cdecl): this frame's typed chars */
+        static uint32_t snap_flip = ~0u;
+        static int snap_n;
+        static char snap;
+        uint32_t buf = ARG(0);
+        if (RD32(c->esp) == 0xFA688u) {   /* the keyboard handler task: a text entry is open */
+            if (!kbd_typing()) LOG("[input] text entry open: typing goes to the game\n");
+            kbd_poll_ms = GetTickCount() | 1;
+        }
+        {   /* UG_TYPE=<s>:<text>[,...] scripted typing (guest seconds; '|' = Enter, '<' = Backspace) */
+            static struct { double t; char s[64]; } ev[16];
+            static int nev = -1;
+            if (nev < 0) {
+                nev = 0;
+                char b[1024];
+                snprintf(b, sizeof b, "%s", getenv("UG_TYPE") ? getenv("UG_TYPE") : "");
+                for (char *tok = strtok(b, ","); tok && nev < 16; tok = strtok(NULL, ","))
+                    if (sscanf(tok, "%lf:%63[^,]", &ev[nev].t, ev[nev].s) == 2) nev++;
+            }
+            double now = sched_now_100ns() / 1e7;
+            for (int i = 0; i < nev && kbd_typing(); i++) {
+                if (!ev[i].s[0] || now < ev[i].t) continue;
+                for (const char *p = ev[i].s; *p; p++) kbd_text_push(*p == '|' ? 13 : *p == '<' ? 8 : *p);
+                ev[i].s[0] = 0;
+            }
+        }
+        if (g_guest_flips != snap_flip) {
+            snap_flip = g_guest_flips;
+            snap_n = 0;
+            if (kbd_tail != kbd_head) { __atomic_thread_fence(__ATOMIC_ACQUIRE); snap = kbd_q[kbd_tail % sizeof kbd_q]; kbd_tail++; snap_n = 1; }
+        }
+        if (snap_n) WR8(buf, (uint8_t)snap);
+        c->eax = (uint32_t)snap_n;
+        c->esp += 4;
         return;
     }
     default:

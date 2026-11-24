@@ -2,6 +2,10 @@
 # XDK 5659 addresses found with tools/oovpa_scan.py (byte signatures); the runtime dispatches
 # x86_hle(c, va) on the VA (runtime/src/hle.c, dsound.c).
 
+# Game: GetKeyboardInput(char *buf) -> count. A stub returning 0 on Xbox (PS2 USB keyboard path); host keyboard
+# text for the name entry / chat keyboards (hle.c).
+8BE20 GetKeyboardInput
+
 # XPP (USB input). THUG polls XInputOpen per port; it never calls XGetDevices / XGetDeviceChanges.
 200AF3 XInitDevices
 201592 XInputOpen

@@ -64,6 +64,7 @@ void sched_maybe_yield(void);                        /* yield if the current sli
 _Noreturn void sched_exit_thread(uint32_t status);
 void sched_run(void);                                 /* main loop; returns when all threads exit */
 uint64_t sched_now_100ns(void);                       /* guest time (100 ns units since boot) */
+extern volatile uint32_t g_guest_flips;              /* NV2A flips so far (nv2a.c) */
 double host_ms(void);                                 /* host monotonic clock in ms (dsound.c) */
 void script_file_event(const char *path);           /* scripted-input file anchors (hle.c) */
 void sched_sleep_until(uint64_t t100ns);

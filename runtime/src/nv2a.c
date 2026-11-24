@@ -7,6 +7,8 @@
 #include <windows.h>
 #include <string.h>
 #include "rt.h"
+
+volatile uint32_t g_guest_flips;
 #include "kelvin.h"
 
 #define NV_BASE         0xFD000000u
@@ -382,6 +384,7 @@ static void pgraph_method(uint32_t subch, uint32_t method, uint32_t data) {
         break;
     case 0x1D94: gpu_clear(data); break;                                /* CLEAR_SURFACE */
     case 0x012C:                                                        /* FLIP_INCREMENT_WRITE */
+        g_guest_flips++;
         /* XDK Swap: 1D8C (scratch) holds the surface offset just completed */
         gpu_flip((nv2a_dma_base(KREG(K_DMA_COLOR)) + KREG(K_ZSTENCIL_CLEAR)) & 0x03FFFFFF);
         {   /* The NV2A flips at vblank: pace flips to UG_FPS (default 60; 0 = unlimited). Only this guest thread waits

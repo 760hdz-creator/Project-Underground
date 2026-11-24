@@ -81,6 +81,7 @@ static LRESULT CALLBACK wndproc(HWND h, UINT m, WPARAM w, LPARAM l) {
         }
         break;
     case WM_SYSCHAR: if (w == VK_RETURN) return 0; break;
+    case WM_CHAR: { extern void kbd_text_push(int); kbd_text_push((int)w); return 0; }
     case 0x02E0: {   /* WM_DPICHANGED (moved to a monitor with another scale): take Windows' suggested rect */
         const RECT *s = (const RECT *)l;
         if (!g_creating && !(GetWindowLongW(h, GWL_STYLE) & WS_POPUP))
