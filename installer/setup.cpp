@@ -552,13 +552,13 @@ static const RECT kBoards[6] = {{1590, 225, 2522, 421}, {1590, 433, 2522, 621}, 
                                 {1590, 832, 2522, 1021}, {1590, 1030, 2522, 1219}, {1590, 1228, 2522, 1420}};
 static const RECT kClose = {2618, 12, 2710, 100};     // the X plate, top right
 static const RECT kOverlay = {200, 650, 1550, 1415};  // launcher settings panel (over the skater)
-static const RECT kStatus = {200, 1438, 2250, 1482}, kBar = {200, 1474, 2250, 1534}, kInfo = {2280, 1446, 2600, 1494};
+static const RECT kStatus = {200, 1438, 2250, 1482}, kStatusSetup = {200, 1432, 2250, 1468}, kBar = {200, 1464, 2250, 1534}, kInfo = {2280, 1446, 2600, 1494};
 static double g_scale = 1;
 static HDC g_artDC;
 static HBITMAP g_artBmp, g_artPanelBmp;                 // the art, and the art with the settings panel painted in
 static HBRUSH g_artBrush, g_plainBrush, g_panelBrush;   // g_artBrush: the current one (control backgrounds)
 static bool g_panel;
-static HFONT g_font, g_titleFont, g_smallFont, g_boardFont, g_subFont;
+static HFONT g_font, g_titleFont, g_smallFont, g_boardFont, g_subFont, g_statusFont;
 static HBRUSH g_fieldBrush;
 static const COLORREF kText = RGB(236, 232, 224), kDim = RGB(170, 162, 150), kAccent = RGB(247, 148, 29);
 static const COLORREF kOff = RGB(125, 120, 112), kField = RGB(24, 22, 20), kEdge = RGB(150, 100, 40);
@@ -1137,7 +1137,7 @@ static LRESULT CALLBACK SkateBarProc(HWND h, UINT m, WPARAM wp, LPARAM lp) {
             Pen railPen(Color(255, 0, 0, 0), 1.5f);
             g.DrawRectangle(&railPen, 0.f, railY - railH / 2, (REAL)W - 1, railH);
             // wheels sit on the rail; trucks; deck = a thick stroke with kicked-up tails (black outline under it)
-            float wy = railY - railH / 2 - wr, deckT = H * 0.12f, deckY = wy - wr - H * 0.13f;
+            float wy = railY - railH / 2 - wr, deckT = H * 0.12f, deckY = wy - wr - H * 0.07f;
             float spin = pct * 40.f;
             float x0 = cx - L / 2, x1 = cx + L / 2, tail = L * 0.16f, lift = H * 0.17f;
             GraphicsPath deck;
@@ -1165,6 +1165,24 @@ static LRESULT CALLBACK SkateBarProc(HWND h, UINT m, WPARAM wp, LPARAM lp) {
             g.DrawPath(&dwood, &deck);
             g.TranslateTransform(0.f, -deckT * 0.32f);
             g.DrawPath(&dgrip, &deck);   // grip tape along the top
+            g.ResetTransform();
+            {   // the percentage riding on top of the board
+                wchar_t pc[8];
+                swprintf(pc, 8, L"%d%%", (int)GetWindowLongPtrW(h, GWLP_USERDATA));
+                FontFamily ff(L"Impact");
+                Font pf(&ff, H * 0.34f, FontStyleRegular, UnitPixel);
+                StringFormat sf;
+                sf.SetAlignment(StringAlignmentCenter);
+                sf.SetLineAlignment(StringAlignmentFar);
+                RectF box(cx - L / 2, -H * 0.2f, L, deckY + deckT * 0.75f + H * 0.2f);   // digits have no descent: sit on the deck
+                GraphicsPath tp;
+                tp.AddString(pc, -1, &ff, FontStyleRegular, H * 0.34f, box, &sf);
+                Pen tout(Color(255, 0, 0, 0), 3.f);
+                tout.SetLineJoin(LineJoinRound);
+                SolidBrush tfill(Color(255, 255, 255, 255));
+                g.DrawPath(&tout, &tp);
+                g.FillPath(&tfill, &tp);
+            }
         }
         BitBlt(wdc, 0, 0, W, H, dc, 0, 0, SRCCOPY);
         SelectObject(dc, ob);
@@ -1191,8 +1209,8 @@ static void MakeStatusBar(const wchar_t* text, bool progress) {
         }
         g_progress = MakeAt(L"UgSkateBar", L"", 0, ID_PROGRESS, kBar);
     }
-    g_status = MakeAt(L"STATIC", text, SS_LEFT | SS_CENTERIMAGE | SS_ENDELLIPSIS | SS_NOPREFIX, ID_STATUS, kStatus,
-                      g_smallFont);
+    g_status = MakeAt(L"STATIC", text, SS_LEFT | SS_CENTERIMAGE | SS_ENDELLIPSIS | SS_NOPREFIX, ID_STATUS,
+                      progress ? kStatusSetup : kStatus, progress ? g_statusFont : g_smallFont);
 }
 
 static void CreateLauncherControls() {
@@ -1279,6 +1297,7 @@ int WINAPI wWinMain(HINSTANCE inst, HINSTANCE, PWSTR, int) {
     g_font = font(38, FW_NORMAL, L"Segoe UI");
     g_smallFont = font(32, FW_NORMAL, L"Segoe UI");
     g_subFont = font(32, FW_SEMIBOLD, L"Segoe UI");
+    g_statusFont = font(24, FW_NORMAL, L"Segoe UI");   // setup status line, above the skateboard bar
     g_titleFont = font(76, FW_NORMAL, L"Impact");
     g_boardFont = font(84, FW_NORMAL, L"Impact");
     g_fieldBrush = CreateSolidBrush(kField);
