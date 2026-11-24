@@ -219,6 +219,11 @@ SESSION 2026-11-24 (polish, after the graphics options):
   Log line "[gpu] busy". Debug: UG_OPTAB=1 (caches off in odd frames), UG_TEXHASH=1.
 - HD pack A/B on ny sd hi ru vn: correct. The free-skate route needs +4 s (out/dev/free4.txt) with the pack; a run only
   counts when its log has "[level] load_" AND the level's own textures (a run without it stays in NJ or a menu).
+- BUILDS (2026-11-24, cf8b180, local only, not released): Windows installer 22.8 MB (payload built with its own python into a
+  fresh folder, game started and reached the menus; the toolchain was a junction, the Android kit inside is the older one), Linux
+  package 8.4 MB (--iso install 83 s, NJ free skate on llvmpipe OK, uninstalled). UG_INPUT runs on a fresh folder exit at
+  HalReturnToFirmware(2) on purpose: run them twice. Homepage card image (docs/images/maps/ru.jpg -> landing/img/thug.jpg):
+  deploy blocked by the permission classifier, waits for the user.
 D. Pushed to both remotes 2026-11-24 (no tag, no release).
 1. Sky wedge (cosmetic); pool-floor rectangle (UG_DBGCOLOR=7). Neither showed in 16 NJ shots on 2026-11-23
    (run_texgen, run_dbg7); a quarter-pipe light/dark split at f14400 is not a shadow draw (baked lighting).
