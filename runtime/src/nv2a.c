@@ -92,6 +92,8 @@ uint32_t nv2a_dma_base(uint32_t handle) {
     return b;
 }
 
+uint64_t g_flip_exit;   /* end of the last flip, pacing wait included (gpu_vulkan.c: busy time) */
+
 /* ---- vertex fetch and primitive assembly ---- */
 static float k_cur[16][4];             /* current (inline) attribute values for disabled arrays */
 static uint32_t k_prim;                /* NV097_SET_BEGIN_END op, 0 = outside begin/end */
@@ -155,28 +157,51 @@ static uint32_t attr_bytes(uint32_t type, uint32_t size) {
     return (b + 3) & ~3u;
 }
 
-static void fetch_vertex(uint32_t index, KVertex *out) {
-    for (int a = 0; a < 16; a++) {
-        uint32_t fmt = KREG(K_VTX_FORMAT + a * 4), type = fmt & 0xF, size = (fmt >> 4) & 0xF, stride = fmt >> 8;
-        float *o = out->a[a];
-        if (!size) { memcpy(o, k_cur[a], 16); continue; }
+/* Vertex arrays: the enabled attributes, resolved once per batch; the disabled ones are constant (k_cur) and come from
+ * the template vertex. */
+typedef struct { uint32_t a, type, size, stride, addr, past; } VtxAttr;
+static VtxAttr va[16];
+static int n_va;
+static KVertex va_template;
+static float u8f[256];
+
+static void vertex_setup(void) {
+    if (!u8f[255]) for (int i = 0; i < 256; i++) u8f[i] = i / 255.f;
+    n_va = 0;
+    memcpy(&va_template, k_cur, sizeof va_template);
+    for (uint32_t a = 0; a < 16; a++) {
+        uint32_t fmt = KREG(K_VTX_FORMAT + a * 4), size = (fmt >> 4) & 0xF;
+        if (!size) continue;
         uint32_t off = KREG(0x1720 + a * 4);
-        uint32_t base = nv2a_dma_base(KREG((off & 0x80000000u) ? K_DMA_VERTEX_B : K_DMA_VERTEX_A));
-        uint32_t p = (base + (off & 0x7FFFFFFF) + index * stride) & 0x03FFFFFF;
-        decode_attr(a, type, size, g_mem + p, o);
-        if (type == 2) {   /* float garbage (denormal / NaN / inf): an attribute that points at the next vertex in the
-                            * array (THUG's cutscene shadow receivers: stride 24, texcoords at +0x18 / +0x20) reads past
-                            * the last vertex; take the previous vertex's value (smeared, it drew dark shadow wedges).
-                            * A denormal inside the vertex is real data (NJ has texcoords with u = 5.6e-45): kept. */
-            static float last[16][4];
-            uint32_t rel = (off & 0x7FFFFFFF) - (KREG(0x1720) & 0x7FFFFFFF);
-            int bad = 0, past = rel + 4 * size > stride;
-            for (uint32_t i = 0; i < size && i < 4; i++) {
-                float v = o[i], av = v < 0 ? -v : v;
-                if (v != v || av > 1e30f || (past && av != 0.0f && av < 1e-30f)) bad = 1;
-            }
-            if (bad) memcpy(o, last[a], 16); else memcpy(last[a], o, 16);
+        VtxAttr *t = &va[n_va++];
+        t->a = a; t->type = fmt & 0xF; t->size = size; t->stride = fmt >> 8;
+        t->addr = nv2a_dma_base(KREG((off & 0x80000000u) ? K_DMA_VERTEX_B : K_DMA_VERTEX_A)) + (off & 0x7FFFFFFF);
+        t->past = (off & 0x7FFFFFFF) - (KREG(0x1720) & 0x7FFFFFFF) + 4 * size > t->stride;
+    }
+}
+
+static void fetch_vertex(uint32_t index, KVertex *out) {
+    static float last[16][4];
+    memcpy(out, &va_template, sizeof *out);
+    for (int k = 0; k < n_va; k++) {
+        const VtxAttr *t = &va[k];
+        const uint8_t *q = g_mem + ((t->addr + index * t->stride) & 0x03FFFFFF);
+        float *o = out->a[t->a];
+        if (t->type == 0 && t->size == 4) { o[0] = u8f[q[2]]; o[1] = u8f[q[1]]; o[2] = u8f[q[0]]; o[3] = u8f[q[3]]; continue; }
+        if (t->type != 2) { decode_attr((int)t->a, t->type, t->size, q, o); continue; }
+        /* float garbage (denormal / NaN / inf): an attribute that points at the next vertex in the array (THUG's cutscene
+         * shadow receivers: stride 24, texcoords at +0x18 / +0x20) reads past the last vertex; take the previous vertex's
+         * value (smeared, it drew dark shadow wedges). A denormal inside the vertex is real data (NJ has texcoords with
+         * u = 5.6e-45): kept. Bit tests: above 1e30 (0x7149F2CA) covers inf and NaN; 1e-30 is 0x0DA24260. */
+        uint32_t w[4] = {0, 0, 0, 0x3F800000u}, n = t->size < 4 ? t->size : 4;
+        int bad = 0;
+        for (uint32_t i = 0; i < n; i++) {
+            w[i] = ld32(q + 4 * i);
+            uint32_t m = w[i] & 0x7FFFFFFF;
+            bad |= m > 0x7149F2CAu || (t->past && m && m < 0x0DA24260u);
         }
+        memcpy(o, w, 16);
+        if (bad) memcpy(o, last[t->a], 16); else memcpy(last[t->a], o, 16);
     }
 }
 
@@ -250,6 +275,7 @@ static void draw_arrays(uint32_t data) {
     uint32_t start = data & 0xFFFFFF, n = (data >> 24) + 1;
     kv = grow(kv, &kv_cap, kv_n + n, sizeof(KVertex));
     uint32_t b = kv_n;
+    vertex_setup();
     for (uint32_t i = 0; i < n; i++) fetch_vertex(start + i, &kv[kv_n++]);
     assemble(k_prim, b, n);
 }
@@ -259,6 +285,7 @@ static void end_primitive(void) {
     if (kelem_n) {
         kv = grow(kv, &kv_cap, kv_n + kelem_n, sizeof(KVertex));
         uint32_t b = kv_n;
+        vertex_setup();
         for (uint32_t i = 0; i < kelem_n; i++) fetch_vertex(kelem[i], &kv[kv_n++]);
         assemble(k_prim, b, kelem_n);
         kelem_n = 0;
@@ -316,6 +343,7 @@ static const uint32_t st_watch[] = {0x1E94, 0x0314, 0x1E60, 0x1E70, 0x0208, 0x1B
                                     0x0304, 0x029C, 0x02A4, 0x17FC, 0x1E98, 0x1EA0};
 static uint32_t st_val[sizeof st_watch / 4][ST_VALS], st_nval[sizeof st_watch / 4];
 static uint64_t st_next;
+static int st_period = -1;
 
 static void stats_method(uint32_t method, uint32_t data) {
     st_hist[method >> 2]++;
@@ -328,12 +356,11 @@ static void stats_method(uint32_t method, uint32_t data) {
 }
 
 static void stats_dump(void) {
-    static int period = -1;
-    if (period < 0) { const char *e = getenv("UG_PBSTATS"); period = e ? atoi(e) : 0; }
-    if (!period) return;
+    if (st_period < 0) { const char *e = getenv("UG_PBSTATS"); st_period = e ? atoi(e) : 0; }
+    if (!st_period) return;
     uint64_t now = sched_now_100ns();
     if (now < st_next) return;
-    st_next = now + (uint64_t)period * 10000000ull;
+    st_next = now + (uint64_t)st_period * 10000000ull;
     LOG("[pbstats] t=%.1f s, clears %d\n", now / 1e7, pb_clears);
     for (int k = 0; k < 40; k++) {   /* top methods */
         uint32_t best = 0, bm = 0;
@@ -358,7 +385,7 @@ static void pgraph_method(uint32_t subch, uint32_t method, uint32_t data) {
         LOG("[pb] sub%u %04X = %08X\n", subch, method, data);
     if (method == 0) { sub_class[subch] = data; return; }
     if (subch != 0) return;   /* subchannel 0 = Kelvin (3D) */
-    stats_method(method, data);
+    if (st_period) stats_method(method, data);
     g_kreg[method >> 2] = data;
     if (method >= 0x1500 && method < 0x1B00 && method != 0x17FC && method != 0x1800 && method != 0x1808 &&
         method != 0x1810 && method != 0x1818 && (method < 0x1720 || method >= 0x17A0))
@@ -436,6 +463,7 @@ static void pgraph_method(uint32_t subch, uint32_t method, uint32_t data) {
                 ri = (ri + 1) & 3;
             }
             last = t;
+            g_flip_exit = t;
         }
         break;
     case 0x01A4: k_dma_semaphore = data; break;                         /* SET_CONTEXT_DMA_SEMAPHORE */

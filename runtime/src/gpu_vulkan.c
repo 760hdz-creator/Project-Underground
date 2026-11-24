@@ -488,6 +488,23 @@ static void set_clip_scissor(void) {
     r_cx = clip_x; r_cy = clip_y;
 }
 
+/* UG_OPTAB=1: the draw caches (texture hash, descriptor sets, dynamic state) are off in odd frames; the "busy" log line
+ * compares even and odd frames (debug) */
+static int opt_off(void) {
+    static int ab = -1;
+    if (ab < 0) ab = getenv("UG_OPTAB") != NULL;
+    return ab && (frame_no & 1);
+}
+
+/* dynamic state of the current rendering as last set by draw_impl (dst_ok = 0: unknown, set everything) */
+typedef struct {
+    uint32_t cull, front, ztest, zwrite, bias, zfunc, stest, sop[4], sfmask, smask, sref;
+    float units, factor, bc[4];
+} DynState;
+static DynState dst;
+static VkPipeline dst_pipe;
+static int dst_ok;
+
 static void begin_rendering(void) {
     if (rendering && r_rt == cur_rt && r_zs == cur_zs && r_hw == cur_rt->hw && r_hh == cur_rt->hh) {
         if (r_cx != clip_x || r_cy != clip_y) set_clip_scissor();
@@ -510,6 +527,7 @@ static void begin_rendering(void) {
     ri.layerCount = 1; ri.colorAttachmentCount = 1; ri.pColorAttachments = &ca;
     if (cur_zs) { ri.pDepthAttachment = &za; ri.pStencilAttachment = &za; }
     vkCmdBeginRendering(CMD(), &ri);
+    dst_ok = 0;
     rendering = 1; r_rt = cur_rt; r_zs = cur_zs; r_hw = cur_rt->hw; r_hh = cur_rt->hh;
     VkViewport vp = {0, 0, (float)cur_rt->hw, (float)cur_rt->hh, 0, 1};
     vkCmdSetViewport(CMD(), 0, 1, &vp);
@@ -750,7 +768,7 @@ static uint32_t texel(int kind, const uint8_t *p, const uint32_t *pal) {
 typedef struct {
     uint32_t addr, fmt, pitch, pal_addr, pal_len;
     uint64_t hash;
-    uint32_t last_frame;
+    uint32_t last_frame, born;   /* born: frame of the last upload */
     int w, h, levels;
     int hd;           /* HD pack texture: 1 + pack index once loaded, -(1 + index) while waiting for upload budget */
     Img im;
@@ -1094,6 +1112,20 @@ static VkImageView get_texture(int i, int *rect, int *tw, int *th, float *zmax) 
         pal_len = 256u >> ((pw >> 2) & 3);
         pal_addr = (nv2a_dma_base(KREG((pw & 1) ? K_DMA_B : K_DMA_A)) + (pw & ~0x3Fu)) & 0x03FFFFFF;
     }
+    /* a texture unchanged for 8 frames is hashed once per frame, not at every draw (Vancouver: thousands of draws);
+     * changed memory is then seen one frame later at most */
+    static struct { uint32_t addr, fmt, pitch, pal_addr, pal_len, frame; int w, h; TexEntry *e; uint64_t hash; } quick[4096], *qk;
+    qk = &quick[((addr >> 7) * 0x9E3779B1u ^ fmtw * 0x85EBCA77u) >> 20];
+    static int noquick = -1;   /* UG_TEXHASH=1: hash at every draw (debug) */
+    if (noquick < 0) noquick = getenv("UG_TEXHASH") != NULL;
+    if (qk->frame == frame_no && qk->e && qk->addr == addr && qk->fmt == fmtw && qk->pitch == pitch && qk->w == w && qk->h == h &&
+        qk->pal_addr == pal_addr && qk->pal_len == pal_len && !noquick && !opt_off()) {
+        TexEntry *e = qk->e;
+        if (e->im.img && e->hash == qk->hash && e->addr == addr && e->fmt == fmtw && frame_no - e->born >= 8 && e->hd >= 0) {
+            e->last_frame = frame_no;
+            return tex_view(e);
+        }
+    }
     uint32_t nbytes = tex_bytes(f, w, h, levels, pitch);
     uint64_t hsh = hash_mem(addr, nbytes, 0xCBF29CE484222325ull);
     if (pal_len) hsh = hash_mem(pal_addr, pal_len * 4, hsh);
@@ -1108,6 +1140,8 @@ static VkImageView get_texture(int i, int *rect, int *tw, int *th, float *zmax) 
                 e->hd = r >= 0 ? -(1 + r) : r == HD_WAIT ? INT_MIN : 0;
             }
             if (e->hd < 0 && e->hd != INT_MIN) create_hd(e, -e->hd - 1);   /* file read / upload budget */
+            qk->addr = addr; qk->fmt = fmtw; qk->pitch = pitch; qk->pal_addr = pal_addr; qk->pal_len = pal_len;
+            qk->frame = frame_no; qk->w = w; qk->h = h; qk->e = e; qk->hash = hsh;
             return tex_view(e);
         }
     }
@@ -1123,7 +1157,7 @@ static VkImageView get_texture(int i, int *rect, int *tw, int *th, float *zmax) 
                 uint32_t c = k < pal_len ? RD32(pal_addr + k * 4) : 0;
                 palette[k] = ((c >> 16) & 0xFF) | (c & 0xFF00) | ((c & 0xFF) << 16) | (c & 0xFF000000u);
             }
-        old_e->hash = hsh; old_e->last_frame = frame_no;
+        old_e->hash = hsh; old_e->last_frame = old_e->born = frame_no;
         if (!create_texture(old_e, f, levels, palette)) return 0;
         return old_e->im.view;
     }
@@ -1153,7 +1187,7 @@ static VkImageView get_texture(int i, int *rect, int *tw, int *th, float *zmax) 
             palette[k] = ((c >> 16) & 0xFF) | (c & 0xFF00) | ((c & 0xFF) << 16) | (c & 0xFF000000u);
         }
     v->addr = addr; v->fmt = fmtw; v->pitch = pitch; v->w = w; v->h = h; v->pal_addr = pal_addr; v->pal_len = pal_len;
-    v->hash = hsh; v->last_frame = frame_no; v->levels = levels;
+    v->hash = hsh; v->last_frame = v->born = frame_no; v->levels = levels;
     v->hd = 0;
     if (!create_texture(v, f, levels, palette)) return 0;
     addr_slot[aslot] = v;
@@ -1329,6 +1363,8 @@ typedef struct {
 #define DRAW_UNLIT offsetof(DrawUBO, lamb)
 
 #define VTX_RING (96ull << 20)
+static uint32_t pool_serial;     /* descriptor pool resets */
+#define VTX_PAD (1ull << 20)     /* fixed vertex range of the shared descriptor sets */
 #define IDX_RING (16ull << 20)
 #define UBO_RING (64ull << 20)
 #define STAGE_RING (64ull << 20)
@@ -1343,6 +1379,7 @@ static void frame_begin(void) {
     f->ngarbage = 0;
     vkResetCommandPool(dev, f->pool, 0);
     vkResetDescriptorPool(dev, f->dpool, 0);
+    pool_serial++;
     f->vtx.pos = f->idx.pos = f->ubo.pos = f->stage.pos = 0;
     f->up_used = 0;
     VkCommandBufferBeginInfo bi = {VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO, 0, VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT};
@@ -1479,7 +1516,8 @@ static int vk_init(void) {
                                       {VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 65536}};
         VkDescriptorPoolCreateInfo dpi = {VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO, 0, 0, 16384, 3, ps};
         VKC(vkCreateDescriptorPool(dev, &dpi, 0, &f->dpool));
-        if (!ring_create(&f->vtx, VTX_RING, VK_BUFFER_USAGE_STORAGE_BUFFER_BIT)) return 0;
+        if (!ring_create(&f->vtx, VTX_RING + VTX_PAD, VK_BUFFER_USAGE_STORAGE_BUFFER_BIT)) return 0;
+        f->vtx.size = VTX_RING;
         if (!ring_create(&f->idx, IDX_RING, VK_BUFFER_USAGE_INDEX_BUFFER_BIT)) return 0;
         /* one block of slack: a head-only upload still binds sizeof(DrawUBO) */
         if (!ring_create(&f->ubo, UBO_RING + sizeof(DrawUBO), VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT)) return 0;
@@ -1922,9 +1960,10 @@ static void draw_impl(int topo, const KVertex *v, uint32_t nv, const uint32_t *i
 
     /* textures (may end rendering for render-target-to-texture transitions) */
     VkDescriptorImageInfo ii[4];
+    memset(ii, 0, sizeof ii);   /* padding too: compared bytewise */
     uint32_t prog = KREG(K_SHADER_STAGE_PROG);
     for (int t = 0; t < 4; t++) {
-        ii[t] = (VkDescriptorImageInfo){blit_sampler, white_tex.view, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL};
+        ii[t].sampler = blit_sampler; ii[t].imageView = white_tex.view; ii[t].imageLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
         u->tmode[t] = 0;
         u->tsz[t][0] = u->tsz[t][1] = 1; u->tsz[t][2] = u->tsz[t][3] = 0;
         uint32_t mode = (prog >> (t * 5)) & 31;
@@ -2043,21 +2082,31 @@ static void draw_impl(int topo, const KVertex *v, uint32_t nv, const uint32_t *i
     begin_rendering();
 
     /* descriptor set */
-    VkDescriptorSet set;
-    VkDescriptorSetAllocateInfo dai = {VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO, 0, f->dpool, 1, &dsl};
-    if (vkAllocateDescriptorSets(dev, &dai, &set) != VK_SUCCESS) {
-        static int warned;
-        if (!warned++) LOG("[gpu] descriptor pool exhausted: draws dropped\n");
-        return;
+    /* shared by the draws of a frame with the same four images (buffers are bound with dynamic offsets and a fixed
+     * range); 256-entry cache, dropped with the frame's pool. A destroyed view cannot come back within the frame:
+     * img_destroy_later keeps it until the frame is done. */
+    VkDescriptorSet set = 0;
+    VkDeviceSize vrange = (VkDeviceSize)nv * sizeof(KVertex);
+    static struct { uint32_t serial; VkDescriptorSet set; VkDescriptorImageInfo ii[4]; } dcache[256], *dc;
+    dc = &dcache[XXH3_64bits(ii, sizeof ii) & 255];
+    if (!opt_off() && vrange <= VTX_PAD && dc->serial == pool_serial && dc->set && !memcmp(dc->ii, ii, sizeof ii)) set = dc->set;
+    else {
+        VkDescriptorSetAllocateInfo dai = {VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO, 0, f->dpool, 1, &dsl};
+        if (vkAllocateDescriptorSets(dev, &dai, &set) != VK_SUCCESS) {
+            static int warned;
+            if (!warned++) LOG("[gpu] descriptor pool exhausted: draws dropped\n");
+            return;
+        }
+        VkDescriptorBufferInfo ub = {f->ubo.buf, 0, sizeof(DrawUBO)}, sb = {f->vtx.buf, 0, vrange <= VTX_PAD ? VTX_PAD : vrange};
+        VkWriteDescriptorSet w[6];
+        memset(w, 0, sizeof w);
+        for (int i = 0; i < 6; i++) { w[i].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET; w[i].dstSet = set; w[i].dstBinding = i; w[i].descriptorCount = 1; }
+        w[0].descriptorType = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER_DYNAMIC; w[0].pBufferInfo = &ub;
+        w[1].descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER_DYNAMIC; w[1].pBufferInfo = &sb;
+        for (int t = 0; t < 4; t++) { w[2 + t].descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER; w[2 + t].pImageInfo = &ii[t]; }
+        vkUpdateDescriptorSets(dev, 6, w, 0, 0);
+        if (vrange <= VTX_PAD) { dc->serial = pool_serial; dc->set = set; memcpy(dc->ii, ii, sizeof ii); }
     }
-    VkDescriptorBufferInfo ub = {f->ubo.buf, 0, sizeof(DrawUBO)}, sb = {f->vtx.buf, 0, (VkDeviceSize)nv * sizeof(KVertex)};
-    VkWriteDescriptorSet w[6];
-    memset(w, 0, sizeof w);
-    for (int i = 0; i < 6; i++) { w[i].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET; w[i].dstSet = set; w[i].dstBinding = i; w[i].descriptorCount = 1; }
-    w[0].descriptorType = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER_DYNAMIC; w[0].pBufferInfo = &ub;
-    w[1].descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER_DYNAMIC; w[1].pBufferInfo = &sb;
-    for (int t = 0; t < 4; t++) { w[2 + t].descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER; w[2 + t].pImageInfo = &ii[t]; }
-    vkUpdateDescriptorSets(dev, 6, w, 0, 0);
 
     /* pipeline + dynamic state */
     int has_z = cur_zs != NULL;
@@ -2067,40 +2116,53 @@ static void draw_impl(int topo, const KVertex *v, uint32_t nv, const uint32_t *i
     VkPipeline p = get_pipeline(&k);
     if (!p) return;
     VkCommandBuffer cb = CMD();
-    vkCmdBindPipeline(cb, VK_PIPELINE_BIND_POINT_GRAPHICS, p);
+    if (!dst_ok || p != dst_pipe) vkCmdBindPipeline(cb, VK_PIPELINE_BIND_POINT_GRAPHICS, p);
+    dst_pipe = p;
     uint32_t dyn[2] = {(uint32_t)uoff, (uint32_t)voff};
     vkCmdBindDescriptorSets(cb, VK_PIPELINE_BIND_POINT_GRAPHICS, plal, 0, 1, &set, 2, dyn);
     vkCmdBindIndexBuffer(cb, f->idx.buf, ioff, VK_INDEX_TYPE_UINT32);
     uint32_t ff = KREG(K_FRONT_FACE) ? KREG(K_FRONT_FACE) : 0x900;
-    vkCmdSetCullMode(cb, !(KREG(K_CULL_EN) & 1) ? VK_CULL_MODE_NONE : KREG(K_CULL_FACE) == 0x404 ? VK_CULL_MODE_FRONT_BIT :
-                         KREG(K_CULL_FACE) == 0x408 ? VK_CULL_MODE_FRONT_AND_BACK : VK_CULL_MODE_BACK_BIT);
+    DynState d;
+    memset(&d, 0, sizeof d);
+    d.cull = !(KREG(K_CULL_EN) & 1) ? VK_CULL_MODE_NONE : KREG(K_CULL_FACE) == 0x404 ? VK_CULL_MODE_FRONT_BIT :
+             KREG(K_CULL_FACE) == 0x408 ? VK_CULL_MODE_FRONT_AND_BACK : VK_CULL_MODE_BACK_BIT;
     /* NV097 front face 0x900 = CW, 0x901 = CCW in screen space (y down); Vulkan's winding is in framebuffer space,
      * which is the same orientation here */
-    vkCmdSetFrontFace(cb, ff == 0x901 ? VK_FRONT_FACE_COUNTER_CLOCKWISE : VK_FRONT_FACE_CLOCKWISE);
+    d.front = ff == 0x901 ? VK_FRONT_FACE_COUNTER_CLOCKWISE : VK_FRONT_FACE_CLOCKWISE;
+    d.ztest = has_z && (KREG(K_DEPTH_TEST_EN) & 1);
     {   /* UG_SHADOWNOZ=1: shadow-map draws without depth test or culling (debug) */
         static int snz = -1;
         if (snz < 0) snz = getenv("UG_SHADOWNOZ") != NULL;
-        int sh = u->tmode[0] == 4 || u->tmode[1] == 4 || u->tmode[2] == 4 || u->tmode[3] == 4;
-        if (snz && sh) { vkCmdSetDepthTestEnable(cb, 0); vkCmdSetCullMode(cb, VK_CULL_MODE_NONE); }
-        else vkCmdSetDepthTestEnable(cb, has_z && (KREG(K_DEPTH_TEST_EN) & 1));
+        if (snz && (u->tmode[0] == 4 || u->tmode[1] == 4 || u->tmode[2] == 4 || u->tmode[3] == 4)) { d.ztest = 0; d.cull = VK_CULL_MODE_NONE; }
     }
-    vkCmdSetDepthWriteEnable(cb, has_z && (KREG(K_DEPTH_MASK) & 1));
-    {   /* polygon offset (fill only; triangles are all the game draws with it): units are Z-buffer units, which match
-         * Vulkan's minimum resolvable difference for D24; the slope term is per host pixel (UG_SCALE) */
-        int en = has_z && (KREG(K_POLY_OFFSET_FILL) & 1);
-        vkCmdSetDepthBiasEnable(cb, en);
-        if (en) vkCmdSetDepthBias(cb, kf(K_POLY_OFFSET_UNITS), 0.0f, kf(K_POLY_OFFSET_FACTOR) / (float)g_scale);
-    }
-    vkCmdSetDepthCompareOp(cb, cmp_op(KREG(K_DEPTH_FUNC)));
-    vkCmdSetStencilTestEnable(cb, has_z && (KREG(K_STENCIL_TEST_EN) & 1));
-    vkCmdSetStencilOp(cb, VK_STENCIL_FACE_FRONT_AND_BACK, stencil_op(KREG(K_STENCIL_OP_FAIL)), stencil_op(KREG(K_STENCIL_OP_ZPASS)),
-                      stencil_op(KREG(K_STENCIL_OP_ZFAIL)), cmp_op(KREG(K_STENCIL_FUNC)));
-    vkCmdSetStencilCompareMask(cb, VK_STENCIL_FACE_FRONT_AND_BACK, KREG(K_STENCIL_FMASK) & 0xFF);
-    vkCmdSetStencilWriteMask(cb, VK_STENCIL_FACE_FRONT_AND_BACK, KREG(K_STENCIL_MASK) & 0xFF);
-    vkCmdSetStencilReference(cb, VK_STENCIL_FACE_FRONT_AND_BACK, KREG(K_STENCIL_REF) & 0xFF);
-    float bc[4];
-    argb_to_f4(KREG(K_BLEND_COLOR), bc);
-    vkCmdSetBlendConstants(cb, bc);
+    d.zwrite = has_z && (KREG(K_DEPTH_MASK) & 1);
+    /* polygon offset (fill only; triangles are all the game draws with it): units are Z-buffer units, which match
+     * Vulkan's minimum resolvable difference for D24; the slope term is per host pixel (UG_SCALE) */
+    d.bias = has_z && (KREG(K_POLY_OFFSET_FILL) & 1);
+    if (d.bias) { d.units = kf(K_POLY_OFFSET_UNITS); d.factor = kf(K_POLY_OFFSET_FACTOR) / (float)g_scale; }
+    d.zfunc = cmp_op(KREG(K_DEPTH_FUNC));
+    d.stest = has_z && (KREG(K_STENCIL_TEST_EN) & 1);
+    d.sop[0] = stencil_op(KREG(K_STENCIL_OP_FAIL)); d.sop[1] = stencil_op(KREG(K_STENCIL_OP_ZPASS));
+    d.sop[2] = stencil_op(KREG(K_STENCIL_OP_ZFAIL)); d.sop[3] = cmp_op(KREG(K_STENCIL_FUNC));
+    d.sfmask = KREG(K_STENCIL_FMASK) & 0xFF; d.smask = KREG(K_STENCIL_MASK) & 0xFF; d.sref = KREG(K_STENCIL_REF) & 0xFF;
+    argb_to_f4(KREG(K_BLEND_COLOR), d.bc);
+    if (opt_off()) dst_ok = 0;
+    int all = !dst_ok;   /* only what changed since the last draw of this rendering */
+    if (all || d.cull != dst.cull) vkCmdSetCullMode(cb, d.cull);
+    if (all || d.front != dst.front) vkCmdSetFrontFace(cb, d.front);
+    if (all || d.ztest != dst.ztest) vkCmdSetDepthTestEnable(cb, d.ztest);
+    if (all || d.zwrite != dst.zwrite) vkCmdSetDepthWriteEnable(cb, d.zwrite);
+    if (all || d.bias != dst.bias) vkCmdSetDepthBiasEnable(cb, d.bias);
+    if (d.bias && (all || !dst.bias || d.units != dst.units || d.factor != dst.factor)) vkCmdSetDepthBias(cb, d.units, 0.0f, d.factor);
+    if (all || d.zfunc != dst.zfunc) vkCmdSetDepthCompareOp(cb, d.zfunc);
+    if (all || d.stest != dst.stest) vkCmdSetStencilTestEnable(cb, d.stest);
+    if (all || memcmp(d.sop, dst.sop, sizeof d.sop)) vkCmdSetStencilOp(cb, VK_STENCIL_FACE_FRONT_AND_BACK, d.sop[0], d.sop[1], d.sop[2], d.sop[3]);
+    if (all || d.sfmask != dst.sfmask) vkCmdSetStencilCompareMask(cb, VK_STENCIL_FACE_FRONT_AND_BACK, d.sfmask);
+    if (all || d.smask != dst.smask) vkCmdSetStencilWriteMask(cb, VK_STENCIL_FACE_FRONT_AND_BACK, d.smask);
+    if (all || d.sref != dst.sref) vkCmdSetStencilReference(cb, VK_STENCIL_FACE_FRONT_AND_BACK, d.sref);
+    if (all || memcmp(d.bc, dst.bc, sizeof d.bc)) vkCmdSetBlendConstants(cb, d.bc);
+    dst = d;
+    dst_ok = 1;
     {   /* UG_SHADOWSKIP=1: drop shadow-receiver draws (debug) */
         static int ss = -1;
         if (ss < 0) ss = getenv("UG_SHADOWSKIP") != NULL;
@@ -2478,8 +2540,11 @@ static void scale_apply(void) {
     g_scale_req = 0;
 }
 
+static double st_busy[2]; static uint32_t st_busy_n[2];
 static void flip_impl(uint32_t addr) {
     if (!ready()) return;
+    extern uint64_t g_flip_exit;
+    if (g_flip_exit) { st_busy[frame_no & 1] += (double)(sched_now_100ns() - g_flip_exit) / 1e4; st_busy_n[frame_no & 1]++; }
     frame_no++;
     g_cap_shoot = 0;
     {   /* UG_CAPTURE=N: the F9 capture at frame N (scripted) */
@@ -2549,6 +2614,9 @@ static void flip_impl(uint32_t addr) {
     if (frame_no % 300 == 0) {
         static DWORD t0;
         DWORD t = GetTickCount();
+        LOG("[gpu] busy %.2f ms per frame (even %.2f odd %.2f)\n", (st_busy[0] + st_busy[1]) / (st_busy_n[0] + st_busy_n[1] + 1e-9),
+            st_busy[0] / (st_busy_n[0] + 1e-9), st_busy[1] / (st_busy_n[1] + 1e-9));
+        st_busy[0] = st_busy[1] = 0; st_busy_n[0] = st_busy_n[1] = 0;
         LOG("[gpu] frame %u: %.1f fps, worst %.1f ms, %u slow, per frame: draws %u verts %u new textures %u, %d pipelines, "
             "%d targets\n", frame_no, t0 ? 300000.0 / (double)(t - t0) : 0.0, st_worst / 10.0, st_slow, st_draws / 300,
             st_verts / 300, st_newtex / 300, n_pipes, n_rts);
