@@ -1319,14 +1319,18 @@ typedef struct {
     float fogp[4];               /* fog params 0, 1; function (0 off, 1 linear, 2 exp, 3 exp2); abs */
     float mv[4][4], imv[4][4];   /* fixed function: model-view 0 and its inverse (texgen) */
     uint32_t tgen[4];            /* texgen per stage, 8 bits per s/t/r/q: 0 off, 4 normal map, 5 reflection map */
+    uint32_t lctl[4];            /* fixed-function lighting: on, color material, light types, normalize */
+    float lamb[4], lemi[4];      /* from here to prog only for lit draws: the others upload DRAW_UNLIT bytes */
+    float lgt[32][4];            /* per light: ambient; diffuse, range; direction or position; attenuation */
     uint32_t prog[136][4];       /* from here on only for vertex-program draws: the others upload DRAW_HEAD bytes */
     float cst[192][4];
 } DrawUBO;
 #define DRAW_HEAD offsetof(DrawUBO, prog)
+#define DRAW_UNLIT offsetof(DrawUBO, lamb)
 
 #define VTX_RING (96ull << 20)
 #define IDX_RING (16ull << 20)
-#define UBO_RING (48ull << 20)
+#define UBO_RING (64ull << 20)
 #define STAGE_RING (64ull << 20)
 
 static void frame_begin(void) {
@@ -1817,7 +1821,11 @@ static void draw_impl(int topo, const KVertex *v, uint32_t nv, const uint32_t *i
     /* filled in normal memory and copied once: the ring is write-combined, reading it back costs a lot */
     static DrawUBO ubo_tmp;
     DrawUBO *u = &ubo_tmp;
-    void *udst = ring_alloc(&f->ubo, vprog ? sizeof(DrawUBO) : DRAW_HEAD, pprops.limits.minUniformBufferOffsetAlignment, &uoff);
+    static int light = -1;   /* UG_LIGHT=0: no fixed-function lighting, 2: off in odd frames (A/B shots, debug) */
+    if (light < 0) { const char *e = getenv("UG_LIGHT"); light = e ? atoi(e) : 1; }
+    int lit = !vprog && (g_kreg[0x314 >> 2] & 1) && light && !(light == 2 && (frame_no & 1));
+    size_t usize = vprog ? sizeof(DrawUBO) : lit ? DRAW_HEAD : DRAW_UNLIT;
+    void *udst = ring_alloc(&f->ubo, usize, pprops.limits.minUniformBufferOffsetAlignment, &uoff);
     void *vp = ring_alloc(&f->vtx, (VkDeviceSize)nv * sizeof(KVertex), pprops.limits.minStorageBufferOffsetAlignment, &voff);
     void *ip = ring_alloc(&f->idx, (VkDeviceSize)ni * 4, 4, &ioff);
     if (!udst || !vp || !ip) {
@@ -1876,6 +1884,26 @@ static void draw_impl(int topo, const KVertex *v, uint32_t nv, const uint32_t *i
             else if (g == 0x8511) code = 4;
             else if (g) { static uint32_t seen; if (!(seen & (1u << (g & 31)))) { seen |= 1u << (g & 31); LOG("[gpu] texgen mode %X not implemented\n", g); } }
             u->tgen[st] |= code << (c * 8);
+        }
+    }
+    u->lctl[0] = (uint32_t)lit;
+    if (lit) {
+        u->lctl[1] = g_kreg[0x298 >> 2]; u->lctl[2] = g_kreg[0x3BC >> 2]; u->lctl[3] = g_kreg[0x3A4 >> 2] & 1;
+        for (int i = 0; i < 3; i++) { u->lamb[i] = kf(0xA10 + i * 4); u->lemi[i] = kf(0x3A8 + i * 4); }
+        u->lamb[3] = kf(0x3B4); u->lemi[3] = 0;
+        static uint32_t seen;
+        for (uint32_t i = 0; i < 8; i++) {
+            uint32_t t = u->lctl[2] >> (i * 2) & 3, L = 0x1000 + i * 0x80;
+            if (!t) continue;
+            for (uint32_t k = 0; k < 3; k++) {
+                u->lgt[i * 4][k] = kf(L + k * 4); u->lgt[i * 4 + 1][k] = kf(L + 0xC + k * 4);
+                u->lgt[i * 4 + 2][k] = kf(L + (t == 1 ? 0x34 : 0x5C) + k * 4); u->lgt[i * 4 + 3][k] = kf(L + 0x68 + k * 4);
+            }
+            u->lgt[i * 4 + 1][3] = kf(L + 0x24);
+            if (t == 3 && !(seen & 1)) { seen |= 1; LOG("[gpu] spot light cones not implemented\n"); }
+            if ((KREG(0x3B8) & 1) && (kf(L + 0x18) != 0 || kf(L + 0x1C) != 0 || kf(L + 0x20) != 0) && !(seen & 2)) {
+                seen |= 2; LOG("[gpu] fixed-function specular light not implemented\n");
+            }
         }
     }
     if (u->mode[0] != 2 && (KREG(K_SKIN_MODE) & 0xF)) { static int w; if (!w++) LOG("[gpu] fixed-function skinning (mode %X) not implemented\n", KREG(K_SKIN_MODE)); }
@@ -1967,6 +1995,19 @@ static void draw_impl(int topo, const KVertex *v, uint32_t nv, const uint32_t *i
                             u->mv[i][3], u->imv[i][0], u->imv[i][1], u->imv[i][2], u->imv[i][3], u->comp[i][0], u->comp[i][1],
                             u->comp[i][2], u->comp[i][3]);
                 }
+                if (u->mode[0] != 2 && (g_kreg[0x314 >> 2] & 1)) {
+                    uint32_t lm = g_kreg[0x3BC >> 2];
+                    LOG("[draw]   lit: ctl %X colmat %X mask %X spec %X normalize %X emission %g %g %g alpha %g ambient %g %g %g\n", g_kreg[0x294 >> 2],
+                        g_kreg[0x298 >> 2], lm, g_kreg[0x3B8 >> 2], g_kreg[0x3A4 >> 2], kf(0x3A8), kf(0x3AC), kf(0x3B0), kf(0x3B4), kf(0xA10), kf(0xA14), kf(0xA18));
+                    for (uint32_t i = 0; i < 8; i++)
+                        if (lm >> (i * 2) & 3) {
+                            uint32_t L = 0x1000 + i * 0x80;
+                            LOG("[draw]   light %u type %u amb %g %g %g dif %g %g %g spec %g %g %g range %g half %g %g %g dir %g %g %g pos %g %g %g att %g %g %g\n", i,
+                                lm >> (i * 2) & 3, kf(L), kf(L + 4), kf(L + 8), kf(L + 12), kf(L + 16), kf(L + 20), kf(L + 24), kf(L + 28), kf(L + 32),
+                                kf(L + 0x24), kf(L + 0x28), kf(L + 0x2C), kf(L + 0x30), kf(L + 0x34), kf(L + 0x38), kf(L + 0x3C), kf(L + 0x5C),
+                                kf(L + 0x60), kf(L + 0x64), kf(L + 0x68), kf(L + 0x6C), kf(L + 0x70));
+                        }
+                }
                 if (u->mode[2])
                     LOG("[draw]   texmat draw: tex fmt %08X %08X %08X %08X\n", KREG(K_TEX_FORMAT(0)), KREG(K_TEX_FORMAT(1)),
                         KREG(K_TEX_FORMAT(2)), KREG(K_TEX_FORMAT(3)));
@@ -1998,7 +2039,7 @@ static void draw_impl(int topo, const KVertex *v, uint32_t nv, const uint32_t *i
         }
     }
 
-    memcpy(udst, u, vprog ? sizeof(DrawUBO) : DRAW_HEAD);
+    memcpy(udst, u, usize);
     begin_rendering();
 
     /* descriptor set */

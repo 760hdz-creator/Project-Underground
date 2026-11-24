@@ -25,6 +25,12 @@ layout(std140, set = 0, binding = 0) uniform Draw {
     vec4 mv[4];            // fixed function model-view 0 (rows = output components, as comp)
     vec4 imv[4];           // its inverse
     uvec4 tgen;            // texgen per stage, a byte per s/t/r/q: 0 off, 4 normal map, 5 reflection map
+    uvec4 lctl;            // fixed-function lighting: x on, y color material (2 bits: emission, ambient, diffuse, specular
+                           // source: 0 material, 1 vertex diffuse, 2 vertex specular), z light types (2 bits each), w normalize
+    // only uploaded for lit draws
+    vec4 lamb;             // scene ambient (times material), material alpha
+    vec4 lemi;             // material emission
+    vec4 lgt[32];          // per light: ambient; diffuse, range; direction (infinite) or eye-space position; attenuation
     // last: only uploaded for vertex-program draws (mode 2), garbage otherwise
     uvec4 prog[136];       // instruction slots (dword 0 unused)
     vec4 cst[192];         // vertex program constants
@@ -150,6 +156,36 @@ void run_program() {
 
 vec3 g_en, g_refl;
 
+// NV2A fixed-function lighting (as xemu's vsh-ff: the driver has multiplied material colors into the lights unless the
+// color material sources are vertex colors). Specular and spot cones are not modeled (gpu_vulkan.c logs them).
+vec4 lighting(vec3 n, vec3 e, vec4 d, vec4 s) {
+    uint es = D.lctl.y & 3u, as = (D.lctl.y >> 2) & 3u, ds = (D.lctl.y >> 4) & 3u;
+    vec3 ev = es == 2u ? s.rgb : d.rgb, av = as == 2u ? s.rgb : d.rgb;
+    vec3 c;
+    if (es == 0u || as == 0u) {
+        c = D.lamb.rgb;
+        if (es != 0u) c += ev * D.lemi.rgb; else if (as != 0u) c += av * D.lemi.rgb;
+    } else c = ev + av * D.lemi.rgb;
+    for (int i = 0; i < 8; i++) {
+        uint t = (D.lctl.z >> uint(i * 2)) & 3u;
+        if (t == 0u) continue;
+        vec3 l = D.lgt[i * 4 + 2].xyz;
+        float att = 1.0;
+        if (t != 1u) {
+            l -= e;
+            float r = length(l);
+            if (r > D.lgt[i * 4 + 1].w) continue;
+            vec3 k = D.lgt[i * 4 + 3].xyz;
+            float q = k.x + k.y * r + k.z * r * r;
+            att = q > 0.0 ? 1.0 / q : 1.0;
+        }
+        float nl = dot(l, l) > 0.0 ? max(0.0, dot(n, normalize(l))) : 0.0;
+        c += (as == 0u ? vec3(1.0) : av) * D.lgt[i * 4].rgb * att;
+        c += (ds == 0u ? vec3(1.0) : ds == 1u ? d.rgb : s.rgb) * D.lgt[i * 4 + 1].rgb * att * nl;
+    }
+    return vec4(clamp(c, 0.0, 1.0), ds == 0u ? D.lamb.a : ds == 1u ? d.a : s.a);
+}
+
 vec4 texgen(int s, vec4 t) {
     uint g = D.tgen[s];
     if (g == 0u) return t;
@@ -191,7 +227,7 @@ void main() {
         float sx = c.x + D.vpo.x * c.w, sy = c.y + D.vpo.y * c.w;
         pos = vec4(sx * D.surf.z * 2.0 - c.w, sy * D.surf.w * 2.0 - c.w, c.z * D.zr.z, c.w);
         o_d0 = V(3); o_d1 = V(4);
-        if ((D.tgen.x | D.tgen.y | D.tgen.z | D.tgen.w) != 0u) {
+        if ((D.tgen.x | D.tgen.y | D.tgen.z | D.tgen.w | D.lctl.x) != 0u) {
             // eye-space position and normal (normal through the inverse model-view, as D3D/xemu), GL reflection map
             vec4 ep = vec4(dot(D.mv[0], p), dot(D.mv[1], p), dot(D.mv[2], p), dot(D.mv[3], p));
             vec4 n4 = vec4(V(2).xyz, 0.0);
@@ -200,6 +236,7 @@ void main() {
             vec3 e = ep.xyz / (ep.w != 0.0 ? ep.w : 1.0);
             vec3 u = dot(e, e) > 0.0 ? normalize(e) : vec3(0.0, 0.0, 1.0);
             g_refl = u - 2.0 * dot(g_en, u) * g_en;
+            if (D.lctl.x != 0u) { o_d0 = lighting(D.lctl.w != 0u ? g_en : en, e, o_d0, o_d1); o_d1 = vec4(0.0, 0.0, 0.0, o_d1.a); }
         }
         o_t0 = texmat(0, texgen(0, V(9))); o_t1 = texmat(1, texgen(1, V(10)));
         o_t2 = texmat(2, texgen(2, V(11))); o_t3 = texmat(3, texgen(3, V(12)));

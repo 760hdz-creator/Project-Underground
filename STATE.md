@@ -95,8 +95,8 @@ print(','.join(ev))")" UG_SHOT=1200 ./out/underground.exe   (NJ level by ~frame 
     render target uses the allocated size.
   - Debug env added: UG_SKIPFMT=<hex>, UG_SKIPMODE=<m>, UG_SKIPTEXMAT=1 (both drop draws in windows where
     ((frame+150)/300) is odd; shot N shows frame N-1), UG_DRAWLOG prints fog, texgen, texmat-stage formats, pos range.
-- DONE 2026-11-23: fixed-function texgen. Gameplay draw survey (run_shadow4/run_texgen logs): lighting (0x0314) is
-  never on, no texture has the cube-map bit, only texgen seen is 0x8512 reflection map (also 0x8511 normal map
+- DONE 2026-11-23: fixed-function texgen. Gameplay draw survey (run_shadow4/run_texgen logs): lighting (0x0314) seemed
+  never on (WRONG, see FIXED-FUNCTION LIGHTING), no texture has the cube-map bit, only texgen seen is 0x8512 reflection map (also 0x8511 normal map
   implemented). FF path computes eye pos (MV 0x480) and eye normal (IMV 0x580 = inverse-transpose 3x3, same row
   layout: n_eye.j = dot(imv[j], n), checked against dumped matrices), r = u - 2(n.u)n, then texture matrix. Other
   texgen modes and FF skinning (0x0328) log once. Most texgen draws have the stage disabled (stale state).
@@ -200,10 +200,19 @@ SESSION 2026-11-24 (polish, after the graphics options):
   Tools in out/badattr: allmiss.py (meshes, capture frames), pinkc.py (meshes by texture x material x vertex colour),
   mat.py, ptele5.py (debug teleport patch for hle.c, not committed: UG_TELE="<frame>:<x0>,<z0>:<x>,<y>,<z>;", skater at
   rest at 467.18,2922.88 after the NJ_01V cutscene, route out/dev/still.txt). Captures log "comp" rows for every draw again.
+- FIXED-FUNCTION LIGHTING (2026-11-24): the older "lighting (0x0314) is never on" is wrong: cars, board, props, menu backdrop
+  are lit (up to ~90 draws per frame in NJ, color material 14: ambient + diffuse from the vertex color, 2 infinite lights, no
+  specular). They were drawn with the raw vertex color. nv2a.vert lighting() follows xemu's vsh-ff (material sources, infinite
+  and local lights; spot cones and specular are only logged: not seen in nj vc sd ny fl hi). Lights are uploaded only
+  for lit draws (DRAW_UNLIT / DRAW_HEAD). Checked: the car shades correctly (hood bright, skirt dark), and the FF ambient (99/255)
+  equals the skinned models' constant c13 (50/128), same light colors. Not compared with a real Xbox: the main menu backdrop
+  (ambient 0.51, both lights 0) is now half as bright on its right part, with a soft edge. Debug: UG_LIGHT=0 off, 2 = off in odd
+  frames; captures log "lit:" and "light n" lines.
+  UBO ring 48 -> 64 MB: Vancouver dropped draws once at 8833 draws in a frame. FPS dips to 52 there on a 6000-draw spike.
 D. Not pushed: everything from 4cd0dc8 (F9 capture, new hd_compare.jpg, graphics options).
 1. Sky wedge (cosmetic); pool-floor rectangle (UG_DBGCOLOR=7). Neither showed in 16 NJ shots on 2026-11-23
    (run_texgen, run_dbg7); a quarter-pipe light/dark split at f14400 is not a shadow draw (baked lighting).
-2. Renderer gaps (not seen in NJ so far: check other levels first): FF lighting, cube maps, eye/object-linear and
+2. Renderer gaps (not seen in NJ so far: check other levels first): cube maps, FF spot/specular lights, eye/object-linear and
    sphere texgen, MSAA. Widescreen done. CPU-drawn loading bar: not worth it, a level load takes < 0.3 s here
    (NJ: one 292 ms frame between f3000 and f3300), the loading screen is barely on screen.
 0. STATUS 2026-11-23 (end of late session): user todo 2-5 done and committed (c3b9de0..287f2c5), PUSHED to both remotes
