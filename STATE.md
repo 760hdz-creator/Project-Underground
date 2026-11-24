@@ -260,7 +260,7 @@ print(','.join(ev))")" UG_SHOT=1200 ./out/underground.exe   (NJ level by ~frame 
      swapchain image: no new shaders; same Vulkan path on Linux/Android, BUT Android has no way to open it (no
      Esc/F1, touch has no L3+R3) and its pad cache (android_pad_poll in sched_run, main stack) is frozen while the
      menu loop runs: phone list item "in-game menu" (needs a touch button + pad poll). Font: runtime/src/font8x8_basic.h
-     (public domain). Items: Resume, Fullscreen, Frame rate 30/60 (g_fps, nv2a.c), Invert X/Y, HD (only with a
+     (public domain). Items: Resume, Fullscreen, Frame rate 30/60 (g_fps, nv2a.c), Camera left/right + up/down (PC default = both flipped vs Xbox; UG_INVERTX/Y=0 = Xbox), HD (only with a
      pack; session only), Quit. Writes settings.ini (UG_FULLSCREEN, UG_FPS, UG_INVERTX, UG_INVERTY) only if the file
      exists. Close waits for all keys/buttons released. Debug: UG_INPUT "<s>:MENU", UG_MENUKEYS=down,right,ok,back
      (other words wait 300 ms), UG_MENUSHOT=1 -> out/menu.ppm. Verified (Windows): navigation + toggle, 10 s pause

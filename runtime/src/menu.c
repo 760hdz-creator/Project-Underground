@@ -152,12 +152,12 @@ static void flag_set(int f, int on) {
 static int on_x(void) {
     if (g_invert_x >= 0) return g_invert_x;
     const char *e = getenv("UG_INVERTX");
-    return e && *e == '1';
+    return !(e && *e == '0');   /* flipped by default; UG_INVERTX=0 = original direction */
 }
 static int on_y(void) {
     if (g_invert_y >= 0) return g_invert_y;
     const char *e = getenv("UG_INVERTY");
-    return e && *e == '1';
+    return !(e && *e == '0');   /* flipped by default; UG_INVERTY=0 = original direction */
 }
 static int item_shown(int i) {
     if (i == IT_HD) return hdtex_enabled();
@@ -170,8 +170,8 @@ static const char *item_label(int i, char *buf, size_t n) {
     case IT_RESUME: return "Resume";
     case IT_FULLSCREEN: snprintf(buf, n, "Fullscreen         < %s >", plat_fullscreen_get() ? "On " : "Off"); return buf;
     case IT_FPS: snprintf(buf, n, "Frame rate         < %d >", g_fps == 30 ? 30 : 60); return buf;
-    case IT_INVX: snprintf(buf, n, "Invert camera X    < %s >", on_x() ? "On " : "Off"); return buf;
-    case IT_INVY: snprintf(buf, n, "Invert camera Y    < %s >", on_y() ? "On " : "Off"); return buf;
+    case IT_INVX: snprintf(buf, n, "Camera left/right  < %s >", on_x() ? "PC  " : "Xbox"); return buf;
+    case IT_INVY: snprintf(buf, n, "Camera up/down     < %s >", on_y() ? "PC  " : "Xbox"); return buf;
     case IT_HD: snprintf(buf, n, "HD textures        < %s >", g_hd_hidden ? "Off" : "On "); return buf;
     case IT_UNLOCK: return unlock_done ? "Unlock everything: done" : "Unlock everything";
     case IT_SPECIAL: case IT_RAIL: case IT_MANUAL: case IT_MOON: case IT_SKITCH: {
@@ -199,8 +199,8 @@ static int item_change(int i, int dir) {
         g_fps = g_fps == 30 ? 60 : 30;
         ini_set("UG_FPS", g_fps == 30 ? "30" : "");
         break;
-    case IT_INVX: g_invert_x = !on_x(); ini_set("UG_INVERTX", g_invert_x ? "1" : ""); break;
-    case IT_INVY: g_invert_y = !on_y(); ini_set("UG_INVERTY", g_invert_y ? "1" : ""); break;
+    case IT_INVX: g_invert_x = !on_x(); ini_set("UG_INVERTX", g_invert_x ? "" : "0"); break;
+    case IT_INVY: g_invert_y = !on_y(); ini_set("UG_INVERTY", g_invert_y ? "" : "0"); break;
     case IT_HD: g_hd_hidden = !g_hd_hidden; break;   /* session only: the launcher's UG_HDTEX holds the pack folder */
     case IT_UNLOCK:
         if (dir == 0 && !unlock_done) { g_unlock_req = 1; unlock_done = 1; }

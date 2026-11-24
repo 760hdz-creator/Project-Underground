@@ -150,10 +150,12 @@ static void fill_state(uint32_t dst, int port) {
     memcpy(g_mem + dst + 6, analog, 8);
     WR16(dst + 14, (uint16_t)h.lx);
     WR16(dst + 16, (uint16_t)h.ly);
-    {   /* UG_INVERTX / UG_INVERTY=1: right stick (camera) axes flipped (launcher / F1 menu "Invert camera") */
+    {   /* right stick (camera): both axes are flipped from the original Xbox game by default, so up is up and left
+         * is left (user's choice 2026-11-23). UG_INVERTX=0 / UG_INVERTY=0 = the original Xbox direction on that axis
+         * (launcher "Camera", F1 menu). */
         static int ix = -1, iy = -1;
-        if (ix < 0) { const char *e = getenv("UG_INVERTX"); ix = e && *e == '1'; }
-        if (iy < 0) { const char *e = getenv("UG_INVERTY"); iy = e && *e == '1'; }
+        if (ix < 0) { const char *e = getenv("UG_INVERTX"); ix = !(e && *e == '0'); }
+        if (iy < 0) { const char *e = getenv("UG_INVERTY"); iy = !(e && *e == '0'); }
         if (g_invert_x >= 0) ix = g_invert_x;
         if (g_invert_y >= 0) iy = g_invert_y;
         if (ix) h.rx = (SHORT)(h.rx == -32768 ? 32767 : -h.rx);

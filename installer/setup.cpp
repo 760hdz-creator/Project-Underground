@@ -506,10 +506,11 @@ static const Choice kWinSize[] = {{L"Auto (2/3 of the monitor, default)", nullpt
 #define N_WINSIZE 32
 // UG_WIDESCREEN: the game's own 16:9 mode (Xbox widescreen flag), on by default; UG_ASPECT=stretch fills the window
 static const Choice kScreen[] = {{L"16:9 widescreen (default)", nullptr}, {L"4:3 original", L"0"}};
-// UG_INVERTY / UG_INVERTX: the game's right stick (walking camera) up/down and/or left/right flipped. One combo,
-// two keys: index bit 0 = up/down, bit 1 = left/right (LoadSettings / SaveSettings).
-static const Choice kCamera[] = {{L"Normal (default)", nullptr}, {L"Inverted up/down", nullptr},
-                                 {L"Inverted left/right", nullptr}, {L"Inverted both ways", nullptr}};
+// The game's right stick (walking camera). Both axes are flipped from the Xbox original by default (up is up, left is
+// left: runtime/src/hle.c); UG_INVERTY=0 / UG_INVERTX=0 keep the original Xbox direction on that axis. One combo, two
+// keys: index bit 0 = original up/down, bit 1 = original left/right (LoadSettings / SaveSettings).
+static const Choice kCamera[] = {{L"Normal (default)", nullptr}, {L"Xbox up/down", nullptr},
+                                 {L"Xbox left/right", nullptr}, {L"Xbox both ways (original)", nullptr}};
 static const Choice kFit[] = {{L"Keep aspect, black bars (default)", nullptr}, {L"Stretch to the window", L"stretch"}};
 // UG_LEVEL (test cheat, runtime/src/hle.c): story or free skate loads this level instead of the one it asks for
 static const Choice kLevel[] = {{L"Off (normal game)", nullptr}, {L"NJ  New Jersey", L"nj"}, {L"NY  Manhattan", L"ny"},
@@ -552,8 +553,8 @@ static void LoadSettings() {
             if (cs.c[i].value ? v == cs.c[i].value : v.empty()) sel = i;
         SendDlgItemMessageW(g_wnd, cs.id, CB_SETCURSEL, sel, 0);
     }
-    int cam = (IniGet(g_instDir, L"settings", L"UG_INVERTY") == L"1" ? 1 : 0) |
-              (IniGet(g_instDir, L"settings", L"UG_INVERTX") == L"1" ? 2 : 0);
+    int cam = (IniGet(g_instDir, L"settings", L"UG_INVERTY") == L"0" ? 1 : 0) |
+              (IniGet(g_instDir, L"settings", L"UG_INVERTX") == L"0" ? 2 : 0);
     SendDlgItemMessageW(g_wnd, ID_CAMERA, CB_SETCURSEL, cam, 0);
     SetOn(ID_FULLSCREEN, IniGet(g_instDir, L"settings", L"UG_FULLSCREEN") == L"1");
     SetOn(ID_FPS60, IniGet(g_instDir, L"settings", L"UG_FPS") != L"30");     // 60 fps is the default
@@ -567,8 +568,8 @@ static void SaveSettings() {
     {
         int cam = (int)SendDlgItemMessageW(g_wnd, ID_CAMERA, CB_GETCURSEL, 0, 0);
         if (cam >= 0 && cam < 4) {
-            IniSet(g_instDir, L"settings", L"UG_INVERTY", (cam & 1) ? L"1" : L"");
-            IniSet(g_instDir, L"settings", L"UG_INVERTX", (cam & 2) ? L"1" : L"");
+            IniSet(g_instDir, L"settings", L"UG_INVERTY", (cam & 1) ? L"0" : L"");
+            IniSet(g_instDir, L"settings", L"UG_INVERTX", (cam & 2) ? L"0" : L"");
         }
     }
     IniSet(g_instDir, L"settings", L"UG_FULLSCREEN", IsOn(ID_FULLSCREEN) ? L"1" : L"");
