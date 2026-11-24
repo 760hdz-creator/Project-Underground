@@ -53,7 +53,7 @@ static const wchar_t kShortcut[] = L"Project Underground.lnk";
 
 enum { ID_ISO_BROWSE = 200, ID_DIR_BROWSE, ID_DESKTOP, ID_STARTMENU, ID_INSTALL, ID_PROGRESS,
        ID_STATUS, ID_PLAY, ID_UPDATE, ID_UNINSTALL, ID_FULLSCREEN, ID_SCALE, ID_PADS, ID_FPS60, ID_VSYNC, ID_LOGS,
-       ID_MONITOR, ID_ANDROID, ID_SETTINGS, ID_QUIT, ID_CLOSE, ID_WINSIZE, ID_SCREEN, ID_FIT, ID_LEVEL, ID_HD };
+       ID_MONITOR, ID_ANDROID, ID_SETTINGS, ID_QUIT, ID_CLOSE, ID_WINSIZE, ID_SCREEN, ID_FIT, ID_LEVEL, ID_HD, ID_CAMERA };
 #define WM_APP_STATUS (WM_APP + 1)
 #define WM_APP_PROGRESS (WM_APP + 2)
 #define WM_APP_DONE (WM_APP + 3)
@@ -475,6 +475,8 @@ static const Choice kWinSize[] = {{L"Auto (2/3 of the monitor, default)", nullpt
                                   {L"960 x 720  (4:3)", L"960x720"}, {L"1440 x 1080  (4:3)", L"1440x1080"}};
 // UG_WIDESCREEN: the game's own 16:9 mode (Xbox widescreen flag), on by default; UG_ASPECT=stretch fills the window
 static const Choice kScreen[] = {{L"16:9 widescreen (default)", nullptr}, {L"4:3 original", L"0"}};
+// UG_INVERTY: the game's right stick up/down (walking camera) flipped
+static const Choice kCamera[] = {{L"Normal (default)", nullptr}, {L"Inverted up/down", L"1"}};
 static const Choice kFit[] = {{L"Keep aspect, black bars (default)", nullptr}, {L"Stretch to the window", L"stretch"}};
 // UG_LEVEL (test cheat, runtime/src/hle.c): story or free skate loads this level instead of the one it asks for
 static const Choice kLevel[] = {{L"Off (normal game)", nullptr}, {L"NJ  New Jersey", L"nj"}, {L"NY  Manhattan", L"ny"},
@@ -503,7 +505,7 @@ struct ComboSetting { int id; const wchar_t* key; const Choice* c; int n; };
 static ComboSetting kCombos[] = {{ID_MONITOR, L"UG_MONITOR", kMonitor, 1}, {ID_WINSIZE, L"UG_WINDOW", kWinSize, 8},
                                  {ID_SCREEN, L"UG_WIDESCREEN", kScreen, 2}, {ID_FIT, L"UG_ASPECT", kFit, 2},
                                  {ID_SCALE, L"UG_SCALE", kScale, 6}, {ID_PADS, L"UG_PADS", kPads, 4},
-                                 {ID_LEVEL, L"UG_LEVEL", kLevel, 18}};
+                                 {ID_LEVEL, L"UG_LEVEL", kLevel, 18}, {ID_CAMERA, L"UG_INVERTY", kCamera, 2}};
 static void InitMonitors() {
     EnumDisplayMonitors(nullptr, nullptr, MonEnum, 0);
     for (auto& cs : kCombos) if (cs.id == ID_MONITOR) cs.n = g_nMonitors;
@@ -637,9 +639,10 @@ static void BuildArt(int w, int h) {
         DeleteObject(pen);
         ArtText(pd, {260, 665, 1500, 755}, g_titleFont, kAccent, L"SETTINGS", DT_SINGLELINE | DT_VCENTER);
         static const wchar_t* rows[] = {L"Monitor", L"Window size", L"Screen", L"Picture", L"Render scale",
-                                        L"Players (gamepads)", L"Level (test cheat)", L"HD texture pack"};
-        for (int i = 0; i < 8; i++)
-            ArtText(pd, {260, 840 + 68 * i, 700, 900 + 68 * i}, g_font, kText, rows[i], DT_SINGLELINE | DT_VCENTER);
+                                        L"Players (gamepads)", L"Camera (right stick)", L"Level (test cheat)",
+                                        L"HD texture pack"};
+        for (int i = 0; i < 9; i++)
+            ArtText(pd, {260, 836 + 61 * i, 700, 896 + 61 * i}, g_font, kText, rows[i], DT_SINGLELINE | DT_VCENTER);
         ArtText(pd, {700, 665, 1500, 755}, g_smallFont, kDim, L"Saved at once to settings.ini",
                 DT_SINGLELINE | DT_VCENTER | DT_RIGHT);
     }
@@ -865,7 +868,7 @@ static void Launch(const std::wstring& dir) {
 // Launcher settings controls (shown on the panel over the art when the SETTINGS board is on).
 static HWND g_settingsBtn;
 static const int kSettingIds[] = {ID_FULLSCREEN, ID_FPS60, ID_VSYNC, ID_MONITOR, ID_WINSIZE, ID_SCREEN, ID_FIT, ID_SCALE,
-                                  ID_PADS, ID_LEVEL, ID_HD};
+                                  ID_PADS, ID_CAMERA, ID_LEVEL, ID_HD};
 // HD texture pack (UG_HDTEX=<folder>, runtime/src/hdtex.c): a PCSX2 replacement pack made for the PS2 version, used
 // where it is. Combo: Off / the folder / Choose folder... The folder is remembered in [launcher] HdFolder while off.
 static int CountDds(const std::wstring& dir, int depth = 0) {
@@ -928,6 +931,82 @@ static void ShowSettings(bool on) {
     RedrawWindow(g_wnd, nullptr, nullptr, RDW_INVALIDATE | RDW_ERASE | RDW_ALLCHILDREN);
 }
 
+// ---- gamepad navigation (XInput, polled every 33 ms while the window is in front): D-pad / left stick up-down
+// moves between the skateboards (or the settings rows), left-right changes a setting, A presses, B closes the
+// settings panel, START plays (launcher) ----
+typedef struct { DWORD packet; WORD buttons; BYTE lt, rt; SHORT lx, ly, rx, ry; } PadState;
+static DWORD (WINAPI* g_xget)(DWORD, PadState*);
+static std::vector<HWND> NavItems() {
+    std::vector<HWND> v;
+    if (g_panel)
+        for (int id : kSettingIds) { HWND c = GetDlgItem(g_wnd, id); if (c && IsWindowVisible(c) && IsWindowEnabled(c)) v.push_back(c); }
+    for (HWND c = GetWindow(g_wnd, GW_CHILD); c; c = GetWindow(c, GW_HWNDNEXT))
+        if ((GetWindowLongPtrW(c, GWLP_USERDATA) & K_BOARD) && IsWindowVisible(c) && IsWindowEnabled(c)) {
+            if (g_panel && c != g_settingsBtn) continue;   // settings open: its rows, then the HIDE SETTINGS board
+            v.push_back(c);
+        }
+    return v;
+}
+static void PadPoll() {
+    static bool init;
+    if (!init) {
+        init = true;
+        HMODULE m = LoadLibraryW(L"xinput1_4.dll");
+        if (!m) m = LoadLibraryW(L"xinput9_1_0.dll");
+        if (m) g_xget = (DWORD(WINAPI*)(DWORD, PadState*))(void*)GetProcAddress(m, "XInputGetState");
+    }
+    if (!g_xget || GetForegroundWindow() != g_wnd) return;
+    WORD b = 0;
+    for (DWORD i = 0; i < 4; i++) {
+        PadState st = {};
+        if (g_xget(i, &st) != 0) continue;
+        b |= st.buttons;
+        if (st.ly > 16000) b |= 1; if (st.ly < -16000) b |= 2; if (st.lx < -16000) b |= 4; if (st.lx > 16000) b |= 8;
+    }
+    static WORD prev;
+    static DWORD held_since, last_rep;
+    DWORD now = GetTickCount();
+    WORD dirs = b & 15, press = b & ~prev;
+    if (dirs && dirs == (prev & 15)) {   // held: repeat after 400 ms, every 120 ms
+        if (now - held_since > 400 && now - last_rep > 120) { press |= dirs; last_rep = now; }
+    } else held_since = now;
+    prev = b;
+    if (!press) return;
+    SendMessageW(g_wnd, WM_CHANGEUISTATE, MAKEWPARAM(UIS_CLEAR, UISF_HIDEFOCUS), 0);   // show the focus highlight
+    std::vector<HWND> items = NavItems();
+    if (items.empty()) return;
+    HWND f = GetFocus();
+    int cur = -1;
+    for (size_t i = 0; i < items.size(); i++) if (items[i] == f) cur = (int)i;
+    if (press & 3) {   // up / down
+        int n = (int)items.size();
+        cur = cur < 0 ? 0 : (cur + ((press & 2) ? 1 : n - 1)) % n;
+        SetFocus(items[cur]);
+        return;
+    }
+    if (cur < 0) { SetFocus(items[0]); return; }
+    HWND c = items[cur];
+    wchar_t cls[16];
+    GetClassNameW(c, cls, 16);
+    bool combo = !_wcsicmp(cls, L"COMBOBOX");
+    if ((press & 12) && combo) {   // left / right: previous / next choice
+        int n = (int)SendMessageW(c, CB_GETCOUNT, 0, 0), sel = (int)SendMessageW(c, CB_GETCURSEL, 0, 0);
+        int to = sel + ((press & 8) ? 1 : -1);
+        if (to >= 0 && to < n) {
+            SendMessageW(c, CB_SETCURSEL, to, 0);
+            SendMessageW(g_wnd, WM_COMMAND, MAKEWPARAM(GetDlgCtrlID(c), CBN_SELCHANGE), (LPARAM)c);
+        }
+        return;
+    }
+    if ((press & 0x1000) || ((press & 12) && (GetWindowLongPtrW(c, GWLP_USERDATA) & K_TOGGLE))) {   // A (or left/right on a toggle)
+        if (combo) SendMessageW(c, CB_SHOWDROPDOWN, TRUE, 0);
+        else SendMessageW(c, BM_CLICK, 0, 0);
+        return;
+    }
+    if ((press & 0x2000) && g_launcher && g_panel) { ShowSettings(false); SetFocus(g_settingsBtn); return; }   // B
+    if ((press & 0x10) && g_launcher) SendMessageW(GetDlgItem(g_wnd, ID_PLAY), BM_CLICK, 0, 0);               // START
+}
+
 static bool LauncherCommand(HWND h, int id, int code) {
     switch (id) {
     case ID_LOGS: {   // the game log (out\underground.log), selected in Explorer; the folder if there is no log yet
@@ -972,7 +1051,7 @@ static bool LauncherCommand(HWND h, int id, int code) {
     case ID_HD:
         if (code == CBN_SELCHANGE) HdComboChanged();
         return true;
-    case ID_SCALE: case ID_PADS: case ID_MONITOR: case ID_WINSIZE: case ID_SCREEN: case ID_FIT: case ID_LEVEL:
+    case ID_SCALE: case ID_PADS: case ID_MONITOR: case ID_WINSIZE: case ID_SCREEN: case ID_FIT: case ID_LEVEL: case ID_CAMERA:
         if (code == CBN_SELCHANGE) SaveSettings();
         return true;
     }
@@ -1006,6 +1085,7 @@ static LRESULT CALLBACK WndProc(HWND h, UINT m, WPARAM wp, LPARAM lp) {
         SetBkMode((HDC)wp, TRANSPARENT);
         return (LRESULT)ArtBrushFor((HDC)wp, (HWND)lp);
     case WM_DRAWITEM: DrawButton((const DRAWITEMSTRUCT*)lp); return TRUE;
+    case WM_TIMER: if (wp == 77) PadPoll(); return 0;
     case WM_COMMAND:
         if ((HIWORD(wp) == BN_CLICKED || HIWORD(wp) == BN_DOUBLECLICKED) && lp &&
             (GetWindowLongPtrW((HWND)lp, GWLP_USERDATA) & K_TOGGLE)) {
@@ -1228,14 +1308,15 @@ static void CreateLauncherControls() {
     MakeCheck(L"Fullscreen", ID_FULLSCREEN, 260, 772, 380);
     MakeCheck(L"60 fps", ID_FPS60, 700, 772, 300);
     MakeCheck(L"VSync", ID_VSYNC, 1060, 772, 300);
-    MakeCombo(ID_MONITOR, kMonitor, g_nMonitors, 720, 845, 780);
-    MakeCombo(ID_WINSIZE, kWinSize, 8, 720, 913, 780);
-    MakeCombo(ID_SCREEN, kScreen, 2, 720, 981, 780);
-    MakeCombo(ID_FIT, kFit, 2, 720, 1049, 780);
-    MakeCombo(ID_SCALE, kScale, 6, 720, 1117, 780);
-    MakeCombo(ID_PADS, kPads, 4, 720, 1185, 780);
-    MakeCombo(ID_LEVEL, kLevel, 18, 720, 1253, 780);
-    MakeCombo(ID_HD, nullptr, 0, 720, 1321, 780);
+    MakeCombo(ID_MONITOR, kMonitor, g_nMonitors, 720, 841, 780);
+    MakeCombo(ID_WINSIZE, kWinSize, 8, 720, 902, 780);
+    MakeCombo(ID_SCREEN, kScreen, 2, 720, 963, 780);
+    MakeCombo(ID_FIT, kFit, 2, 720, 1024, 780);
+    MakeCombo(ID_SCALE, kScale, 6, 720, 1085, 780);
+    MakeCombo(ID_PADS, kPads, 4, 720, 1146, 780);
+    MakeCombo(ID_CAMERA, kCamera, 2, 720, 1207, 780);
+    MakeCombo(ID_LEVEL, kLevel, 18, 720, 1268, 780);
+    MakeCombo(ID_HD, nullptr, 0, 720, 1329, 780);
     FillHdCombo();
     for (int id : kSettingIds) ShowWindow(GetDlgItem(g_wnd, id), SW_HIDE);
     LoadSettings();
@@ -1348,6 +1429,7 @@ int WINAPI wWinMain(HINSTANCE inst, HINSTANCE, PWSTR, int) {
         // started by the game's updater (--update --dir) or with --iso: go straight away
         if ((update && !dirArg.empty()) || (!update && !isoArg.empty())) Start();
     }
+    SetTimer(g_wnd, 77, 33, nullptr);   // gamepad navigation (PadPoll)
     MSG msg;
     while (GetMessageW(&msg, nullptr, 0, 0)) {
         if (!IsDialogMessageW(g_wnd, &msg)) { TranslateMessage(&msg); DispatchMessageW(&msg); }

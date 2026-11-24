@@ -59,6 +59,7 @@ static const int kb_analog[8] = {'Z', 'X', 'C', 'V', 'F', 'G', 'Q', 'E'};
 typedef struct { DWORD packet; WORD buttons; BYTE lt, rt; SHORT lx, ly, rx, ry; } HostXState;
 
 /* guest XINPUT_STATE: dwPacketNumber, wButtons, bAnalogButtons[8] (A B X Y BLACK WHITE LT RT), sThumbLX LY RX RY */
+volatile int g_invert_x = -1, g_invert_y = -1;   /* set by the F1 menu (-1: UG_INVERTX / UG_INVERTY) */
 static void fill_state(uint32_t dst, int port) {
     HostXState h;
     memset(&h, 0, sizeof h);
@@ -120,6 +121,15 @@ static void fill_state(uint32_t dst, int port) {
     memcpy(g_mem + dst + 6, analog, 8);
     WR16(dst + 14, (uint16_t)h.lx);
     WR16(dst + 16, (uint16_t)h.ly);
+    {   /* UG_INVERTX / UG_INVERTY=1: right stick (camera) axes flipped (launcher / F1 menu "Invert camera") */
+        static int ix = -1, iy = -1;
+        if (ix < 0) { const char *e = getenv("UG_INVERTX"); ix = e && *e == '1'; }
+        if (iy < 0) { const char *e = getenv("UG_INVERTY"); iy = e && *e == '1'; }
+        if (g_invert_x >= 0) ix = g_invert_x;
+        if (g_invert_y >= 0) iy = g_invert_y;
+        if (ix) h.rx = (SHORT)(h.rx == -32768 ? 32767 : -h.rx);
+        if (iy) h.ry = (SHORT)(h.ry == -32768 ? 32767 : -h.ry);
+    }
     WR16(dst + 18, (uint16_t)h.rx);
     WR16(dst + 20, (uint16_t)h.ry);
 }

@@ -135,6 +135,7 @@ static void iosb(uint32_t p, uint32_t status, uint32_t info) {
 static uint32_t open_common(uint32_t handle_out, uint32_t oa, uint32_t io, uint32_t disposition, uint32_t options) {
     char gpath[MAX_PATH], host[MAX_PATH];
     obj_attr_path(oa, gpath);
+    if (getenv("UG_FSLOG")) LOG("[fs] create %s disp %u opts %X\n", gpath, disposition, options);
     if (!to_host(gpath, host)) {
         LOG("[fs] open %s: unmapped path\n", gpath);
         iosb(io, ST_PATH_NOT_FOUND, 0);
@@ -143,15 +144,18 @@ static uint32_t open_common(uint32_t handle_out, uint32_t oa, uint32_t io, uint3
     DWORD attr = GetFileAttributesA(host);
     int exists = attr != INVALID_FILE_ATTRIBUTES;
     int want_dir = (options & 1) != 0; /* FILE_DIRECTORY_FILE */
+    int created = 0;
     if (!exists && (disposition == 2 || disposition == 3 || disposition == 5 || disposition == 0) && want_dir) {
-        CreateDirectoryA(host, NULL);
+        created = CreateDirectoryA(host, NULL) != 0;
         attr = GetFileAttributesA(host);
-        exists = 1;
+        exists = attr != INVALID_FILE_ATTRIBUTES;
     }
     int is_dir = exists && (attr & FILE_ATTRIBUTE_DIRECTORY);
     HANDLE h = INVALID_HANDLE_VALUE;
     if (is_dir) {
-        if (disposition == 2) { iosb(io, ST_COLLISION, 0); return ST_COLLISION; }
+        /* FILE_CREATE on a directory that already existed: collision. One just made here is a success (it used to
+         * report a collision too, so XCreateSaveGame took its new folder for an old save and failed: no saves). */
+        if (disposition == 2 && !created) { iosb(io, ST_COLLISION, 0); return ST_COLLISION; }
         h = CreateFileA(host, GENERIC_READ, FILE_SHARE_READ | FILE_SHARE_WRITE, NULL, OPEN_EXISTING,
                         FILE_FLAG_BACKUP_SEMANTICS, NULL);
     } else {
@@ -177,7 +181,7 @@ static uint32_t open_common(uint32_t handle_out, uint32_t oa, uint32_t io, uint3
     strcpy(f->guest_path, gpath);
     strcpy(f->host_path, host);
     WR32(handle_out, handle_new(H_FILE, 0, f));
-    iosb(io, STATUS_SUCCESS, exists ? 1 : 2); /* FILE_OPENED / FILE_CREATED */
+    iosb(io, STATUS_SUCCESS, exists && !created ? 1 : 2); /* FILE_OPENED / FILE_CREATED */
     LOG("[fs] open %s -> %s%s\n", gpath, host, is_dir ? " (dir)" : "");
     script_file_event(gpath);
     return STATUS_SUCCESS;
@@ -255,8 +259,9 @@ K(NtWriteFile) {
         if (off.QuadPart >= 0) SetFilePointerEx(f->h, off, NULL, FILE_BEGIN);
     }
     DWORD put = 0;
-    WriteFile(f->h, g_mem + ARG(5), ARG(6), &put, NULL);
+    BOOL ok = WriteFile(f->h, g_mem + ARG(5), ARG(6), &put, NULL);
     iosb(ARG(4), STATUS_SUCCESS, put);
+    if (getenv("UG_FSLOG")) LOG("[fs] write %s len %X -> %u%s\n", f->guest_path, ARG(6), (unsigned)put, ok ? "" : " (failed)");
     signal_event(ARG(1));
     return STATUS_SUCCESS;
 }
