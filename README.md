@@ -129,7 +129,9 @@ Known gaps:
 | | F11 or Alt+Enter: fullscreen, F10: HD textures on/off |
 
 In-game menu: pauses the game; fullscreen, frame rate (30/60), camera invert (X/Y), HD textures on/off, and Quit
-(press twice). Changes are saved to the launcher's settings.
+(press twice). Changes are saved to the launcher's settings. Once a story or career is going it also has Cheats:
+Unlock everything (the game's own unlock: levels, skaters, movies, cheat codes), Always special, Perfect rails,
+Perfect manuals, Moon gravity and Perfect skitch.
 
 Name entry (the on-screen keyboard, e.g. save names): just type. While the on-screen keyboard is open, letters, digits,
 Backspace and Enter go into the text; the arrow keys still move over the on-screen keys.
