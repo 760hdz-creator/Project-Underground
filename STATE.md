@@ -224,6 +224,8 @@ SESSION 2026-11-24 (polish, after the graphics options):
   package 8.4 MB (--iso install 83 s, NJ free skate on llvmpipe OK, uninstalled). UG_INPUT runs on a fresh folder exit at
   HalReturnToFirmware(2) on purpose: run them twice. Homepage card image (docs/images/maps/ru.jpg -> landing/img/thug.jpg):
   deploy blocked by the permission classifier, waits for the user.
+- CLEANUP (2026-11-24): ug_test, ug_test2, ug_inst (drive G) and all WSL ~/ug-* except ~/ug-chk are deleted. Linux build
+  checks: copy out/lifted (with *.h) to a new folder first. Older notes that name the deleted folders are history.
 D. Pushed to both remotes 2026-11-24 (no tag, no release).
 1. Sky wedge (cosmetic); pool-floor rectangle (UG_DBGCOLOR=7). Neither showed in 16 NJ shots on 2026-11-23
    (run_texgen, run_dbg7); a quarter-pipe light/dark split at f14400 is not a shadow draw (baked lighting).
