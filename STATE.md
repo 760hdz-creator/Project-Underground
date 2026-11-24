@@ -111,7 +111,7 @@ print(','.join(ev))")" UG_SHOT=1200 ./out/underground.exe   (NJ level by ~frame 
 
 ## Next
 RESUME HERE (paused 2026-11-24 ~00:30, user's request):
-A. PINK HOUSE (NJ, user screenshot): a pink house wall shows a diagonal split, an untextured flat-pink part and
+A. PINK HOUSE (FIXED 2026-11-24, see "PINK HOUSE FIXED" below; kept for history) (NJ, user screenshot): a pink house wall shows a diagonal split, an untextured flat-pink part and
    sky through the wall (also in our A/B shot 12300 of the HD run: skater standing in front of it). Tool ready
    (4cd0dc8): F9 or UG_CAPTURE=<frame> -> out/capture.log (every draw of that frame, "[draw] #n ...") + shot N
    (normal) + shot N+1 (UG_DBGCOLOR=10: draw index = r + 256*g). Asked the user to run
@@ -167,7 +167,7 @@ C. README pictures (user asked): hd_compare.jpg REPLACED (static UG_SHOTAB pair 
    (UG_LEVEL redirect, UG_SHOT=600 from 4200; ~65 min). Do NOT run anything else meanwhile (shared out/shot_*,
    route timing). TaskStop does not kill the bash loop: kill bash + timeout + underground.exe by PID. Then pick
    the best widescreen shot per map (resize to 16:9), README gallery (docs/images/maps/*.jpg), commit, push.
-USER 2026-11-24: NO Android work until the user says so. Players limited to 2 (launcher, UG_PADS clamp, docs). Pink house: wait for the user at the PC. Polish order: sweep fixes, split-screen AO, AO in vertex-program-only scenes, hitches, supersampling in the in-game menu, >60 fps check, README gallery + Linux package.
+USER 2026-11-24: NO Android work until the user says so. Players limited to 2 (launcher, UG_PADS clamp, docs). Polish order: sweep fixes, split-screen AO, AO in vertex-program-only scenes, hitches, supersampling in the in-game menu, >60 fps check, README gallery + Linux package.
 SESSION 2026-11-24 (polish, after the graphics options):
 - Surface clip origin = scissor (set_clip_scissor): in split screen view 2 drew over view 1. Post-processing is per
   surface clip (FxView), AO has each view's camera. Split-screen route: out/dev/in1.txt + UG_INPUT2="58:A,64:A", UG_PADS=2.
@@ -186,9 +186,15 @@ SESSION 2026-11-24 (polish, after the graphics options):
 - Linux package rebuilt from 39d4c8e (WSL ~/ug-chk/dist, 8.4 MB; new icon and options): --iso install ~2 min, NJ free skate on
   llvmpipe with FXAA + AO + draw distance OK (out/linux/new). Uninstalled again (WSL ~/ug-inst2/out left). setup.sh without a
   terminal ends on a zenity dialog: run tests with DISPLAY= WAYLAND_DISPLAY= .
-- PINK HOUSE LEAD: out/pink/across_10500.ppm (4x, seen across the school yard): single TRIANGLES are missing inside one
-  wall (slanted edges), so not whole meshes and not an occluder. Look at index lists / strips / fetch_vertex for that
-  draw. UG_CAPTUREEVERY=600 on a story run, then pick the frame by eye. User wants to do it at the PC.
+- PINK HOUSE FIXED (2026-11-24): material 5C738D12 (siding) names texture 44BB7FAE, which NJ.tex does not contain, so the game
+  draws it with texture stage 0 off (tm 0/1/1/0, prog 00420). Our shader gave an off stage (0,0,0,0): r0.a = 0, alpha test
+  (>= 1) dropped the triangles (the slanted edges are the borders to meshes with other materials). Hardware / xemu psh.c: an
+  off stage reads (0,0,0,1) and r0.a = 1. One line in nv2a.frag. Checked from the school yard (out/dev/te7/shot_05500.ppm)
+  and in sd, vc, hn, sc and the menus. The A. notes above (occlusion lead, "cause not isolated") are superseded: the level
+  parser had skipped 362 of 1350 sectors (flag bytes 0x81, 0x90, 0x91; fixed in out/badattr/allsec.py).
+  Tools in out/badattr: allmiss.py (meshes, capture frames), pinkc.py (meshes by texture x material x vertex colour),
+  mat.py, ptele5.py (debug teleport patch for hle.c, not committed: UG_TELE="<frame>:<x0>,<z0>:<x>,<y>,<z>;", skater at
+  rest at 467.18,2922.88 after the NJ_01V cutscene, route out/dev/still.txt). Captures log "comp" rows for every draw again.
 D. Not pushed: everything from 4cd0dc8 (F9 capture, new hd_compare.jpg, graphics options).
 1. Sky wedge (cosmetic); pool-floor rectangle (UG_DBGCOLOR=7). Neither showed in 16 NJ shots on 2026-11-23
    (run_texgen, run_dbg7); a quarter-pipe light/dark split at f14400 is not a shadow draw (baked lighting).

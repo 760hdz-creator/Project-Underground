@@ -44,7 +44,7 @@ vec4 g_shadow_raw = vec4(-1.0);   // UG_DBGCOLOR=7: uv, raw ref / 4   // UG_DBGC
 
 vec4 stage_tex(int s, vec4 tc) {
     uint m = D.tmode[s];
-    if (m == 0u) return vec4(0.0);
+    if (m == 0u) return vec4(0.0, 0.0, 0.0, 1.0);   // stage off: opaque black (alpha 0 made the alpha test drop walls whose texture is missing)
     if (m == 3u) return clamp(tc, 0.0, 1.0);
     vec2 uv = tc.xy / (tc.w != 0.0 ? tc.w : 1.0);
     if (m == 2u || m == 4u) uv *= D.tsz[s].xy;

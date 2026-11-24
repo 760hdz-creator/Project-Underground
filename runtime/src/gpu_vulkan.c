@@ -1974,6 +1974,9 @@ static void draw_impl(int topo, const KVertex *v, uint32_t nv, const uint32_t *i
                     uint32_t vf = KREG(K_VTX_FORMAT + a * 4);
                     if ((vf >> 4) & 0xF) LOG("[draw]   attr %d fmt %08X off %08X\n", a, vf, KREG(0x1720 + a * 4));
                 }
+                if (u->mode[0] != 2)
+                    for (int i = 0; i < 4; i++)
+                        LOG("[draw]   comp %.9g %.9g %.9g %.9g\n", u->comp[i][0], u->comp[i][1], u->comp[i][2], u->comp[i][3]);
                 LOG("[draw]   pos range x %g..%g y %g..%g z %g..%g w %g..%g\n", lo[0], hi[0], lo[1], hi[1], lo[2], hi[2],
                     lo[3], hi[3]);
             }
