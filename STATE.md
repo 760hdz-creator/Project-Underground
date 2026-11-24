@@ -209,7 +209,7 @@ SESSION 2026-11-24 (polish, after the graphics options):
   (ambient 0.51, both lights 0) is now half as bright on its right part, with a soft edge. Debug: UG_LIGHT=0 off, 2 = off in odd
   frames; captures log "lit:" and "light n" lines.
   UBO ring 48 -> 64 MB: Vancouver dropped draws once at 8833 draws in a frame. FPS dips to 52 there on a 6000-draw spike.
-D. Not pushed: everything from 4cd0dc8 (F9 capture, new hd_compare.jpg, graphics options).
+D. Pushed to both remotes 2026-11-24 (no tag, no release).
 1. Sky wedge (cosmetic); pool-floor rectangle (UG_DBGCOLOR=7). Neither showed in 16 NJ shots on 2026-11-23
    (run_texgen, run_dbg7); a quarter-pipe light/dark split at f14400 is not a shadow draw (baked lighting).
 2. Renderer gaps (not seen in NJ so far: check other levels first): cube maps, FF spot/specular lights, eye/object-linear and
