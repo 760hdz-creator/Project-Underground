@@ -124,8 +124,8 @@ void linux_pump_events(void) {
         case SDL_EVENT_KEY_DOWN:
             if (e.key.key == SDLK_RETURN && !(e.key.mod & SDL_KMOD_ALT)) { extern void kbd_text_push(int); kbd_text_push(13); }
             if (e.key.key == SDLK_BACKSPACE) { extern void kbd_text_push(int); kbd_text_push(8); }
-            if (e.key.repeat) break;
-            {   /* in-game menu (menu.c): arrows, Enter/Space = ok, Esc/F1/Backspace = back; Esc or F1 opens it */
+            {   /* in-game menu (menu.c): arrows (autorepeat), Enter/Space = ok, Esc/F1/Backspace = back; Esc or F1
+                 * opens it */
                 extern volatile int g_menu_req;
                 extern int menu_is_open(void);
                 extern void menu_key(int);
@@ -133,9 +133,10 @@ void linux_pump_events(void) {
                 if (menu_is_open()) {
                     int k = kc == SDLK_UP ? 1 : kc == SDLK_DOWN ? 2 : kc == SDLK_LEFT ? 3 : kc == SDLK_RIGHT ? 4
                           : kc == SDLK_RETURN || kc == SDLK_SPACE ? 5 : kc == SDLK_ESCAPE || kc == SDLK_F1 || kc == SDLK_BACKSPACE ? 6 : 0;
-                    if (k) menu_key(k);
+                    if (k && (!e.key.repeat || k <= 4)) menu_key(k);
                     break;
                 }
+                if (e.key.repeat) break;
                 if (kc == SDLK_ESCAPE || kc == SDLK_F1) { g_menu_req = 1; break; }
             }
             if (e.key.key == SDLK_F11 || (e.key.key == SDLK_RETURN && (e.key.mod & SDL_KMOD_ALT))) toggle_fullscreen();

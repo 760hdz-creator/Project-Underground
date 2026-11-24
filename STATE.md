@@ -251,13 +251,18 @@ print(','.join(ev))")" UG_SHOT=1200 ./out/underground.exe   (NJ level by ~frame 
      thread, so the whole game pauses; sched_pause_add leaves the paused time out of sched_now_100ns (all guest
      clocks derive from it); dsound g_audio_hold outputs silence without advancing voices/streams. Renderer:
      gpu_menu_present re-presents last_present with the panel copied (opaque, centered, BGRA swap) into the
-     swapchain image: no new shaders; works on Linux/Android (same Vulkan path). Font: runtime/src/font8x8_basic.h
+     swapchain image: no new shaders; same Vulkan path on Linux/Android, BUT Android has no way to open it (no
+     Esc/F1, touch has no L3+R3) and its pad cache (android_pad_poll in sched_run, main stack) is frozen while the
+     menu loop runs: phone list item "in-game menu" (needs a touch button + pad poll). Font: runtime/src/font8x8_basic.h
      (public domain). Items: Resume, Fullscreen, Frame rate 30/60 (g_fps, nv2a.c), Invert X/Y, HD (only with a
      pack; session only), Quit. Writes settings.ini (UG_FULLSCREEN, UG_FPS, UG_INVERTX, UG_INVERTY) only if the file
      exists. Close waits for all keys/buttons released. Debug: UG_INPUT "<s>:MENU", UG_MENUKEYS=down,right,ok,back
      (other words wait 300 ms), UG_MENUSHOT=1 -> out/menu.ppm. Verified (Windows): navigation + toggle, 10 s pause
-     in NJ gameplay resumes seamlessly (shots 7420-7480), 0 audio underruns. Not tested: Linux run (builds), real
-     pad L3+R3, fullscreen toggle from the menu, settings.ini write in an install. NEVER screen-capture the desktop
+     in NJ gameplay resumes seamlessly (shots 7420-7480), 0 audio underruns; fullscreen on/off from the menu
+     (toggle posted to the window thread, WM_APP+1: swapchain 3440x1440 then back to 1706x960); settings.ini
+     round trip (launcher-style file: UG_FPS removed, UG_INVERTY=1 added, [launcher] kept). Desktop SDL pads work
+     while paused (get_live calls UpdateGamepads). Only arrows autorepeat in the menu. Not tested: Linux run
+     (builds), real pad L3+R3, an actual install. NEVER screen-capture the desktop
      for tests (a DPI-wrong CopyFromScreen grabbed other windows; deleted): use UG_MENUSHOT / UG_SHOT only.
   5. DONE 2026-11-23 (late): CHEATS in the in-game menu (shown once a career exists). Cheat flags = career global
      flags: bitset at [[0x2FCD68]+0x20] + 0x584 (SetGlobalFlag 0x1298B0 -> 0x113820), set directly while paused:
@@ -265,7 +270,10 @@ print(','.join(ev))")" UG_SHOT=1200 ./out/underground.exe   (NJ level by ~frame 
      manual ON_7 191, moon ON_9 193, sim ON_10 194, perfect skitch ON_12 196, bighead ON_13 197, slomo ON_15 199
      (cheats.qb aliases, global_flags.qb numbers). "Unlock everything" runs the game's own script
      unlock_all_cheats via RunScript-by-checksum 0x1F4B0(crc, 0, 0, 0) from the next XInputGetState (guest thread).
-     Verified in NJ: moon toggle sets its flag, unlock ran (flag 120 set), no fatal. Effects (moon jump etc.) not eyeballed.
+     Verified in NJ: moon toggle sets its flag, unlock ran (flag 120 set), no fatal; after it "Ollie 20 feet"
+     (no baseline run). The game's own cheats menu (create_real_cheats_menu) toggles these five with toggle_cheat
+     + nullscript callbacks, i.e. a plain flag flip like ours; only scripts call the C++ getter 0x113880, so the
+     C++ side reads the bitset some other way (not traced).
      Script tools (scratchpad): prx.py (unpack .prx), qbscript.py <xbe> <qb> <script...> (decompile a script),
      qbctx.py. Unpacked qb in scratchpad/qb (re-run prx.py if the scratchpad is gone).
   6. Controller support in the launcher: done 8c04593 (needs a real-pad test).

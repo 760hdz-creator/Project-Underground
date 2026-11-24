@@ -74,7 +74,7 @@ static LRESULT CALLBACK wndproc(HWND h, UINT m, WPARAM w, LPARAM l) {
         if (menu_is_open()) {   /* in-game menu (menu.c): arrows, Enter/Space = ok, Esc/F1/Backspace = back */
             int k = w == VK_UP ? 1 : w == VK_DOWN ? 2 : w == VK_LEFT ? 3 : w == VK_RIGHT ? 4
                   : w == VK_RETURN || w == VK_SPACE ? 5 : w == VK_ESCAPE || w == VK_F1 || w == VK_BACK ? 6 : 0;
-            if (k) menu_key(k);
+            if (k && (!(l & (1 << 30)) || k <= 4)) menu_key(k);   /* only the arrows autorepeat */
             if (w != VK_F11) return 0;
         } else if ((w == VK_ESCAPE || w == VK_F1) && !(l & (1 << 30))) {   /* first press, not autorepeat */
             g_menu_req = 1;
@@ -93,6 +93,7 @@ static LRESULT CALLBACK wndproc(HWND h, UINT m, WPARAM w, LPARAM l) {
         }
         break;
     case WM_SYSCHAR: if (w == VK_RETURN) return 0; break;
+    case WM_APP + 1: toggle_fullscreen(h); return 0;   /* in-game menu (plat_fullscreen_toggle) */
     case WM_CHAR: { extern void kbd_text_push(int); if (getenv("UG_KBDLOG")) LOG("[input] WM_CHAR %02X\n", (unsigned)w); kbd_text_push((int)w); return 0; }
     case 0x02E0: {   /* WM_DPICHANGED (moved to a monitor with another scale): take Windows' suggested rect */
         const RECT *s = (const RECT *)l;
@@ -2134,5 +2135,6 @@ void gpu_menu_present(const uint8_t *rgba, int w, int h) {
 int gpu_window_height(void) { return sc_ext.height ? (int)sc_ext.height : 720; }
 #ifdef _WIN32
 int plat_fullscreen_get(void) { return g_hwnd && (GetWindowLongW(g_hwnd, GWL_STYLE) & WS_POPUP) != 0; }
-void plat_fullscreen_toggle(void) { if (g_hwnd) toggle_fullscreen(g_hwnd); }
+/* the in-game menu runs on the guest thread: the window thread does the toggle, as for F11 */
+void plat_fullscreen_toggle(void) { if (g_hwnd) PostMessageW(g_hwnd, WM_APP + 1, 0, 0); }
 #endif
