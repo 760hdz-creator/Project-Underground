@@ -75,7 +75,7 @@ for c in range(40,200,12): ev+=[f'{c}:B:0.3',f'{c+1.5}:B:0.3',f'{c+3}:B:0.3',f'{
 print(','.join(ev))")" UG_SHOT=1200 ./out/underground.exe   (NJ level by ~frame 6000; run 280 s)
   - FIXED 2026-11-23: magenta tint = final combiner (c0/c1 now SET_SPECULAR_FOG_FACTOR 0x1E20/24; fog alpha 1 when
     fog off). Fog function (FOG_MODE/PARAMS) added in nv2a.vert. build.py now tracks local #include mtimes.
-  - OPEN (cosmetic): translucent dark-blue band/wedge across the sky at the top of the screen, intermittent, only with
+  - LIKELY FIXED by cc0379d, recheck (cosmetic): translucent dark-blue band/wedge across the sky at the top of the screen, intermittent, only with
     sky in view. A/B runs inconclusive (UG_SKIPMODE=2, UG_SKIPTEXMAT=1: the sky dome itself uses texture matrices, so
     skipping texmat draws removes the sky). Not texgen (no draw sets TEXGEN 0x3C0..). stage_tex divides by q per
     fragment. Left for later.
@@ -84,9 +84,9 @@ print(','.join(ev))")" UG_SHOT=1200 ./out/underground.exe   (NJ level by ~frame 
     Compare is STORED op REF (func 0x1E6C, D3D order never/less/eq/le/gt/ne/ge/always), ref = r/q / zmax clamped to
     [0,1]. THUG: skater rendered into a 256x256 depth surface (035B7000 CAS, 03311000 levels), receivers multiply dst by
     0.75 + 0.25*shadow (skater self-shadow) or t1 + 0.6 (world sectors, only some sectors, e.g. alleys).
-    Also fixed: depth clamp enabled (NV2A does not clip z; receivers were clipped), polygon offset implemented
+    Also fixed: depth clamp enabled (wrong since cc0379d: NV2A clamps or culls by 0x1D78), polygon offset implemented
     (fill enable 0x0338, factor 0x0384, units 0x0388; receivers use -2/-4), TF_DEPTH sorts after DXT (size path).
-  - OPEN: one shot showed a hard-edged darker rectangle on a pool floor (receiver sector darkened as a whole: ref >= 1
+  - LIKELY FIXED by cc0379d, recheck: one shot showed a hard-edged darker rectangle on a pool floor (receiver sector darkened as a whole: ref >= 1
     outside the light frustum?). Check with UG_DBGCOLOR=7 there. Debug: UG_DBGCOLOR=6 (r = fract(ref*16), g = stored
     depth < 1, b = ref > stored), 7 (uv, ref/4 of shadow draws; other draws white), UG_SHADOWNOZ=1 (no z test/cull on
     shadow draws). Draw log now prints all 4 stage modes, shader prog, z func and polygon offset.
@@ -214,6 +214,16 @@ SESSION 2026-11-24 (polish, after the graphics options):
   (UG_SKYFIX=0 keeps them). Tools: out/badattr/skyj.py, skygeo.py, skycap.py.
 - SWEEP 4 (2026-11-24, lighting + wall fix, AO + FXAA + draw distance): 15 of 15 maps, no warnings. One black block at an sc pool
   (out/dev/s4_sc/shot_04800): probably the game's black box mesh (texture average 0,0,4), not proven.
+- SC POOL BLACK BLOCK (closed 2026-11-24): the game's art. Sector A747E530, one quad 0.5-1 unit over the sloped pool floor,
+  material 9437B5A3 (flags 0x1024: textured, smooth, not transparent; blend mode 0), texture 6EBECFA8 = opaque black. Read from
+  the scene file, not captured live. "draw #44" in the sc alley is a painted mural, not this.
+- SKATER SHADOWS FIXED (cc0379d, 2026-11-24): SET_VIEWPORT_SCALE / _OFFSET also write vertex constants 58 / 59 (xemu). The shadow
+  receiver program (12 instructions) and one more (16) end with oPos = r12 * c58 / w + c59; bones had overwritten both, so every
+  sampled receiver draw projected with bone matrices: no silhouette on the world and dark wedges near the eye (intro window
+  scene). UG_VPCONST=0: off. Tools: out/dev/vpe.py (disassembles a captured program), vpall.py (who reads c56-59), wedge.py.
+  Depth clamp now follows 0x1D78 (0x10 clamp on blended meshes, 1 cull on the rest); it was not shown to fix anything, and
+  marks on 8 maps found no fragment past the far plane (UG_ZCLAMP=1: always clamp). b0710f8's "outside the map is lit" rule was
+  made against the broken projection; not re-tested without it.
 - SPEED (e9b99d7): texture hash once per frame (stable textures), descriptor sets shared, dynamic state cached, vertex fetch
   resolved per batch (855 M vertices compared with the old code: 0 differences). Vancouver ~7000 draws: 15.0 -> 10.4 ms busy.
   Log line "[gpu] busy". Debug: UG_OPTAB=1 (caches off in odd frames), UG_TEXHASH=1.
@@ -227,7 +237,7 @@ SESSION 2026-11-24 (polish, after the graphics options):
 - CLEANUP (2026-11-24): ug_test, ug_test2, ug_inst (drive G) and all WSL ~/ug-* except ~/ug-chk are deleted. Linux build
   checks: copy out/lifted (with *.h) to a new folder first. Older notes that name the deleted folders are history.
 D. Pushed to both remotes 2026-11-24 (no tag, no release).
-1. Sky wedge (cosmetic); pool-floor rectangle (UG_DBGCOLOR=7). Neither showed in 16 NJ shots on 2026-11-23
+1. Sky wedge (cosmetic); pool-floor rectangle (UG_DBGCOLOR=7): likely the c58/c59 bug (fixed in cc0379d). Neither showed in 16 NJ shots on 2026-11-23
    (run_texgen, run_dbg7); a quarter-pipe light/dark split at f14400 is not a shadow draw (baked lighting).
 2. Renderer gaps (not seen in NJ so far: check other levels first): cube maps, FF spot/specular lights, eye/object-linear and
    sphere texgen, MSAA. Widescreen done. CPU-drawn loading bar: not worth it, a level load takes < 0.3 s here
@@ -350,7 +360,7 @@ D. Pushed to both remotes 2026-11-24 (no tag, no release).
   UG_KLOG/heavy logging: timing shifts otherwise).
   USER TODO LIST (2026-11-23, in this order):
   1. Black-line wedge "still visible": the window-scene wedge is fixed in aaec64a; ask the user where they still see
-     it (screenshot) - may be other receivers / other scenes.
+     it (screenshot) - may be other receivers / other scenes. 2026-11-24: it was still in that scene; root cause fixed in cc0379d.
   2. DONE 2026-11-23 (late): voice "off by a little". Measured with UG_AVSYNCLOG=1 (hooks 106C10 cutscene start,
      31C60 start-preloaded-stream; dsound logs first mixed sample + waveOut queue): the cutscene (106E50) runs on its
      own clock and starts the speech stream the same ms as frame 0, first sample mixed +6..8 ms; the lag was the
