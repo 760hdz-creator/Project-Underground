@@ -192,6 +192,11 @@ SESSION 2026-11-24 (polish, after the graphics options):
   off stage reads (0,0,0,1) and r0.a = 1. One line in nv2a.frag. Checked from the school yard (out/dev/te7/shot_05500.ppm)
   and in sd, vc, hn, sc and the menus. The A. notes above (occlusion lead, "cause not isolated") are superseded: the level
   parser had skipped 362 of 1350 sectors (flag bytes 0x81, 0x90, 0x91; fixed in out/badattr/allsec.py).
+  Texture 44BB7FAE is in no .tex on the disc (183 prx searched): only material references (NJ, SE, VC, HI, RU, crown.mdl), so the
+  base pass has no texture on Xbox too. In two NJ runs (pk1, pk2) no draw had a nonzero stage mode with the texture off, and
+  the maps log no unsupported texture: stages off by program are the only case seen (the other tmode 0 cases also read
+  (0,0,0,1) now; not verified on hardware). Shadow casters are unaffected (alpha = c0.a). No same-spot old/new pair exists:
+  "before" = out/pink/across_10500.ppm, "after" = te7, same wall.
   Tools in out/badattr: allmiss.py (meshes, capture frames), pinkc.py (meshes by texture x material x vertex colour),
   mat.py, ptele5.py (debug teleport patch for hle.c, not committed: UG_TELE="<frame>:<x0>,<z0>:<x>,<y>,<z>;", skater at
   rest at 467.18,2922.88 after the NJ_01V cutscene, route out/dev/still.txt). Captures log "comp" rows for every draw again.
