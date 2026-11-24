@@ -44,6 +44,9 @@ static int menu_key_next(void) {
 /* settings (hle.c, gpu_vulkan.c, nv2a.c, sdl_plat.c) */
 extern volatile int g_invert_x, g_invert_y, g_hd_hidden, g_fps;
 extern int hdtex_enabled(void);
+extern volatile int g_fxaa, g_ao;
+extern volatile float g_aniso;
+int gpu_has_aniso(void);
 int plat_fullscreen_get(void);
 void plat_fullscreen_toggle(void);
 uint32_t menu_pad_buttons(void);         /* pad 0, XInput layout, stick folded into the D-pad bits (hle.c) */
@@ -115,7 +118,7 @@ static void text(int x, int y, const char *s, uint32_t rgb) {
 }
 
 /* ------------------------------------------------------------------ items */
-enum { IT_RESUME, IT_FULLSCREEN, IT_FPS, IT_INVX, IT_INVY, IT_HD, IT_UNLOCK, IT_SPECIAL, IT_RAIL, IT_MANUAL, IT_MOON,
+enum { IT_RESUME, IT_FULLSCREEN, IT_FPS, IT_INVX, IT_INVY, IT_FXAA, IT_AO, IT_ANISO, IT_HD, IT_UNLOCK, IT_SPECIAL, IT_RAIL, IT_MANUAL, IT_MOON,
        IT_SKITCH, IT_QUIT, IT_COUNT };
 static int sel, quit_armed;
 
@@ -161,6 +164,7 @@ static int on_y(void) {
 }
 static int item_shown(int i) {
     if (i == IT_HD) return hdtex_enabled();
+    if (i == IT_ANISO) return gpu_has_aniso();
     if (i >= IT_UNLOCK && i <= IT_SKITCH) return career() != 0;
     return 1;
 }
@@ -172,6 +176,12 @@ static const char *item_label(int i, char *buf, size_t n) {
     case IT_FPS: snprintf(buf, n, "Frame rate         < %d >", g_fps == 30 ? 30 : 60); return buf;
     case IT_INVX: snprintf(buf, n, "Camera left/right  < %s >", on_x() ? "PC  " : "Xbox"); return buf;
     case IT_INVY: snprintf(buf, n, "Camera up/down     < %s >", on_y() ? "PC  " : "Xbox"); return buf;
+    case IT_FXAA: snprintf(buf, n, "Anti-aliasing      < %s >", g_fxaa ? "On " : "Off"); return buf;
+    case IT_AO: snprintf(buf, n, "Ambient occlusion  < %s >", g_ao ? "On " : "Off"); return buf;
+    case IT_ANISO:
+        if (g_aniso > 0) snprintf(buf, n, "Texture filtering  < %dx >", (int)g_aniso);
+        else snprintf(buf, n, "Texture filtering  < Off >");
+        return buf;
     case IT_HD: snprintf(buf, n, "HD textures        < %s >", g_hd_hidden ? "Off" : "On "); return buf;
     case IT_UNLOCK: return unlock_done ? "Unlock everything: done" : "Unlock everything";
     case IT_SPECIAL: case IT_RAIL: case IT_MANUAL: case IT_MOON: case IT_SKITCH: {
@@ -201,6 +211,18 @@ static int item_change(int i, int dir) {
         break;
     case IT_INVX: g_invert_x = !on_x(); ini_set("UG_INVERTX", g_invert_x ? "" : "0"); break;
     case IT_INVY: g_invert_y = !on_y(); ini_set("UG_INVERTY", g_invert_y ? "" : "0"); break;
+    case IT_FXAA: g_fxaa = !g_fxaa; ini_set("UG_FXAA", g_fxaa ? "1" : ""); break;
+    case IT_AO: g_ao = !g_ao; ini_set("UG_AO", g_ao ? "1" : ""); break;
+    case IT_ANISO: {   /* off, 2, 4, 8, 16 (default 16) */
+        int a = (int)g_aniso, steps[] = {0, 2, 4, 8, 16}, k = 0;
+        while (k < 4 && steps[k] < a) k++;
+        a = steps[(k + (dir < 0 ? 4 : 1)) % 5];
+        g_aniso = (float)a;
+        char val[8];
+        snprintf(val, sizeof val, "%d", a);
+        ini_set("UG_ANISO", a == 16 ? "" : val);
+        break;
+    }
     case IT_HD: g_hd_hidden = !g_hd_hidden; break;   /* session only: the launcher's UG_HDTEX holds the pack folder */
     case IT_UNLOCK:
         if (dir == 0 && !unlock_done) { g_unlock_req = 1; unlock_done = 1; }

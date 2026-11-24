@@ -53,7 +53,8 @@ static const wchar_t kShortcut[] = L"Project Underground.lnk";
 
 enum { ID_ISO_BROWSE = 200, ID_DIR_BROWSE, ID_DESKTOP, ID_STARTMENU, ID_INSTALL, ID_PROGRESS,
        ID_STATUS, ID_PLAY, ID_UPDATE, ID_UNINSTALL, ID_FULLSCREEN, ID_SCALE, ID_PADS, ID_FPS60, ID_VSYNC, ID_LOGS,
-       ID_MONITOR, ID_ANDROID, ID_SETTINGS, ID_QUIT, ID_CLOSE, ID_WINSIZE, ID_SCREEN, ID_FIT, ID_LEVEL, ID_HD, ID_CAMERA };
+       ID_MONITOR, ID_ANDROID, ID_SETTINGS, ID_QUIT, ID_CLOSE, ID_WINSIZE, ID_SCREEN, ID_FIT, ID_LEVEL, ID_HD, ID_CAMERA,
+       ID_ANISO, ID_FXAA, ID_AO };
 #define WM_APP_STATUS (WM_APP + 1)
 #define WM_APP_PROGRESS (WM_APP + 2)
 #define WM_APP_DONE (WM_APP + 3)
@@ -466,7 +467,9 @@ static void DownloadUpdate() {
 struct Choice { const wchar_t* label; const wchar_t* value; };   // value nullptr: the game's default (key removed)
 // UG_SCALE: host render scale over the Xbox's 480 lines (runtime default 2)
 static const Choice kScale[] = {{L"2x  (960 lines, default)", nullptr}, {L"1x  (480 lines)", L"1"}, {L"3x  (1440 lines)", L"3"},
-                                {L"4x  (1920 lines)", L"4"}, {L"5x  (2400 lines)", L"5"}, {L"6x  (2880 lines)", L"6"}};
+                                {L"4x  (1920 lines)", L"4"}, {L"5x  (2400 lines)", L"5"}, {L"6x  (2880 lines)", L"6"}, {L"8x  (3840 lines)", L"8"}};
+// UG_ANISO: anisotropic texture filtering (runtime default 16)
+static const Choice kAniso[] = {{L"16x (default)", nullptr}, {L"8x", L"8"}, {L"4x", L"4"}, {L"2x", L"2"}, {L"Off", L"0"}};
 static const Choice kPads[] = {{L"1 (default)", nullptr}, {L"2", L"2"}, {L"3", L"3"}, {L"4", L"4"}};
 // UG_WINDOW: windowed client size (default: 2/3 of the monitor's height at the game's aspect)
 // UG_WINDOW: windowed resolution (client size in pixels); larger than the monitor is scaled down to fit, same aspect.
@@ -538,7 +541,8 @@ static BOOL CALLBACK MonEnum(HMONITOR m, HDC, LPRECT, LPARAM) {
 struct ComboSetting { int id; const wchar_t* key; const Choice* c; int n; };
 static ComboSetting kCombos[] = {{ID_MONITOR, L"UG_MONITOR", kMonitor, 1}, {ID_WINSIZE, L"UG_WINDOW", kWinSize, N_WINSIZE},
                                  {ID_SCREEN, L"UG_WIDESCREEN", kScreen, 2}, {ID_FIT, L"UG_ASPECT", kFit, 2},
-                                 {ID_SCALE, L"UG_SCALE", kScale, 6}, {ID_PADS, L"UG_PADS", kPads, 4},
+                                 {ID_SCALE, L"UG_SCALE", kScale, 7}, {ID_ANISO, L"UG_ANISO", kAniso, 5},
+                                 {ID_PADS, L"UG_PADS", kPads, 4},
                                  {ID_LEVEL, L"UG_LEVEL", kLevel, 18}};
 static void InitMonitors() {
     EnumDisplayMonitors(nullptr, nullptr, MonEnum, 0);
@@ -558,6 +562,8 @@ static void LoadSettings() {
     SendDlgItemMessageW(g_wnd, ID_CAMERA, CB_SETCURSEL, cam, 0);
     SetOn(ID_FULLSCREEN, IniGet(g_instDir, L"settings", L"UG_FULLSCREEN") == L"1");
     SetOn(ID_FPS60, IniGet(g_instDir, L"settings", L"UG_FPS") != L"30");     // 60 fps is the default
+    SetOn(ID_FXAA, IniGet(g_instDir, L"settings", L"UG_FXAA") == L"1");
+    SetOn(ID_AO, IniGet(g_instDir, L"settings", L"UG_AO") == L"1");
     SetOn(ID_VSYNC, IniGet(g_instDir, L"settings", L"UG_VSYNC") != L"0");    // vsync (FIFO) is the default
 }
 static void SaveSettings() {
@@ -574,6 +580,8 @@ static void SaveSettings() {
     }
     IniSet(g_instDir, L"settings", L"UG_FULLSCREEN", IsOn(ID_FULLSCREEN) ? L"1" : L"");
     IniSet(g_instDir, L"settings", L"UG_FPS", IsOn(ID_FPS60) ? L"" : L"30");
+    IniSet(g_instDir, L"settings", L"UG_FXAA", IsOn(ID_FXAA) ? L"1" : L"");
+    IniSet(g_instDir, L"settings", L"UG_AO", IsOn(ID_AO) ? L"1" : L"");
     // runtime/src/gpu_vulkan.c: UG_VSYNC=0 picks an immediate/mailbox present mode; unset keeps FIFO (vsync on)
     IniSet(g_instDir, L"settings", L"UG_VSYNC", IsOn(ID_VSYNC) ? L"" : L"0");
 }
@@ -682,11 +690,11 @@ static void BuildArt(int w, int h) {
         SelectObject(pd, op); SelectObject(pd, ob);
         DeleteObject(pen);
         ArtText(pd, {260, 665, 1500, 755}, g_titleFont, kAccent, L"SETTINGS", DT_SINGLELINE | DT_VCENTER);
-        static const wchar_t* rows[] = {L"Monitor", L"Resolution", L"Screen", L"Picture", L"Render scale",
-                                        L"Players (gamepads)", L"Camera (right stick)", L"Level (test cheat)",
+        static const wchar_t* rows[] = {L"Monitor", L"Resolution", L"Screen", L"Picture", L"Supersampling",
+                                        L"Texture filtering", L"Players (gamepads)", L"Camera (right stick)", L"Level (test cheat)",
                                         L"HD texture pack"};
-        for (int i = 0; i < 9; i++)
-            ArtText(pd, {260, 836 + 61 * i, 700, 896 + 61 * i}, g_font, kText, rows[i], DT_SINGLELINE | DT_VCENTER);
+        for (int i = 0; i < 10; i++)
+            ArtText(pd, {260, 867 + 54 * i, 700, 921 + 54 * i}, g_font, kText, rows[i], DT_SINGLELINE | DT_VCENTER);
         ArtText(pd, {700, 665, 1500, 755}, g_smallFont, kDim, L"Saved at once to settings.ini",
                 DT_SINGLELINE | DT_VCENTER | DT_RIGHT);
     }
@@ -911,7 +919,7 @@ static void Launch(const std::wstring& dir) {
 
 // Launcher settings controls (shown on the panel over the art when the SETTINGS board is on).
 static HWND g_settingsBtn;
-static const int kSettingIds[] = {ID_FULLSCREEN, ID_FPS60, ID_VSYNC, ID_MONITOR, ID_WINSIZE, ID_SCREEN, ID_FIT, ID_SCALE,
+static const int kSettingIds[] = {ID_FXAA, ID_AO, ID_ANISO, ID_FULLSCREEN, ID_FPS60, ID_VSYNC, ID_MONITOR, ID_WINSIZE, ID_SCREEN, ID_FIT, ID_SCALE,
                                   ID_PADS, ID_CAMERA, ID_LEVEL, ID_HD};
 // HD texture pack (UG_HDTEX=<folder>, runtime/src/hdtex.c): a PCSX2 replacement pack made for the PS2 version, used
 // where it is. Combo: Off / the folder / Choose folder... The folder is remembered in [launcher] HdFolder while off.
@@ -1089,13 +1097,14 @@ static bool LauncherCommand(HWND h, int id, int code) {
         SetWindowTextW(g_status, L"Android: starting...");
         g_worker = std::thread(BuildAndroid);
         return true;
-    case ID_FULLSCREEN: case ID_FPS60: case ID_VSYNC:
+    case ID_FULLSCREEN: case ID_FPS60: case ID_VSYNC: case ID_FXAA: case ID_AO:
         if (code == BN_CLICKED) SaveSettings();
         return true;
     case ID_HD:
         if (code == CBN_SELCHANGE) HdComboChanged();
         return true;
     case ID_SCALE: case ID_PADS: case ID_MONITOR: case ID_WINSIZE: case ID_SCREEN: case ID_FIT: case ID_LEVEL: case ID_CAMERA:
+    case ID_ANISO:
         if (code == CBN_SELCHANGE) SaveSettings();
         return true;
     }
@@ -1349,18 +1358,21 @@ static void CreateLauncherControls() {
     MakeBoard(5, L"UNINSTALL", ID_UNINSTALL);
     SetSub(ID_UNINSTALL, g_instDir);
     MakeStatusBar(L"Checking for updates...", false);
-    MakeCheck(L"Fullscreen", ID_FULLSCREEN, 260, 772, 380);
-    MakeCheck(L"60 fps", ID_FPS60, 700, 772, 300);
-    MakeCheck(L"VSync", ID_VSYNC, 1060, 772, 300);
-    MakeCombo(ID_MONITOR, kMonitor, g_nMonitors, 720, 841, 780);
-    MakeCombo(ID_WINSIZE, kWinSize, N_WINSIZE, 720, 902, 780);
-    MakeCombo(ID_SCREEN, kScreen, 2, 720, 963, 780);
-    MakeCombo(ID_FIT, kFit, 2, 720, 1024, 780);
-    MakeCombo(ID_SCALE, kScale, 6, 720, 1085, 780);
-    MakeCombo(ID_PADS, kPads, 4, 720, 1146, 780);
-    MakeCombo(ID_CAMERA, kCamera, 4, 720, 1207, 780);
-    MakeCombo(ID_LEVEL, kLevel, 18, 720, 1268, 780);
-    MakeCombo(ID_HD, nullptr, 0, 720, 1329, 780);
+    MakeCheck(L"Fullscreen", ID_FULLSCREEN, 260, 752, 380);
+    MakeCheck(L"60 fps", ID_FPS60, 700, 752, 300);
+    MakeCheck(L"VSync", ID_VSYNC, 1060, 752, 300);
+    MakeCheck(L"Anti-aliasing", ID_FXAA, 260, 810, 420);
+    MakeCheck(L"Ambient occlusion", ID_AO, 700, 810, 600);
+    MakeCombo(ID_MONITOR, kMonitor, g_nMonitors, 720, 872, 780);
+    MakeCombo(ID_WINSIZE, kWinSize, N_WINSIZE, 720, 926, 780);
+    MakeCombo(ID_SCREEN, kScreen, 2, 720, 980, 780);
+    MakeCombo(ID_FIT, kFit, 2, 720, 1034, 780);
+    MakeCombo(ID_SCALE, kScale, 7, 720, 1088, 780);
+    MakeCombo(ID_ANISO, kAniso, 5, 720, 1142, 780);
+    MakeCombo(ID_PADS, kPads, 4, 720, 1196, 780);
+    MakeCombo(ID_CAMERA, kCamera, 4, 720, 1250, 780);
+    MakeCombo(ID_LEVEL, kLevel, 18, 720, 1304, 780);
+    MakeCombo(ID_HD, nullptr, 0, 720, 1358, 780);
     FillHdCombo();
     for (int id : kSettingIds) ShowWindow(GetDlgItem(g_wnd, id), SW_HIDE);
     LoadSettings();
