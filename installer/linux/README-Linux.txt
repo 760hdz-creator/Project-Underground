@@ -22,7 +22,7 @@ Install
 Play
   Keyboard: arrows = D-pad, Enter = START, Backspace = BACK, Z/X/C/V = A/B/X/Y, F/G = Black/White,
   Q/E = LT/RT, WASD = left stick, IJKL = right stick. F11 or Alt+Enter = fullscreen, Esc = quit.
-  Controllers: up to 4 (UG_PADS in settings.ini), in connection order. Xbox, PlayStation 3/4/5, Switch Pro and
+  Controllers: up to 2 (UG_PADS in settings.ini), in connection order. Xbox, PlayStation 3/4/5, Switch Pro and
   Joy-Con, Steam Controller / Steam Deck, 8BitDo and other USB or Bluetooth pads work through SDL3; buttons go by
   position (the bottom face button is A). A pad SDL does not know gets a generic layout; add its SDL mapping
   line to <folder>/controllers.txt (kept by updates).

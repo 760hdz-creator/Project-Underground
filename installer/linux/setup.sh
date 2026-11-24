@@ -185,7 +185,7 @@ if [ ! -f "$dir/settings.ini" ]; then
 ; UG_VSYNC=0             ; no vsync
 ; UG_SCALE=4             ; render scale 1..8 (default: 2)
 ; UG_MONITOR=0           ; display number
-; UG_PADS=2              ; gamepads in the game (1..4)
+; UG_PADS=2              ; gamepads in the game (1 or 2)
 ; UG_NOUPDATE=1          ; no update check at start
 ; UG_WIDESCREEN=0       ; original 4:3 (default: the game's 16:9 mode)
 ; UG_WINDOW=1920x1080    ; window size in pixels

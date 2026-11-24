@@ -7,8 +7,6 @@
 layout(std430, set = 0, binding = 1) readonly buffer Verts { vec4 v_in[]; };   // 16 float4 attributes per vertex
 
 layout(std140, set = 0, binding = 0) uniform Draw {
-    uvec4 prog[136];       // instruction slots (dword 0 unused)
-    vec4 cst[192];         // vertex program constants
     vec4 comp[4];          // composite matrix rows (fixed function)
     vec4 texm[16];         // texture matrices, 4 rows each
     vec4 vpo;              // viewport offset (fixed function)
@@ -27,6 +25,9 @@ layout(std140, set = 0, binding = 0) uniform Draw {
     vec4 mv[4];            // fixed function model-view 0 (rows = output components, as comp)
     vec4 imv[4];           // its inverse
     uvec4 tgen;            // texgen per stage, a byte per s/t/r/q: 0 off, 4 normal map, 5 reflection map
+    // last: only uploaded for vertex-program draws (mode 2), garbage otherwise
+    uvec4 prog[136];       // instruction slots (dword 0 unused)
+    vec4 cst[192];         // vertex program constants
 } D;
 
 layout(location = 0) out vec4 o_d0;

@@ -22,6 +22,7 @@
 #endif
 #include <math.h>
 #include <stdarg.h>
+#include <stddef.h>
 #include <stdlib.h>
 #include <limits.h>
 #include <string.h>
@@ -468,6 +469,8 @@ static ZSurface *cur_zs;
 static int rendering;                 /* inside vkCmdBeginRendering */
 static Surface *r_rt; static ZSurface *r_zs;   /* what the active rendering pass targets */
 static int r_hw, r_hh;                         /* and its render area */
+static int clip_x, clip_y;                     /* surface clip origin (split screen: view 2 starts at x 320) */
+static int r_cx, r_cy;                         /* origin of the scissor set in the active pass */
 
 static VkCommandBuffer CMD(void) { return frames[fi].cmd; }
 
@@ -475,8 +478,21 @@ static void end_rendering(void) {
     if (rendering) { vkCmdEndRendering(CMD()); rendering = 0; }
 }
 
+/* the NV2A draws only inside the surface clip: scissor from its origin to the surface's size */
+static void set_clip_scissor(void) {
+    int x = clip_x * g_scale, y = clip_y * g_scale;
+    if (x >= cur_rt->hw) x = 0;
+    if (y >= cur_rt->hh) y = 0;
+    VkRect2D sc = {{x, y}, {(uint32_t)(cur_rt->hw - x), (uint32_t)(cur_rt->hh - y)}};
+    vkCmdSetScissor(CMD(), 0, 1, &sc);
+    r_cx = clip_x; r_cy = clip_y;
+}
+
 static void begin_rendering(void) {
-    if (rendering && r_rt == cur_rt && r_zs == cur_zs && r_hw == cur_rt->hw && r_hh == cur_rt->hh) return;
+    if (rendering && r_rt == cur_rt && r_zs == cur_zs && r_hw == cur_rt->hw && r_hh == cur_rt->hh) {
+        if (r_cx != clip_x || r_cy != clip_y) set_clip_scissor();
+        return;
+    }
     end_rendering();
     barrier(CMD(), &cur_rt->color, VK_IMAGE_ASPECT_COLOR_BIT, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL);
     if (cur_zs) barrier(CMD(), &cur_zs->depth, VK_IMAGE_ASPECT_DEPTH_BIT | VK_IMAGE_ASPECT_STENCIL_BIT,
@@ -497,8 +513,7 @@ static void begin_rendering(void) {
     rendering = 1; r_rt = cur_rt; r_zs = cur_zs; r_hw = cur_rt->hw; r_hh = cur_rt->hh;
     VkViewport vp = {0, 0, (float)cur_rt->hw, (float)cur_rt->hh, 0, 1};
     vkCmdSetViewport(CMD(), 0, 1, &vp);
-    VkRect2D sc = {{0, 0}, {(uint32_t)cur_rt->hw, (uint32_t)cur_rt->hh}};
-    vkCmdSetScissor(CMD(), 0, 1, &sc);
+    set_clip_scissor();
 }
 
 static Surface *find_rt(uint32_t addr) {
@@ -569,6 +584,7 @@ static void surface_size(int *w, int *h) {
     uint32_t ch = KREG(K_CLIP_H), cv = KREG(K_CLIP_V);
     *w = (int)((ch & 0xFFFF) + (ch >> 16));
     *h = (int)((cv & 0xFFFF) + (cv >> 16));
+    clip_x = (int)(ch & 0xFFFF); clip_y = (int)(cv & 0xFFFF);
     if (*w <= 0 || *w > 4096) *w = 640;
     if (*h <= 0 || *h > 4096) *h = 480;
 }
@@ -1290,8 +1306,6 @@ static VkPipeline get_pipeline(const PipeKey *k) {
 /* ================================================================ init / frames */
 
 typedef struct {
-    uint32_t prog[136][4];
-    float cst[192][4];
     float comp[4][4];
     float texm[16][4];
     float vpo[4], surf[4], zr[4];
@@ -1305,11 +1319,14 @@ typedef struct {
     float fogp[4];               /* fog params 0, 1; function (0 off, 1 linear, 2 exp, 3 exp2); abs */
     float mv[4][4], imv[4][4];   /* fixed function: model-view 0 and its inverse (texgen) */
     uint32_t tgen[4];            /* texgen per stage, 8 bits per s/t/r/q: 0 off, 4 normal map, 5 reflection map */
+    uint32_t prog[136][4];       /* from here on only for vertex-program draws: the others upload DRAW_HEAD bytes */
+    float cst[192][4];
 } DrawUBO;
+#define DRAW_HEAD offsetof(DrawUBO, prog)
 
 #define VTX_RING (96ull << 20)
 #define IDX_RING (16ull << 20)
-#define UBO_RING (24ull << 20)
+#define UBO_RING (48ull << 20)
 #define STAGE_RING (64ull << 20)
 
 static void frame_begin(void) {
@@ -1454,13 +1471,15 @@ static int vk_init(void) {
         VKC(vkCreateFence(dev, &fci, 0, &f->fence));
         VkSemaphoreCreateInfo sei = {VK_STRUCTURE_TYPE_SEMAPHORE_CREATE_INFO};
         VKC(vkCreateSemaphore(dev, &sei, 0, &f->acquired));
-        VkDescriptorPoolSize ps[3] = {{VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER_DYNAMIC, 8192}, {VK_DESCRIPTOR_TYPE_STORAGE_BUFFER_DYNAMIC, 8192},
-                                      {VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 32768}};
-        VkDescriptorPoolCreateInfo dpi = {VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO, 0, 0, 8192, 3, ps};
+        VkDescriptorPoolSize ps[3] = {{VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER_DYNAMIC, 16384}, {VK_DESCRIPTOR_TYPE_STORAGE_BUFFER_DYNAMIC, 16384},
+                                      {VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 65536}};
+        VkDescriptorPoolCreateInfo dpi = {VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO, 0, 0, 16384, 3, ps};
         VKC(vkCreateDescriptorPool(dev, &dpi, 0, &f->dpool));
         if (!ring_create(&f->vtx, VTX_RING, VK_BUFFER_USAGE_STORAGE_BUFFER_BIT)) return 0;
         if (!ring_create(&f->idx, IDX_RING, VK_BUFFER_USAGE_INDEX_BUFFER_BIT)) return 0;
-        if (!ring_create(&f->ubo, UBO_RING, VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT)) return 0;
+        /* one block of slack: a head-only upload still binds sizeof(DrawUBO) */
+        if (!ring_create(&f->ubo, UBO_RING + sizeof(DrawUBO), VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT)) return 0;
+        f->ubo.size = UBO_RING;
         if (!ring_create(&f->stage, STAGE_RING, VK_BUFFER_USAGE_TRANSFER_SRC_BIT)) return 0;
     }
     VkSamplerCreateInfo sci2 = {VK_STRUCTURE_TYPE_SAMPLER_CREATE_INFO};
@@ -1484,6 +1503,8 @@ static int vk_init(void) {
 }
 
 volatile int g_fxaa, g_ao;      /* UG_FXAA, UG_AO: also the in-game menu (menu.c) */
+volatile int g_scale_req;       /* new UG_SCALE asked for by the in-game menu, applied at the next flip */
+int gpu_scale(void) { return g_scale_req ? g_scale_req : g_scale; }
 uint32_t gpu_frame(void) { return frame_no; }
 int gpu_has_aniso(void) { return has_aniso; }
 
@@ -1522,11 +1543,16 @@ static void argb_to_f4(uint32_t c, float *o) {
  * pre-transformed vertices (vertex program, z = w = 0, no depth write). A frame without a HUD (some cutscenes) gets
  * its pass at the flip. The depth range and focal length come from the composite matrix of the frame's own
  * perspective draws, so any camera works. UG_FXDEBUG=1 shows the occlusion alone, 2 logs the projections. */
-typedef struct { float proj[4], zp[4], rt[4], opt[4]; } FxUBO;
+typedef struct { float proj[4], zp[4], rt[4], opt[4], area[4]; } FxUBO;
 static Surface *fx_rt;          /* world target of this frame, NULL until a 3D draw */
 static ZSurface *fx_zs;
-static float fx_proj[6];        /* fx, fy, cx, cy (guest pixels), depth = [4] + [5] / w */
-static int fx_proj_ok, fx_done, fx_hud, fx_failed;
+/* one per surface clip rectangle drawn to this frame: split screen has two, each with its own camera */
+typedef struct {
+    int x, y, w, h, ok;         /* guest pixels; ok: proj known */
+    float proj[6];              /* fx, fy, cx, cy (guest pixels), depth = [4] + [5] / w */
+} FxView;
+static FxView fx_views[4];
+static int fx_nviews, fx_done, fx_hud, fx_failed;
 static VkDescriptorSetLayout fx_dsl;
 static VkPipelineLayout fx_pl;
 static VkPipeline fx_pipe_ao, fx_pipe_post;
@@ -1596,8 +1622,8 @@ static int fx_init(void) {
     return fx_pipe_ao && fx_pipe_post;
 }
 
-/* full-screen triangle into view (w x h); t = depth, color, ao */
-static int fx_pass(VkPipeline p, VkImageView view, int w, int h, VkDeviceSize uoff, const VkDescriptorImageInfo t[3]) {
+/* full-screen triangle into view (w x h), limited to area; t = depth, color, ao */
+static int fx_pass(VkPipeline p, VkImageView view, int w, int h, VkRect2D area, VkDeviceSize uoff, const VkDescriptorImageInfo t[3]) {
     Frame *f = &frames[fi];
     VkDescriptorSet set;
     VkDescriptorSetAllocateInfo dai = {VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO, 0, f->dpool, 1, &fx_dsl};
@@ -1621,7 +1647,7 @@ static int fx_pass(VkPipeline p, VkImageView view, int w, int h, VkDeviceSize uo
     vkCmdBeginRendering(cb, &ri);
     VkViewport vpt = {0, 0, (float)w, (float)h, 0, 1};
     vkCmdSetViewport(cb, 0, 1, &vpt);
-    vkCmdSetScissor(cb, 0, 1, &ri.renderArea);
+    vkCmdSetScissor(cb, 0, 1, &area);
     vkCmdBindPipeline(cb, VK_PIPELINE_BIND_POINT_GRAPHICS, p);
     uint32_t dof = (uint32_t)uoff;
     vkCmdBindDescriptorSets(cb, VK_PIPELINE_BIND_POINT_GRAPHICS, fx_pl, 0, 1, &set, 1, &dof);
@@ -1638,7 +1664,15 @@ static void fx_apply(void) {
     static int ab = -1;
     if (ab < 0) ab = getenv("UG_FXAB") != NULL;
     if (fx_failed || (ab && (frame_no & 1))) return;
-    int fxaa = g_fxaa != 0, ao = g_ao != 0 && fx_proj_ok && z && z->dview;
+    if (fx_debug() == 2) {   /* scenes with no fixed-function perspective draw: no projection, no occlusion */
+        static uint32_t n, none;
+        int ok = 0;
+        for (int i = 0; i < fx_nviews; i++) ok |= fx_views[i].ok;
+        n++; none += !ok;
+        if (n % 300 == 0) { LOG("[fx] frame %u: %u of 300 passes without a projection\n", frame_no, none); none = 0; }
+    }
+    int fxaa = g_fxaa != 0, ao = 0;
+    for (int i = 0; i < fx_nviews; i++) ao |= g_ao != 0 && fx_views[i].ok && z && z->dview;
     if (!fxaa && !ao) return;
     if (!fx_pl && !fx_init()) { fx_failed = 1; LOG("[gpu] post-processing pipelines failed: off\n"); return; }
     Frame *f = &frames[fi];
@@ -1657,25 +1691,32 @@ static void fx_apply(void) {
                         VK_IMAGE_USAGE_SAMPLED_BIT | VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT, VK_IMAGE_ASPECT_COLOR_BIT)) { fx_failed = 1; return; }
         fx_aw = aw; fx_ah = ah;
     }
-    VkDeviceSize uoff;
-    FxUBO *u = ring_alloc(&f->ubo, sizeof(FxUBO), pprops.limits.minUniformBufferOffsetAlignment, &uoff);
-    if (!u) return;
     static float radius = -1, strength = -1;   /* tuning (debug): UG_AORADIUS world units, UG_AOSTRENGTH */
     if (radius < 0) {
         const char *r = getenv("UG_AORADIUS"), *st = getenv("UG_AOSTRENGTH");
         radius = r ? (float)atof(r) : 30.0f;
         strength = st ? (float)atof(st) : 3.0f;
     }
-    for (int i = 0; i < 4; i++) u->proj[i] = fx_proj[i] * (float)g_scale;
-    u->zp[0] = fx_proj[4]; u->zp[1] = fx_proj[5]; u->zp[2] = radius; u->zp[3] = strength;
-    u->rt[0] = (float)s->hw; u->rt[1] = (float)s->hh; u->rt[2] = 1.0f / (float)w; u->rt[3] = 1.0f / (float)h;
-    u->opt[0] = (float)d; u->opt[1] = (float)fxaa; u->opt[2] = (float)ao; u->opt[3] = fx_debug() == 1;
+    VkDeviceSize uoff[4];
+    VkRect2D area[4];
+    for (int k = 0; k < fx_nviews; k++) {
+        const FxView *v = &fx_views[k];
+        FxUBO *u = ring_alloc(&f->ubo, sizeof(FxUBO), pprops.limits.minUniformBufferOffsetAlignment, &uoff[k]);
+        if (!u) return;
+        for (int i = 0; i < 4; i++) u->proj[i] = v->proj[i] * (float)g_scale;
+        u->zp[0] = v->proj[4]; u->zp[1] = v->proj[5]; u->zp[2] = radius; u->zp[3] = strength;
+        area[k] = (VkRect2D){{v->x * g_scale, v->y * g_scale}, {(uint32_t)(v->w * g_scale), (uint32_t)(v->h * g_scale)}};
+        u->area[0] = (float)area[k].offset.x; u->area[1] = (float)area[k].offset.y;
+        u->area[2] = u->area[0] + (float)area[k].extent.width; u->area[3] = u->area[1] + (float)area[k].extent.height;
+        u->rt[0] = (float)w; u->rt[1] = (float)h; u->rt[2] = 1.0f / (float)w; u->rt[3] = 1.0f / (float)h;
+        u->opt[0] = (float)d; u->opt[1] = (float)fxaa; u->opt[2] = (float)(ao && v->ok); u->opt[3] = fx_debug() == 1;
+    }
 
     VkCommandBuffer cb = CMD();
     barrier(cb, &s->color, VK_IMAGE_ASPECT_COLOR_BIT, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL);
     barrier(cb, &fx_color, VK_IMAGE_ASPECT_COLOR_BIT, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL);
     VkImageCopy cp = {{VK_IMAGE_ASPECT_COLOR_BIT, 0, 0, 1}, {0, 0, 0}, {VK_IMAGE_ASPECT_COLOR_BIT, 0, 0, 1}, {0, 0, 0},
-                      {(uint32_t)s->hw, (uint32_t)s->hh, 1}};
+                      {(uint32_t)w, (uint32_t)h, 1}};
     vkCmdCopyImage(cb, s->color.img, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, fx_color.img, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, 1, &cp);
     barrier(cb, &fx_color, VK_IMAGE_ASPECT_COLOR_BIT, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
     barrier(cb, &s->color, VK_IMAGE_ASPECT_COLOR_BIT, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL);
@@ -1685,17 +1726,37 @@ static void fx_apply(void) {
         barrier(cb, &z->depth, VK_IMAGE_ASPECT_DEPTH_BIT | VK_IMAGE_ASPECT_STENCIL_BIT, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
         barrier(cb, &fx_ao, VK_IMAGE_ASPECT_COLOR_BIT, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL);
         t[0] = (VkDescriptorImageInfo){depth_sampler, z->dview, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL};
-        if (!fx_pass(fx_pipe_ao, fx_ao.view, (s->hw + d - 1) / d, (s->hh + d - 1) / d, uoff, t)) return;
+        for (int k = 0; k < fx_nviews; k++) {
+            if (!fx_views[k].ok) continue;
+            int x0 = area[k].offset.x / d, y0 = area[k].offset.y / d;
+            int x1 = (area[k].offset.x + (int)area[k].extent.width + d - 1) / d, y1 = (area[k].offset.y + (int)area[k].extent.height + d - 1) / d;
+            VkRect2D aa = {{x0, y0}, {(uint32_t)(x1 - x0), (uint32_t)(y1 - y0)}};
+            if (!fx_pass(fx_pipe_ao, fx_ao.view, aw, ah, aa, uoff[k], t)) return;
+        }
         barrier(cb, &fx_ao, VK_IMAGE_ASPECT_COLOR_BIT, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
         t[2] = (VkDescriptorImageInfo){blit_sampler, fx_ao.view, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL};
     }
     t[1] = (VkDescriptorImageInfo){fx_linear, fx_color.view, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL};
-    fx_pass(fx_pipe_post, s->color.view, s->hw, s->hh, uoff, t);
+    for (int k = 0; k < fx_nviews; k++) fx_pass(fx_pipe_post, s->color.view, w, h, area[k], uoff[k], t);
+}
+
+/* the view being drawn (the current surface clip) */
+static FxView *fx_view(void) {
+    int x = clip_x < cur_rt->w ? clip_x : 0, y = clip_y < cur_rt->h ? clip_y : 0, w = cur_rt->w - x, h = cur_rt->h - y;
+    if (fx_rt != cur_rt) fx_nviews = 0;
+    fx_rt = cur_rt; fx_zs = cur_zs;
+    for (int i = 0; i < fx_nviews; i++)
+        if (fx_views[i].x == x && fx_views[i].y == y && fx_views[i].w == w && fx_views[i].h == h) return &fx_views[i];
+    if (fx_nviews == 4) return NULL;
+    FxView *v = &fx_views[fx_nviews++];
+    memset(v, 0, sizeof *v);
+    v->x = x; v->y = y; v->w = w; v->h = h;
+    return v;
 }
 
 /* called for each draw with its targets selected */
 static void fx_watch(const KVertex *v) {
-    if ((!g_fxaa && !g_ao) || fx_done || !cur_zs || cur_rt->w < 320) return;   /* not the shadow maps (256x256) */
+    if ((!g_fxaa && !g_ao) || fx_done || !cur_zs || cur_rt->w < 320 || cur_rt->h < 200) return;   /* not the shadow maps */
     int vprog = (KREG(K_TRANSFORM_MODE) & 3) == 2, zwrite = KREG(K_DEPTH_MASK) & 1;
     if (vprog && !zwrite && v[0].a[0][2] == 0 && v[0].a[0][3] == 0) {   /* HUD */
         if (fx_rt == cur_rt) fx_apply(); else fx_hud = 1;
@@ -1703,7 +1764,7 @@ static void fx_watch(const KVertex *v) {
     }
     if (!zwrite) return;
     if (vprog) {
-        if (v[0].a[0][3] != 0) { fx_rt = cur_rt; fx_zs = cur_zs; }
+        if (v[0].a[0][3] != 0) fx_view();
         return;
     }
     /* composite rows: x, y = screen (guest pixels) times w, z = depth (Z-buffer units) times w, w = view distance */
@@ -1711,7 +1772,8 @@ static void fx_watch(const KVertex *v) {
     for (int i = 0; i < 16; i++) r[i / 4][i % 4] = kf(K_COMPOSITE + i * 4);
     for (int j = 0; j < 3; j++) { rr += r[3][j] * r[3][j]; dz += r[2][j] * r[3][j]; dx += r[0][j] * r[3][j]; dy += r[1][j] * r[3][j]; }
     if (rr < 1e-12) return;   /* not a perspective matrix */
-    fx_rt = cur_rt; fx_zs = cur_zs;
+    FxView *vw = fx_view();
+    if (!vw) return;
     for (int j = 0; j < 3; j++) {
         double a = r[0][j] - dx / rr * r[3][j], b = r[1][j] - dy / rr * r[3][j];
         fx += a * a; fy += b * b;
@@ -1724,8 +1786,8 @@ static void fx_watch(const KVertex *v) {
         LOG("[fx] f%u rt %08X %dx%d focal %.1f %.1f centre %.1f %.1f depth %.7f %+.4f / w, far %.0f\n", frame_no, cur_rt->addr, cur_rt->w,
             cur_rt->h, p[0], p[1], p[2], p[3], p[4], p[5], p[4] != 1 ? p[5] / (1 - p[4]) : 0.0);
     if (!(p[5] < 0) || !(p[4] > 0.5) || !(p[0] > 1) || !(p[1] > 1)) return;
-    for (int i = 0; i < 6; i++) fx_proj[i] = (float)p[i];
-    fx_proj_ok = 1;
+    for (int i = 0; i < 6; i++) vw->proj[i] = (float)p[i];
+    vw->ok = 1;
 }
 
 static void draw_impl(int topo, const KVertex *v, uint32_t nv, const uint32_t *idx, uint32_t ni) {
@@ -1751,18 +1813,26 @@ static void draw_impl(int topo, const KVertex *v, uint32_t nv, const uint32_t *i
 
     /* uniforms */
     VkDeviceSize uoff, voff, ioff;
-    DrawUBO *u = ring_alloc(&f->ubo, sizeof(DrawUBO), pprops.limits.minUniformBufferOffsetAlignment, &uoff);
+    int vprog = (KREG(K_TRANSFORM_MODE) & 3) == 2;
+    /* filled in normal memory and copied once: the ring is write-combined, reading it back costs a lot */
+    static DrawUBO ubo_tmp;
+    DrawUBO *u = &ubo_tmp;
+    void *udst = ring_alloc(&f->ubo, vprog ? sizeof(DrawUBO) : DRAW_HEAD, pprops.limits.minUniformBufferOffsetAlignment, &uoff);
     void *vp = ring_alloc(&f->vtx, (VkDeviceSize)nv * sizeof(KVertex), pprops.limits.minStorageBufferOffsetAlignment, &voff);
     void *ip = ring_alloc(&f->idx, (VkDeviceSize)ni * 4, 4, &ioff);
-    if (!u || !vp || !ip) {
+    if (!udst || !vp || !ip) {
         static int warned;
-        if (!warned++) LOG("[gpu] per-frame buffers full: draws dropped\n");
+        if (!warned++) LOG("[gpu] per-frame buffers full: draws dropped (frame %u draw %u, vtx %llu idx %llu ubo %llu MB)\n", frame_no,
+                           g_draw_idx, (unsigned long long)f->vtx.pos >> 20, (unsigned long long)f->idx.pos >> 20,
+                           (unsigned long long)f->ubo.pos >> 20);
         return;
     }
     memcpy(vp, v, (size_t)nv * sizeof(KVertex));
     memcpy(ip, idx, (size_t)ni * 4);
-    memcpy(u->prog, g_vp_prog, sizeof u->prog);
-    memcpy(u->cst, g_vp_const, sizeof u->cst);
+    if (vprog) {
+        memcpy(u->prog, g_vp_prog, sizeof u->prog);
+        memcpy(u->cst, g_vp_const, sizeof u->cst);
+    }
     for (int i = 0; i < 16; i++) u->comp[i / 4][i % 4] = kf(K_COMPOSITE + i * 4);
     for (int s = 0; s < 4; s++)
         for (int j = 0; j < 16; j++) u->texm[s * 4 + j / 4][j % 4] = kf(K_TEXTURE_MATRIX + s * 64 + j * 4);
@@ -1925,6 +1995,7 @@ static void draw_impl(int topo, const KVertex *v, uint32_t nv, const uint32_t *i
         }
     }
 
+    memcpy(udst, u, vprog ? sizeof(DrawUBO) : DRAW_HEAD);
     begin_rendering();
 
     /* descriptor set */
@@ -2344,6 +2415,25 @@ static void submit_and_present(Surface *s) {
     frame_begin();
 }
 
+/* the in-game menu changed the render scale: drop every surface, the next frame makes them again (the game redraws
+ * all of them each frame). Called right after a submit, so the new command buffer uses none of them yet. */
+static void scale_apply(void) {
+    vkDeviceWaitIdle(dev);
+    for (int i = 0; i < n_rts; i++) img_destroy_later(&rts[i].color);
+    for (int i = 0; i < n_zss; i++) {
+        if (zss[i].dview) vkDestroyImageView(dev, zss[i].dview, 0);
+        img_destroy_later(&zss[i].depth);
+    }
+    memset(rts, 0, sizeof rts);
+    memset(zss, 0, sizeof zss);
+    n_rts = n_zss = 0;
+    cur_rt = r_rt = fx_rt = last_present = NULL;
+    cur_zs = r_zs = fx_zs = NULL;
+    LOG("[gpu] render scale %d -> %d\n", g_scale, g_scale_req);
+    g_scale = g_scale_req;
+    g_scale_req = 0;
+}
+
 static void flip_impl(uint32_t addr) {
     if (!ready()) return;
     frame_no++;
@@ -2352,6 +2442,9 @@ static void flip_impl(uint32_t addr) {
         static int at = -1;
         if (at < 0) { const char *e = getenv("UG_CAPTURE"); at = e ? atoi(e) : 0; }
         if (at && (int)frame_no == at && !g_cap) g_cap = 1;
+        static int every = -1;   /* UG_CAPTUREEVERY=N: one every N frames */
+        if (every < 0) { const char *e = getenv("UG_CAPTUREEVERY"); every = e ? atoi(e) : 0; }
+        if (every > 0 && frame_no % (uint32_t)every == 0 && !g_cap) g_cap = 1;
     }
     if (g_cap == 1) {   /* log the frame drawn next; the rest of the session's log goes to out/capture.log */
         g_cap_log_frame = frame_no;
@@ -2390,8 +2483,10 @@ static void flip_impl(uint32_t addr) {
     }
     if (fx_rt && fx_rt == s && !fx_done && !fx_hud) fx_apply();   /* no HUD this frame */
     fx_rt = NULL; fx_zs = NULL;
-    fx_proj_ok = fx_done = fx_hud = 0;
+    fx_nviews = fx_done = fx_hud = 0;
     submit_and_present(s);
+    if (g_scale_req && g_scale_req != g_scale) scale_apply();
+    g_scale_req = 0;
     {   /* worst frame time (flip to flip) and frames over 25 ms since the last log line: stutter */
         static uint64_t last;
         uint64_t now = sched_now_100ns();

@@ -47,6 +47,8 @@ extern int hdtex_enabled(void);
 extern volatile int g_fxaa, g_ao;
 extern volatile float g_aniso;
 int gpu_has_aniso(void);
+extern volatile int g_scale_req;
+int gpu_scale(void);
 extern volatile int g_drawdist;
 int drawdist_on(void);
 int plat_fullscreen_get(void);
@@ -120,7 +122,7 @@ static void text(int x, int y, const char *s, uint32_t rgb) {
 }
 
 /* ------------------------------------------------------------------ items */
-enum { IT_RESUME, IT_FULLSCREEN, IT_FPS, IT_INVX, IT_INVY, IT_FXAA, IT_AO, IT_ANISO, IT_DRAWDIST, IT_HD, IT_UNLOCK, IT_SPECIAL, IT_RAIL, IT_MANUAL, IT_MOON,
+enum { IT_RESUME, IT_FULLSCREEN, IT_FPS, IT_INVX, IT_INVY, IT_SCALE, IT_FXAA, IT_AO, IT_ANISO, IT_DRAWDIST, IT_HD, IT_UNLOCK, IT_SPECIAL, IT_RAIL, IT_MANUAL, IT_MOON,
        IT_SKITCH, IT_QUIT, IT_COUNT };
 static int sel, quit_armed;
 
@@ -178,6 +180,7 @@ static const char *item_label(int i, char *buf, size_t n) {
     case IT_FPS: snprintf(buf, n, "Frame rate         < %d >", g_fps == 30 ? 30 : 60); return buf;
     case IT_INVX: snprintf(buf, n, "Camera left/right  < %s >", on_x() ? "PC  " : "Xbox"); return buf;
     case IT_INVY: snprintf(buf, n, "Camera up/down     < %s >", on_y() ? "PC  " : "Xbox"); return buf;
+    case IT_SCALE: snprintf(buf, n, "Supersampling      < %dx >", gpu_scale()); return buf;
     case IT_FXAA: snprintf(buf, n, "Anti-aliasing      < %s >", g_fxaa ? "On " : "Off"); return buf;
     case IT_AO: snprintf(buf, n, "Ambient occlusion  < %s >", g_ao ? "On " : "Off"); return buf;
     case IT_ANISO:
@@ -214,6 +217,16 @@ static int item_change(int i, int dir) {
         break;
     case IT_INVX: g_invert_x = !on_x(); ini_set("UG_INVERTX", g_invert_x ? "" : "0"); break;
     case IT_INVY: g_invert_y = !on_y(); ini_set("UG_INVERTY", g_invert_y ? "" : "0"); break;
+    case IT_SCALE: {   /* 1..6, 8 (default 2); shown once the menu closes */
+        int v = gpu_scale(), steps[] = {1, 2, 3, 4, 5, 6, 8}, k = 0;
+        while (k < 6 && steps[k] < v) k++;
+        v = steps[(k + (dir < 0 ? 6 : 1)) % 7];
+        g_scale_req = v;
+        char val[8];
+        snprintf(val, sizeof val, "%d", v);
+        ini_set("UG_SCALE", v == 2 ? "" : val);
+        break;
+    }
     case IT_FXAA: g_fxaa = !g_fxaa; ini_set("UG_FXAA", g_fxaa ? "1" : ""); break;
     case IT_AO: g_ao = !g_ao; ini_set("UG_AO", g_ao ? "1" : ""); break;
     case IT_ANISO: {   /* off, 2, 4, 8, 16 (default 16) */

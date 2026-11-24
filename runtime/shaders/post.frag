@@ -6,13 +6,14 @@ layout(std140, set = 0, binding = 0) uniform P {
     vec4 zp;
     vec4 rt;
     vec4 opt;
+    vec4 area;
 } p;
 layout(set = 0, binding = 1) uniform sampler2D depth_tex;
 layout(set = 0, binding = 2) uniform sampler2D color_tex;   // copy of the scene, linear filter
 layout(set = 0, binding = 3) uniform sampler2D ao_tex;
 layout(location = 0) out vec4 o_color;
 
-vec3 rgb(vec2 px) { return textureLod(color_tex, clamp(px, vec2(0.5), p.rt.xy - 0.5) * p.rt.zw, 0.0).rgb; }
+vec3 rgb(vec2 px) { return textureLod(color_tex, clamp(px, p.area.xy + 0.5, p.area.zw - 0.5) * p.rt.zw, 0.0).rgb; }
 float luma(vec2 px) { return dot(rgb(px), vec3(0.299, 0.587, 0.114)); }
 
 vec3 fxaa(vec2 px) {
@@ -46,7 +47,7 @@ vec3 fxaa(vec2 px) {
 }
 
 float lin(ivec2 c) {
-    float z = texelFetch(depth_tex, clamp(c, ivec2(0), ivec2(p.rt.xy) - 1), 0).x;
+    float z = texelFetch(depth_tex, clamp(c, ivec2(p.area.xy), ivec2(p.area.zw) - 1), 0).x;
     return z >= 1.0 ? 1e6 : p.zp.y / min(z - p.zp.x, -1e-7);
 }
 
@@ -54,10 +55,10 @@ float lin(ivec2 c) {
 float ao(ivec2 c) {
     int d = int(p.opt.x);
     float w = lin(c), sum = 0.0, wt = 0.0;
-    ivec2 a = c / d, last = (ivec2(p.rt.xy) + d - 1) / d - 1;
+    ivec2 a = c / d, first = ivec2(p.area.xy) / d, last = (ivec2(p.area.zw) + d - 1) / d - 1;
     for (int y = -2; y < 2; y++)
         for (int x = -2; x < 2; x++) {
-            ivec2 q = clamp(a + ivec2(x, y), ivec2(0), last);
+            ivec2 q = clamp(a + ivec2(x, y), first, last);
             float k = max(1.0 - abs(lin(q * d + d / 2) - w) / (2.0 + 0.03 * w), 0.0);
             sum += k * texelFetch(ao_tex, q, 0).x;
             wt += k;

@@ -112,15 +112,16 @@ static void fill_state(uint32_t dst, int port) {
         if (key('L')) h.rx = 32767;
     kb_done:;
     }
-    if (port == 0) {   /* UG_INPUT=<s>:<button>[:<dur s>],... scripted pad 0 input (guest seconds; default 0.15 s) */
-        static struct { double t, d; int btn; } ev[256];
-        static int nev = -1;
-        if (nev < 0) {
-            nev = 0;
+    if (port < 2) {   /* UG_INPUT=<s>:<button>[:<dur s>],... scripted pad 0 input (guest seconds; default 0.15 s);
+                       * UG_INPUT2 = the same for pad 1 */
+        static struct { double t, d; int btn; } evs[2][256];
+        static int nevs[2] = {-1, -1};
+        if (nevs[port] < 0) {
+            int nev = 0;
             static const char *names[] = {"UP", "DOWN", "LEFT", "RIGHT", "START", "BACK", "LS", "RS",
                                           "A", "B", "X", "Y", "BLACK", "WHITE", "LT", "RT",
                                           "LUP", "LDOWN", "LLEFT", "LRIGHT", "MENU"};
-            const char *e = getenv("UG_INPUT");
+            const char *e = getenv(port ? "UG_INPUT2" : "UG_INPUT");
             char buf[4096];
             snprintf(buf, sizeof buf, "%s", e ? e : "");
             for (char *tok = strtok(buf, ","); tok && nev < 256; tok = strtok(NULL, ",")) {
@@ -128,21 +129,22 @@ static void fill_state(uint32_t dst, int port) {
                 double t = 0, d = 0.15;
                 if (sscanf(tok, "%lf:%15[A-Z]:%lf", &t, name, &d) < 2) continue;
                 for (int k = 0; k < 21; k++)
-                    if (!strcmp(name, names[k])) { ev[nev].t = t; ev[nev].d = d; ev[nev].btn = k; nev++; break; }
+                    if (!strcmp(name, names[k])) { evs[port][nev].t = t; evs[port][nev].d = d; evs[port][nev].btn = k; nev++; break; }
             }
-            if (nev) LOG("[input] %d scripted events\n", nev);
+            if (nev) LOG("[input] pad %d: %d scripted events\n", port, nev);
+            nevs[port] = nev;
         }
         double now = sched_now_100ns() / 1e7;
-        for (int i = 0; i < nev; i++) {
-            if (now < ev[i].t || now >= ev[i].t + ev[i].d) continue;
-            int k = ev[i].btn;
+        for (int i = 0; i < nevs[port]; i++) {
+            if (now < evs[port][i].t || now >= evs[port][i].t + evs[port][i].d) continue;
+            int k = evs[port][i].btn;
             if (k < 8) buttons |= 1u << k;
             else if (k < 16) analog[k - 8] = 255;
             else if (k == 16) h.ly = 32767;
             else if (k == 17) h.ly = -32767;
             else if (k == 18) h.lx = -32767;
             else if (k == 19) h.lx = 32767;
-            else { extern volatile int g_menu_req; g_menu_req = 1; ev[i].t = -1e9; }   /* MENU: once */
+            else { extern volatile int g_menu_req; g_menu_req = 1; evs[port][i].t = -1e9; }   /* MENU: once */
         }
     }
     WR32(dst, ++packet);
@@ -184,14 +186,14 @@ int menu_keys_down(void) {
     return 0;
 }
 
-/* UG_PADS=N: gamepads on ports 0..N-1 (1..4, default 1) */
+/* UG_PADS=N: gamepads on ports 0..N-1 (1 or 2, default 1; the game is two players at most) */
 static uint32_t pad_mask(void) {
     static int n = -1;
     if (n < 0) {
         const char *e = getenv("UG_PADS");
         n = e ? atoi(e) : 1;
         if (n < 1) n = 1;
-        if (n > 4) n = 4;
+        if (n > 2) n = 2;
     }
     return (1u << n) - 1;
 }
@@ -268,6 +270,15 @@ static void lod_hide_hook(X86Context *c) {
     v = RD32(t + 0x34); memcpy(&lod1, &v, 4);
     v = RD32(t + 0x3C); memcpy(&lod3, &v, 4);
     int cut = RD32(t + 0x2C) && !(d2 < lod * lod);
+    static int pl = -1;   /* UG_POSLOG=1: the point distances are measured from, once per frame (debug) */
+    if (pl < 0) pl = getenv("UG_POSLOG") != NULL;
+    static uint32_t pl_frame;
+    if (pl && pl_frame != gpu_frame()) {
+        float q[3];
+        pl_frame = gpu_frame();
+        for (int i = 0; i < 3; i++) { uint32_t w = RD32(RD32(0x2FCD68) + 0x418 + (uint32_t)i * 4); memcpy(&q[i], &w, 4); }
+        LOG("[pos] %.4f %.2f %.2f %.2f\n", sched_now_100ns() / 1e7, q[0], q[1], q[2]);
+    }
     static int dl = -1;
     if (dl < 0) dl = getenv("UG_DDLOG") != NULL;
     if (dl) {

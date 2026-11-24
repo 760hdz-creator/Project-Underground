@@ -4,8 +4,6 @@
 // Project Gauntlet's generated HLSL (gpu_d3d11.c gen_ps).
 
 layout(std140, set = 0, binding = 0) uniform Draw {
-    uvec4 prog[136];
-    vec4 cst[192];
     vec4 comp[4];
     vec4 texm[16];
     vec4 vpo;
@@ -20,6 +18,7 @@ layout(std140, set = 0, binding = 0) uniform Draw {
     uvec4 tmode;           // per stage: 0 none, 1 2D, 2 2D rect (unnormalized coords), 3 pass-through, 4 shadow map
     vec4 sfac[2];          // final combiner c0, c1 (SET_SPECULAR_FOG_FACTOR)
     vec4 fogp;             // fog params 0, 1; function (0 off, 1 linear, 2 exp, 3 exp2); abs
+    // vertex-stage data follows (see nv2a.vert)
 } D;
 
 layout(set = 0, binding = 2) uniform sampler2D tex0;

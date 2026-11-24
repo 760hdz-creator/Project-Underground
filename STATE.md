@@ -167,6 +167,20 @@ C. README pictures (user asked): hd_compare.jpg REPLACED (static UG_SHOTAB pair 
    (UG_LEVEL redirect, UG_SHOT=600 from 4200; ~65 min). Do NOT run anything else meanwhile (shared out/shot_*,
    route timing). TaskStop does not kill the bash loop: kill bash + timeout + underground.exe by PID. Then pick
    the best widescreen shot per map (resize to 16:9), README gallery (docs/images/maps/*.jpg), commit, push.
+USER 2026-11-24: NO Android work until the user says so. Players limited to 2 (launcher, UG_PADS clamp, docs). Pink house: wait for the user at the PC. Polish order: sweep fixes, split-screen AO, AO in vertex-program-only scenes, hitches, supersampling in the in-game menu, >60 fps check, README gallery + Linux package.
+SESSION 2026-11-24 (polish, after the graphics options):
+- Surface clip origin = scissor (set_clip_scissor): in split screen view 2 drew over view 1. Post-processing is per
+  surface clip (FxView), AO has each view's camera. Split-screen route: out/dev/in1.txt + UG_INPUT2="58:A,64:A", UG_PADS=2.
+- In-game supersampling (g_scale_req / scale_apply at the next flip). AO without projection: 0 of ~11700 passes, dropped.
+- GAME SPEED FOLLOWED FPS: the D3D swap callback 0x173ED0 never ran (no flip interrupt), frame step stuck at 1/60.
+  Now nv2a.c fills its ring 0x35F040 at each flip. Skater speed 30 fps 413 u/s, 60 fps 410 (was 205 / 410). Above 60 is
+  impossible without patching 0x174030 (ratio clamped to >= 1): UG_FPS capped at 60 (UG_FPSUNLOCK=1 lifts it).
+  The older line "all clocks real-time ... above 60 untested" below is superseded.
+- Debug: UG_INPUT2 (pad 1), UG_CAPTUREEVERY=N, UG_POSLOG, UG_TMRLOG, UG_FRAMESTEP=0. Second build and run folder that
+  does not disturb a sweep: out/dev (build.py, run.sh <name> <s> VAR=..., own out/hdd; free-skate route in hz runs).
+- PINK HOUSE LEAD: out/pink/across_10500.ppm (4x, seen across the school yard): single TRIANGLES are missing inside one
+  wall (slanted edges), so not whole meshes and not an occluder. Look at index lists / strips / fetch_vertex for that
+  draw. UG_CAPTUREEVERY=600 on a story run, then pick the frame by eye. User wants to do it at the PC.
 D. Not pushed: everything from 4cd0dc8 (F9 capture, new hd_compare.jpg, graphics options).
 1. Sky wedge (cosmetic); pool-floor rectangle (UG_DBGCOLOR=7). Neither showed in 16 NJ shots on 2026-11-23
    (run_texgen, run_dbg7); a quarter-pipe light/dark split at f14400 is not a shadow draw (baked lighting).

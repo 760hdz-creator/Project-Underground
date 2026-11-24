@@ -388,6 +388,15 @@ static void pgraph_method(uint32_t subch, uint32_t method, uint32_t data) {
     case 0x012C:                                                        /* FLIP_INCREMENT_WRITE */
         /* XDK Swap: 1D8C (scratch) holds the surface offset just completed */
         gpu_flip((nv2a_dma_base(KREG(K_DMA_COLOR)) + KREG(K_ZSTENCIL_CLEAR)) & 0x03FFFFFF);
+        {   /* UG_TMRLOG=1: the game's own frame timer (swap callback 0x173ED0, vblank callback 0x173E90) */
+            static int tl = -1;
+            static uint32_t tn;
+            if (tl < 0) tl = getenv("UG_TMRLOG") != NULL;
+            if (tl && ++tn % 300 == 0)
+                LOG("[tmr] flips %u vblanks %u swaps %u last SwapVBlank %u ring %d %d %d %d ratio %08X cbs %u %u\n", tn, RD32(0x35F0C0),
+                    RD32(0x35F0D0), RD32(0x35F050), (int)RD32(0x35F040), (int)RD32(0x35F044), (int)RD32(0x35F048),
+                    (int)RD32(0x35F04C), RD32(0x35F030), RD8(0x35F0E0), RD8(0x35F0E1));
+        }
         {   /* in-game menu (menu.c): a modal loop here pauses every guest thread */
             extern volatile int g_menu_req;
             extern void menu_run(void);
@@ -397,13 +406,36 @@ static void pgraph_method(uint32_t subch, uint32_t method, uint32_t data) {
              * guest thread waits (sched_sleep_until runs the others). */
             static uint64_t next;
             if (g_fps < 0) { const char *e = getenv("UG_FPS"); g_fps = e ? atoi(e) : 60; }
+            /* the game never steps less than 1/60 s per frame (0x174030): faster flips would speed it up */
             int fps = g_fps;
+            static int unlock = -1;   /* UG_FPSUNLOCK=1: experiments */
+            if (unlock < 0) unlock = getenv("UG_FPSUNLOCK") != NULL;
+            if (!unlock && (fps <= 0 || fps > 60)) fps = 60;
             if (fps > 0) {
                 uint64_t period = 10000000ull / (uint64_t)fps, now = sched_now_100ns();
                 if (!next || now > next + 4 * period) next = now;   /* first flip or a long stall: restart */
                 next += period;
                 if (next > now) sched_sleep_until(next);
             }
+            /* Frame length. The game steps by the vblanks between its last 4 swaps (ring 0x35F040, filled by its D3D
+             * swap callback 0x173ED0, averaged and clamped to 4 in 0x173F80). The flip interrupt that calls it does
+             * not exist here, so the ring stayed at 1 and the game ran at half speed at 30 fps and slowed down on any drop:
+             * fill it from the real time between flips, whole 60 Hz vblanks with the rest carried over.
+             * UG_FRAMESTEP=0: off (every flip is one step). */
+            static int fs = -1, ri;
+            static uint64_t last;
+            static double acc;
+            if (fs < 0) { const char *e = getenv("UG_FRAMESTEP"); fs = !(e && *e == '0'); }
+            uint64_t t = sched_now_100ns();
+            if (fs && last && RD8(0x35F0E1)) {   /* the game has registered its callback */
+                acc += (double)(t - last) * 60.0 / 1e7;
+                int d = (int)(acc + 0.5);
+                acc -= d;
+                if (d > 4) { d = 4; acc = 0; }   /* a stall: the game's own limit */
+                WR32(0x35F040u + (uint32_t)ri * 4, (uint32_t)d);
+                ri = (ri + 1) & 3;
+            }
+            last = t;
         }
         break;
     case 0x01A4: k_dma_semaphore = data; break;                         /* SET_CONTEXT_DMA_SEMAPHORE */

@@ -470,7 +470,8 @@ static const Choice kScale[] = {{L"2x  (960 lines, default)", nullptr}, {L"1x  (
                                 {L"4x  (1920 lines)", L"4"}, {L"5x  (2400 lines)", L"5"}, {L"6x  (2880 lines)", L"6"}, {L"8x  (3840 lines)", L"8"}};
 // UG_ANISO: anisotropic texture filtering (runtime default 16)
 static const Choice kAniso[] = {{L"16x (default)", nullptr}, {L"8x", L"8"}, {L"4x", L"4"}, {L"2x", L"2"}, {L"Off", L"0"}};
-static const Choice kPads[] = {{L"1 (default)", nullptr}, {L"2", L"2"}, {L"3", L"3"}, {L"4", L"4"}};
+// UG_PADS: the game is two players at most
+static const Choice kPads[] = {{L"1 (default)", nullptr}, {L"2", L"2"}};
 // UG_WINDOW: windowed client size (default: 2/3 of the monitor's height at the game's aspect)
 // UG_WINDOW: windowed resolution (client size in pixels); larger than the monitor is scaled down to fit, same aspect.
 // Fullscreen always uses the monitor's own resolution.
@@ -542,7 +543,7 @@ struct ComboSetting { int id; const wchar_t* key; const Choice* c; int n; };
 static ComboSetting kCombos[] = {{ID_MONITOR, L"UG_MONITOR", kMonitor, 1}, {ID_WINSIZE, L"UG_WINDOW", kWinSize, N_WINSIZE},
                                  {ID_SCREEN, L"UG_WIDESCREEN", kScreen, 2}, {ID_FIT, L"UG_ASPECT", kFit, 2},
                                  {ID_SCALE, L"UG_SCALE", kScale, 7}, {ID_ANISO, L"UG_ANISO", kAniso, 5},
-                                 {ID_PADS, L"UG_PADS", kPads, 4},
+                                 {ID_PADS, L"UG_PADS", kPads, 2},
                                  {ID_LEVEL, L"UG_LEVEL", kLevel, 18}};
 static void InitMonitors() {
     EnumDisplayMonitors(nullptr, nullptr, MonEnum, 0);
@@ -1373,7 +1374,7 @@ static void CreateLauncherControls() {
     MakeCombo(ID_FIT, kFit, 2, 720, 980, 780);
     MakeCombo(ID_SCALE, kScale, 7, 720, 1040, 780);
     MakeCombo(ID_ANISO, kAniso, 5, 720, 1100, 780);
-    MakeCombo(ID_PADS, kPads, 4, 720, 1160, 780);
+    MakeCombo(ID_PADS, kPads, 2, 720, 1160, 780);
     MakeCombo(ID_CAMERA, kCamera, 4, 720, 1220, 780);
     MakeCombo(ID_LEVEL, kLevel, 18, 720, 1280, 780);
     MakeCombo(ID_HD, nullptr, 0, 720, 1340, 780);

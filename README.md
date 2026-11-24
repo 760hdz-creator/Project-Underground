@@ -60,7 +60,7 @@ A static recompilation by 8gram Labs: the original x86 game code is translated t
   on-screen touch controls.
 - **Almost any controller.** Xbox, PlayStation 3/4/5, Switch Pro and Joy-Con, Steam Controller and Steam Deck,
   8BitDo and thousands more through SDL3 and the community controller database, on Windows, Linux and Android. Up
-  to 4 players, plus the keyboard. See [Controls](#controls).
+  to 2 players, plus the keyboard. See [Controls](#controls).
 - **HD texture packs (optional).** It loads PCSX2-format replacement packs made for the PS2 version, such as the
   community *HD Remaster* pack. Palettized textures are matched by their exact PS2 hashes; compressed (DXT) ones by
   picture (see [HD textures](#hd-textures)). F10 in the game switches them on and off.
