@@ -161,7 +161,9 @@ void main() {
         if (!p) discard;
     }
     o.a *= D.alpha.w;
-    if (D.mode.w == 1u) o = vec4(1.0, 0.0, 1.0, 1.0);                 // UG_DBGCOLOR=1
+    if ((D.mode.w & 255u) == 10u)                                       // UG_DBGCOLOR=10: draw index (gpu_vulkan.c)
+        o = vec4(float((D.mode.w >> 8) & 255u) / 255.0, float((D.mode.w >> 16) & 255u) / 255.0, 0.5, 1.0);
+    else if (D.mode.w == 1u) o = vec4(1.0, 0.0, 1.0, 1.0);            // UG_DBGCOLOR=1
     else if (D.mode.w == 2u) o = vec4(t0.rgb, 1.0);                     // UG_DBGCOLOR=2: stage 0 texel
     else if (D.mode.w == 3u) o = vec4(i_d0.rgb, 1.0);                   // UG_DBGCOLOR=3: diffuse
     else if (D.mode.w == 4u) o = vec4(REG[12].rgb, 1.0);                // UG_DBGCOLOR=4: r0 after the combiners

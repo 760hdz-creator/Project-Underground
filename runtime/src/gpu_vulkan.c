@@ -41,6 +41,12 @@ static int g_scale = 2;   /* UG_SCALE=1..8: host render-target scale over the gu
 static HWND g_hwnd;
 static int gpu_ok;
 static uint32_t frame_no;
+static uint32_t g_draw_idx;
+/* F9 (debug capture): logs every draw of the next frame ([draw] lines), saves it (out/shot_N.ppm), then saves the
+ * frame after it painted with draw indices (UG_DBGCOLOR=10 colours, out/shot_N+1.ppm). 1 = requested. */
+static volatile int g_cap;
+static uint32_t g_cap_log_frame;   /* frame whose draws are logged */
+static int g_cap_dbg, g_cap_shoot;   /* draw index in the current frame (UG_DBGCOLOR=10, UG_DRAWLOG) */
 
 /* ================================================================ window */
 
@@ -80,6 +86,7 @@ static LRESULT CALLBACK wndproc(HWND h, UINT m, WPARAM w, LPARAM l) {
             g_menu_req = 1;
             return 0;
         }
+        if (w == VK_F9 && !g_cap) { g_cap = 1; LOG("[capture] F9\n"); return 0; }
         if (w == VK_F11) { toggle_fullscreen(h); return 0; }
         break;
     }
@@ -1542,7 +1549,16 @@ static void draw_impl(int topo, const KVertex *v, uint32_t nv, const uint32_t *i
     u->zr[0] = kf(K_CLIP_MIN); u->zr[1] = kf(K_CLIP_MAX); u->zr[2] = 1.0f / (zfmt == 1 ? 65535.0f : 16777215.0f); u->zr[3] = 0;
     u->mode[0] = KREG(K_TRANSFORM_MODE) & 3; u->mode[1] = g_vp_start < 136 ? g_vp_start : 0;
     u->mode[2] = 0;
-    { static int dbg = -1; if (dbg < 0) { const char *e = getenv("UG_DBGCOLOR"); dbg = e ? atoi(e) : 0; } u->mode[3] = (uint32_t)dbg; }
+    {   /* UG_DBGCOLOR=10: every draw painted with its index in the frame (r = low byte, g = high byte; matches the
+         * order of the UG_DRAWLOG lines, "#n") */
+        static int dbg = -1;
+        static uint32_t idx_frame = ~0u, idx;
+        if (dbg < 0) { const char *e = getenv("UG_DBGCOLOR"); dbg = e ? atoi(e) : 0; }
+        if (idx_frame != frame_no) { idx_frame = frame_no; idx = 0; }
+        g_draw_idx = idx++;
+        int d = g_cap_dbg ? 10 : dbg;
+        u->mode[3] = (uint32_t)d | (d == 10 ? g_draw_idx << 8 : 0);
+    }
     for (int s = 0; s < 4; s++) if (KREG(K_TEXMAT_EN + s * 4) & 1) u->mode[2] |= 1u << s;
     uint32_t ctl = KREG(K_COMB_CONTROL);
     u->comb[0][0] = ctl; u->comb[0][1] = KREG(K_COMB_SPECFOG_CW0); u->comb[0][2] = KREG(K_COMB_SPECFOG_CW1); u->comb[0][3] = 0;
@@ -1621,9 +1637,9 @@ static void draw_impl(int topo, const KVertex *v, uint32_t nv, const uint32_t *i
     {   /* UG_DRAWLOG=N: log every draw of frame N (state, first vertices, vertex program) */
         static int dl = -1;
         if (dl < 0) { const char *e = getenv("UG_DRAWLOG"); dl = e ? atoi(e) : 0; }
-        if (dl && (int)frame_no == dl) {
-            LOG("[draw] f%u topo %d nv %u ni %u mode %u start %u surf %dx%d clip %g..%g comb %X fcw %08X %08X tm %u/%u/%u/%u prog %05X\n",
-                frame_no, topo, nv, ni, u->mode[0], u->mode[1], cur_rt->w, cur_rt->h, u->zr[0], u->zr[1], ctl,
+        if ((dl && (int)frame_no == dl) || (g_cap_log_frame && frame_no == g_cap_log_frame)) {
+            LOG("[draw] #%u f%u topo %d nv %u ni %u mode %u start %u surf %dx%d clip %g..%g comb %X fcw %08X %08X tm %u/%u/%u/%u prog %05X\n",
+                g_draw_idx, frame_no, topo, nv, ni, u->mode[0], u->mode[1], cur_rt->w, cur_rt->h, u->zr[0], u->zr[1], ctl,
                 u->comb[0][1], u->comb[0][2], u->tmode[0], u->tmode[1], u->tmode[2], u->tmode[3], prog);
             LOG("[draw]   zfunc %X polyoff fill %X factor %g units %g cull %X/%X tex0 off %08X addr %08X\n", KREG(K_DEPTH_FUNC),
                 KREG(K_POLY_OFFSET_FILL), kf(K_POLY_OFFSET_FACTOR), kf(K_POLY_OFFSET_UNITS), KREG(K_CULL_EN), KREG(K_CULL_FACE),
@@ -2007,7 +2023,7 @@ static void submit_and_present(Surface *s) {
     static uint32_t shot_from, shot_to = UINT32_MAX;   /* UG_SHOTRANGE=<first>,<last> frame (debug) */
     static int range_init;
     if (!range_init++) { const char *r = getenv("UG_SHOTRANGE"); if (r) sscanf(r, "%u,%u", &shot_from, &shot_to); }
-    int shoot = s && shot_every > 0 && frame_no >= shot_from && frame_no <= shot_to &&
+    int shoot = (s && g_cap_shoot) || s && shot_every > 0 && frame_no >= shot_from && frame_no <= shot_to &&
                 (frame_no % (uint32_t)shot_every == 0 || (hd_shot_ab > 0 && frame_no % (uint32_t)shot_every == 1));
     if (shoot) {
         VkDeviceSize need = (VkDeviceSize)s->hw * s->hh * 4;
@@ -2063,6 +2079,20 @@ static void submit_and_present(Surface *s) {
 static void flip_impl(uint32_t addr) {
     if (!ready()) return;
     frame_no++;
+    g_cap_shoot = 0;
+    {   /* UG_CAPTURE=N: the F9 capture at frame N (scripted) */
+        static int at = -1;
+        if (at < 0) { const char *e = getenv("UG_CAPTURE"); at = e ? atoi(e) : 0; }
+        if (at && (int)frame_no == at && !g_cap) g_cap = 1;
+    }
+    if (g_cap == 1) {   /* log the frame drawn next; the rest of the session's log goes to out/capture.log */
+        g_cap_log_frame = frame_no;
+        g_cap = 2;
+        if (freopen("out/capture.log", "a", stderr)) LOG("[capture] frame %u\n", frame_no);
+    }
+    else if (g_cap == 2) { g_cap_shoot = 1; g_cap_log_frame = 0; g_cap_dbg = 1; g_cap = 3; }   /* save it; ids next */
+    else if (g_cap == 3) { g_cap_shoot = 1; g_cap_dbg = 0; g_cap = 4; }               /* save the id frame */
+    else if (g_cap == 4) { g_cap = 0; LOG("[capture] done: frame %u logged, shots %u and %u\n", frame_no - 2, frame_no - 2, frame_no - 1); }
     if (frame_no % 60 == 30)   /* HD images unused for 30 s */
         for (int i = 0; i < HD_CACHE; i++)
             if (hd_imgs[i].im.img && frame_no - hd_imgs[i].last > 1800) {
