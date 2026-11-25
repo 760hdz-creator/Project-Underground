@@ -34,6 +34,21 @@ Get them from the releases on [git.8gramlabs.com](https://git.8gramlabs.com/8gra
 [GitLab](https://gitlab.com/octagram-labs-group/Project-Underground/-/releases). You need your own disc image. The launcher
 (Windows) and the game (Linux) offer new versions.
 
+### Which disc image you need
+
+| | |
+|---|---|
+| Game | **Tony Hawk's Underground** (2003), **original Xbox**, **USA (NTSC-U)** |
+| Title ID | `4156002D` |
+| File | `.iso` / `.xiso`, for example `Tony Hawk's Underground (USA).xiso.iso` |
+| Tested | Trimmed XISO image |
+| Should work | Full Redump image (the installer finds the game partition; not tested) |
+| `default.xbe` SHA-256 | `979424bddf7aec098e429ea0a7255aef4b257411348e497a26558f13be9de29e` |
+
+The installer checks `default.xbe` against that SHA-256 and stops if it is another version. **Not supported:** other regions
+(for example PAL), the PS2, GameCube and PC versions, *Underground 2*, modified images, and `.rar` / `.7z` / `.zip` files
+(unpack them first). Make the image from your own disc; please don't ask for one.
+
 > [!WARNING]
 > **Antivirus and "Windows protected your PC" warnings.** `ProjectUnderground-Setup.exe` is not code-signed (signing
 > certificates cost money), so Windows SmartScreen and some antivirus programs may warn about it or flag it on heuristics. It
