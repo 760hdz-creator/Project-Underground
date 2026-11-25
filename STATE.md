@@ -222,8 +222,16 @@ SESSION 2026-11-24 (polish, after the graphics options):
   sampled receiver draw projected with bone matrices: no silhouette on the world and dark wedges near the eye (intro window
   scene). UG_VPCONST=0: off. Tools: out/dev/vpe.py (disassembles a captured program), vpall.py (who reads c56-59), wedge.py.
   Depth clamp now follows 0x1D78 (0x10 clamp on blended meshes, 1 cull on the rest); it was not shown to fix anything, and
-  marks on 8 maps found no fragment past the far plane (UG_ZCLAMP=1: always clamp). b0710f8's "outside the map is lit" rule was
-  made against the broken projection; not re-tested without it.
+  marks on 8 maps found no fragment past the far plane (UG_ZCLAMP=1: always clamp). Found by the user in the sweep and fixed in
+  5c54ec1: shadows were cut in half, because b0710f8 lit everything with ref >= 1 (a head's shadow on flat ground has ref ~1.25).
+  Now only texels without a caster (and outside the map) are lit; xemu has no such rule. Split screen: the game issues no shadow
+  pass. Sweep 5 with all of it: 15 of 15 maps clean (the one warning per map is XcModExp).
+- PHILADELPHIA FENCE FLICKER FIXED (5c54ec1; the old build had it): game data. Sector 3FF46E4E (Obj_Phillyside_Fence) has a giant
+  quad in the plane of its panels and of the pillars, 046E358B (PH_2P_Phillyside_Blocker) repeats all of it, both opaque and
+  created at start. The quad and the repeat are dropped in draw_impl (UG_PHFIX=0 keeps them; collision untouched). Not compared
+  with a real Xbox. Tools: out/badattr/near.py, phn.py, phf.py, qbd.py (QB disassembler); out/dev/fl.py (pixels that toggle and
+  return in 3 consecutive frames; texture motion counts too, so look at the mask).
+- Stopping a background sweep: TaskStop leaves its bash running; kill the sweep5.sh bash too, or it keeps starting games.
 - SPEED (e9b99d7): texture hash once per frame (stable textures), descriptor sets shared, dynamic state cached, vertex fetch
   resolved per batch (855 M vertices compared with the old code: 0 differences). Vancouver ~7000 draws: 15.0 -> 10.4 ms busy.
   Log line "[gpu] busy". Debug: UG_OPTAB=1 (caches off in odd frames), UG_TEXHASH=1.
