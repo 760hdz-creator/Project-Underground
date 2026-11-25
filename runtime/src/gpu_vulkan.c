@@ -1240,10 +1240,14 @@ static VkSampler get_sampler(int i, int rect) {
 /* ================================================================ pipelines */
 
 typedef struct {
-    uint32_t blend_en, sf, df, eq, cmask, topo, has_z, zclamp;
+    uint32_t blend_en, sf, df, eq, cmask, topo, has_z, zclamp, spec;   /* spec: index + 1 in fspecs, 0 = the interpreter */
 } PipeKey;
 typedef struct { PipeKey key; VkPipeline p; } PipeEntry;
-static PipeEntry pipes[512]; static int n_pipes;
+static PipeEntry pipes[1024]; static int n_pipes;
+/* One combiner setup baked into pipelines (nv2a.frag SPEC): control, final cw0/1, texture modes, alpha test, 4 stages. */
+typedef struct { uint32_t w[24]; } FSpec;
+static FSpec fspecs[256]; static int n_fspecs;
+static VkPipelineCache pipe_cache;
 
 static VkBlendFactor blend_factor(uint32_t v, int alpha) {
     switch (v) {
@@ -1299,11 +1303,19 @@ static uint32_t depth_clamp(void) {
     return (KREG(0x1D78) & 0xF0) != 0 || zc == 1 || (zc == 2 && (frame_no & 1));
 }
 
-static VkPipeline get_pipeline(const PipeKey *k) {
-    for (int i = 0; i < n_pipes; i++) if (!memcmp(&pipes[i].key, k, sizeof *k)) return pipes[i].p;
+static VkPipeline make_pipeline(const PipeKey *k) {
     VkPipelineShaderStageCreateInfo st[2] = {
         {VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO, 0, 0, VK_SHADER_STAGE_VERTEX_BIT, vs_mod, "main"},
         {VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO, 0, 0, VK_SHADER_STAGE_FRAGMENT_BIT, fs_mod, "main"}};
+    uint32_t sdata[25];
+    VkSpecializationMapEntry sme[25];
+    VkSpecializationInfo si = {25, sme, sizeof sdata, sdata};
+    if (k->spec) {
+        sdata[0] = 1;
+        memcpy(sdata + 1, fspecs[k->spec - 1].w, sizeof fspecs[0].w);
+        for (uint32_t i = 0; i < 25; i++) sme[i] = (VkSpecializationMapEntry){i < 9 ? i : i + 1, i * 4, 4};
+        st[1].pSpecializationInfo = &si;
+    }
     VkPipelineVertexInputStateCreateInfo vi = {VK_STRUCTURE_TYPE_PIPELINE_VERTEX_INPUT_STATE_CREATE_INFO};
     VkPipelineInputAssemblyStateCreateInfo ia = {VK_STRUCTURE_TYPE_PIPELINE_INPUT_ASSEMBLY_STATE_CREATE_INFO};
     ia.topology = k->topo == KTOPO_TRIS ? VK_PRIMITIVE_TOPOLOGY_TRIANGLE_LIST :
@@ -1342,9 +1354,105 @@ static VkPipeline get_pipeline(const PipeKey *k) {
     ci.pRasterizationState = &rs; ci.pMultisampleState = &ms; ci.pDepthStencilState = &ds; ci.pColorBlendState = &cb;
     ci.pDynamicState = &dy; ci.layout = plal;
     VkPipeline p = 0;
-    if (vkCreateGraphicsPipelines(dev, 0, 1, &ci, 0, &p) != VK_SUCCESS) { LOG("[gpu] pipeline creation failed\n"); return 0; }
-    if (n_pipes < 512) { pipes[n_pipes].key = *k; pipes[n_pipes].p = p; n_pipes++; }
+    if (vkCreateGraphicsPipelines(dev, pipe_cache, 1, &ci, 0, &p) != VK_SUCCESS) { LOG("[gpu] pipeline creation failed\n"); return 0; }
     return p;
+}
+
+/* Baked pipelines are compiled on a worker thread; the interpreter draws until they are ready. The driver's cache is kept in
+ * out/pipelines.cache, so that later starts have them at once. */
+static volatile int spec_work, spec_started;
+static const char *const pipe_cache_file = "out/pipelines.cache";
+static void pipe_cache_open(void) {
+    VkPipelineCacheCreateInfo ci = {VK_STRUCTURE_TYPE_PIPELINE_CACHE_CREATE_INFO};
+    void *data = NULL;
+    FILE *f = fopen(pipe_cache_file, "rb");
+    if (f) {
+        fseek(f, 0, SEEK_END);
+        long n = ftell(f);
+        fseek(f, 0, SEEK_SET);
+        if (n > 0 && n < (64 << 20) && (data = malloc((size_t)n)) && fread(data, 1, (size_t)n, f) == (size_t)n) {
+            ci.pInitialData = data; ci.initialDataSize = (size_t)n;   /* the driver checks that it is its own */
+        }
+        fclose(f);
+    }
+    if (vkCreatePipelineCache(dev, &ci, 0, &pipe_cache) != VK_SUCCESS) {
+        ci.initialDataSize = 0; ci.pInitialData = NULL;
+        if (vkCreatePipelineCache(dev, &ci, 0, &pipe_cache) != VK_SUCCESS) pipe_cache = 0;
+    }
+    free(data);
+}
+static void pipe_cache_save(void) {
+    size_t n = 0;
+    if (!pipe_cache || vkGetPipelineCacheData(dev, pipe_cache, &n, NULL) != VK_SUCCESS || !n) return;
+    void *data = malloc(n);
+    if (data && vkGetPipelineCacheData(dev, pipe_cache, &n, data) == VK_SUCCESS) {
+        FILE *f = fopen("out/pipelines.tmp", "wb");
+        if (f) {
+            size_t w = fwrite(data, 1, n, f);
+            fclose(f);
+            if (w == n) { remove(pipe_cache_file); rename("out/pipelines.tmp", pipe_cache_file); }
+        }
+    }
+    free(data);
+}
+static DWORD WINAPI spec_thread(void *arg) {
+    (void)arg;
+    int done = 0, dirty = 0;
+    for (;;) {
+        int n = __atomic_load_n(&spec_work, __ATOMIC_ACQUIRE);
+        if (done == n) {
+            if (dirty) { pipe_cache_save(); dirty = 0; }
+            Sleep(20);
+            continue;
+        }
+        if (pipes[done].key.spec) {
+            uint64_t t = sched_now_100ns();
+            VkPipeline p = make_pipeline(&pipes[done].key);
+            __atomic_store_n(&pipes[done].p, p, __ATOMIC_RELEASE);
+            dirty = 1;
+            LOG("[gpu] baked pipeline %d: %.1f ms\n", done, (double)(sched_now_100ns() - t) / 1e4);
+        }
+        done++;
+    }
+    return 0;
+}
+
+static VkPipeline get_pipeline(const PipeKey *k) {
+    int i;
+    static int last;   /* most draws repeat the last key */
+    if (last < n_pipes && !memcmp(&pipes[last].key, k, sizeof *k)) i = last;
+    else for (i = 0; i < n_pipes; i++) if (!memcmp(&pipes[i].key, k, sizeof *k)) break;
+    if (i < n_pipes) {
+        VkPipeline p = __atomic_load_n(&pipes[i].p, __ATOMIC_ACQUIRE);
+        if (p) { last = i; return p; }
+    } else if (n_pipes < 1024) {
+        pipes[n_pipes].key = *k;
+        pipes[n_pipes].p = k->spec ? 0 : make_pipeline(k);
+        n_pipes++;
+        __atomic_store_n(&spec_work, n_pipes, __ATOMIC_RELEASE);
+        if (!k->spec) return pipes[n_pipes - 1].p;
+        if (!spec_started) { spec_started = 1; CreateThread(NULL, 8 << 20, spec_thread, NULL, 0, NULL); }
+    } else if (!k->spec) return 0;
+    if (!k->spec) return 0;
+    PipeKey g = *k;   /* not compiled yet */
+    g.spec = 0;
+    return get_pipeline(&g);
+}
+
+/* the baked setup of this draw's combiners (0: none, interpret) */
+static uint32_t fspec_index(const uint32_t comb[9][4], const uint32_t *tmode, uint32_t af) {
+    static int on = -1;   /* UG_SPEC=0: always interpret, 2: interpret in odd frames (debug) */
+    if (on < 0) { const char *e = getenv("UG_SPEC"); on = e ? atoi(e) : 1; }
+    if (!on || (on == 2 && (frame_no & 1)) || (comb[0][0] & 0xFF) > 4) return 0;
+    FSpec s = {{comb[0][0], comb[0][1], comb[0][2], tmode[0], tmode[1], tmode[2], tmode[3], af}};
+    uint32_t n = comb[0][0] & 0xFF;
+    for (uint32_t i = 0; i < n; i++) memcpy(&s.w[8 + i * 4], comb[1 + i], 16);
+    static int last;
+    if (last < n_fspecs && !memcmp(&fspecs[last], &s, sizeof s)) return (uint32_t)last + 1;
+    for (int i = 0; i < n_fspecs; i++) if (!memcmp(&fspecs[i], &s, sizeof s)) { last = i; return (uint32_t)i + 1; }
+    if (n_fspecs == 256) return 0;
+    fspecs[n_fspecs] = s;
+    return (uint32_t)++n_fspecs;
 }
 
 /* ================================================================ init / frames */
@@ -1379,9 +1487,12 @@ static uint32_t pool_serial;     /* descriptor pool resets */
 #define UBO_RING (64ull << 20)
 #define STAGE_RING (64ull << 20)
 
+static double st_wait[3];   /* ms: GPU fence, image acquire, present ("[gpu] busy" line) */
 static void frame_begin(void) {
     Frame *f = &frames[fi];
+    uint64_t t0 = sched_now_100ns();
     vkWaitForFences(dev, 1, &f->fence, VK_TRUE, UINT64_MAX);
+    st_wait[0] += (double)(sched_now_100ns() - t0) / 1e4;
     vkResetFences(dev, 1, &f->fence);
     for (int i = 0; i < f->ngarbage; i++) {
         vkDestroyImageView(dev, f->gview[i], 0); vkDestroyImage(dev, f->gimg[i], 0); img_free(gallocs[fi][i]);
@@ -1509,6 +1620,7 @@ static int vk_init(void) {
     VKC(vkCreateShaderModule(dev, &smi, 0, &vs_mod));
     smi.codeSize = sizeof spv_nv2a_frag; smi.pCode = spv_nv2a_frag;
     VKC(vkCreateShaderModule(dev, &smi, 0, &fs_mod));
+    pipe_cache_open();
 
     for (int i = 0; i < FRAMES; i++) {
         Frame *f = &frames[i];
@@ -2158,7 +2270,8 @@ static void draw_impl(int topo, const KVertex *v, uint32_t nv, const uint32_t *i
     /* pipeline + dynamic state */
     int has_z = cur_zs != NULL;
     PipeKey k = {KREG(K_BLEND_EN) & 1, KREG(K_BLEND_SFACTOR), KREG(K_BLEND_DFACTOR), KREG(K_BLEND_EQUATION),
-                 KREG(K_COLOR_MASK), (uint32_t)topo, (uint32_t)has_z, depth_clamp()};
+                 KREG(K_COLOR_MASK), (uint32_t)topo, (uint32_t)has_z, depth_clamp(), 0};
+    if (!u->mode[3]) k.spec = fspec_index(u->comb, u->tmode, u->alpha[2] > 0 ? 1 + (uint32_t)u->alpha[1] : 0);
     if (g_cap_dbg) k.blend_en = 0;   /* draw ids: the last draw wins */
     if (!k.blend_en) k.sf = k.df = k.eq = 0;
     VkPipeline p = get_pipeline(&k);
@@ -2444,7 +2557,9 @@ static void submit_and_present(Surface *s) {
         swapchain_create();
     }
 #endif
+    uint64_t ta = sched_now_100ns();
     VkResult ar = swapchain && surface ? vkAcquireNextImageKHR(dev, swapchain, UINT64_MAX, f->acquired, 0, &img) : VK_ERROR_OUT_OF_DATE_KHR;
+    st_wait[1] += (double)(sched_now_100ns() - ta) / 1e4;
 #ifndef _WIN32
     if (ar == VK_ERROR_SURFACE_LOST_KHR) { linux_surface_lost = 1; img = UINT32_MAX; } else
 #endif
@@ -2556,7 +2671,9 @@ static void submit_and_present(Surface *s) {
     }
     if (img != UINT32_MAX) {
         VkPresentInfoKHR pi = {VK_STRUCTURE_TYPE_PRESENT_INFO_KHR, 0, 1, &sc_done[img], 1, &swapchain, &img, 0};
+        uint64_t tp = sched_now_100ns();
         VkResult pr = vkQueuePresentKHR(queue, &pi);
+        st_wait[2] += (double)(sched_now_100ns() - tp) / 1e4;
         if (pr == VK_ERROR_OUT_OF_DATE_KHR || (pr == VK_SUBOPTIMAL_KHR && surface_changed())) {
             vkDeviceWaitIdle(dev);
             swapchain_create();
@@ -2593,6 +2710,13 @@ static void flip_impl(uint32_t addr) {
     if (!ready()) return;
     extern uint64_t g_flip_exit;
     if (g_flip_exit) { st_busy[frame_no & 1] += (double)(sched_now_100ns() - g_flip_exit) / 1e4; st_busy_n[frame_no & 1]++; }
+#ifdef __ANDROID__
+    {   /* the whole frame's CPU work must fit with room to spare: aim below the deadline */
+        extern void android_frame_hint(int64_t busy_ns, int64_t target_ns);
+        extern volatile int g_fps;
+        if (g_flip_exit) android_frame_hint((int64_t)(sched_now_100ns() - g_flip_exit) * 100, 1000000000ll / (g_fps == 30 ? 30 : 60) * 3 / 4);
+    }
+#endif
     frame_no++;
     g_cap_shoot = 0;
     {   /* UG_CAPTURE=N: the F9 capture at frame N (scripted) */
@@ -2662,8 +2786,10 @@ static void flip_impl(uint32_t addr) {
     if (frame_no % 300 == 0) {
         static DWORD t0;
         DWORD t = GetTickCount();
-        LOG("[gpu] busy %.2f ms per frame (even %.2f odd %.2f)\n", (st_busy[0] + st_busy[1]) / (st_busy_n[0] + st_busy_n[1] + 1e-9),
-            st_busy[0] / (st_busy_n[0] + 1e-9), st_busy[1] / (st_busy_n[1] + 1e-9));
+        LOG("[gpu] busy %.2f ms per frame (even %.2f odd %.2f), waits: GPU %.2f acquire %.2f present %.2f\n", (st_busy[0] + st_busy[1]) / (st_busy_n[0] + st_busy_n[1] + 1e-9),
+            st_busy[0] / (st_busy_n[0] + 1e-9), st_busy[1] / (st_busy_n[1] + 1e-9), st_wait[0] / (st_busy_n[0] + st_busy_n[1] + 1e-9),
+            st_wait[1] / (st_busy_n[0] + st_busy_n[1] + 1e-9), st_wait[2] / (st_busy_n[0] + st_busy_n[1] + 1e-9));
+        st_wait[0] = st_wait[1] = st_wait[2] = 0;
         st_busy[0] = st_busy[1] = 0; st_busy_n[0] = st_busy_n[1] = 0;
         LOG("[gpu] frame %u: %.1f fps, worst %.1f ms, %u slow, per frame: draws %u verts %u new textures %u, %d pipelines, "
             "%d targets\n", frame_no, t0 ? 300000.0 / (double)(t - t0) : 0.0, st_worst / 10.0, st_slow, st_draws / 300,

@@ -21,6 +21,22 @@ layout(std140, set = 0, binding = 0) uniform Draw {
     // vertex-stage data follows (see nv2a.vert)
 } D;
 
+// One combiner setup baked into a pipeline (gpu_vulkan.c fspec): the driver folds the interpreter below into straight
+// code, which is what makes it cheap on phone GPUs. SPEC = 0: everything is read from the draw's uniforms.
+layout(constant_id = 0) const uint SPEC = 0u;
+layout(constant_id = 1) const uint S_CTL = 0u;     // D.comb[0].xyz
+layout(constant_id = 2) const uint S_F0 = 0u;
+layout(constant_id = 3) const uint S_F1 = 0u;
+layout(constant_id = 4) const uint S_TM0 = 0u;     // D.tmode
+layout(constant_id = 5) const uint S_TM1 = 0u;
+layout(constant_id = 6) const uint S_TM2 = 0u;
+layout(constant_id = 7) const uint S_TM3 = 0u;
+layout(constant_id = 8) const uint S_AF = 0u;      // 0: no alpha test, else 1 + function
+layout(constant_id = 10) const uint SW0 = 0u; layout(constant_id = 11) const uint SW1 = 0u; layout(constant_id = 12) const uint SW2 = 0u; layout(constant_id = 13) const uint SW3 = 0u;
+layout(constant_id = 14) const uint SW4 = 0u; layout(constant_id = 15) const uint SW5 = 0u; layout(constant_id = 16) const uint SW6 = 0u; layout(constant_id = 17) const uint SW7 = 0u;
+layout(constant_id = 18) const uint SW8 = 0u; layout(constant_id = 19) const uint SW9 = 0u; layout(constant_id = 20) const uint SW10 = 0u; layout(constant_id = 21) const uint SW11 = 0u;
+layout(constant_id = 22) const uint SW12 = 0u; layout(constant_id = 23) const uint SW13 = 0u; layout(constant_id = 24) const uint SW14 = 0u; layout(constant_id = 25) const uint SW15 = 0u;
+
 layout(set = 0, binding = 2) uniform sampler2D tex0;
 layout(set = 0, binding = 3) uniform sampler2D tex1;
 layout(set = 0, binding = 4) uniform sampler2D tex2;
@@ -42,15 +58,14 @@ vec4 REG[16];
 vec2 g_shadow_dbg = vec2(-1.0);
 vec4 g_shadow_raw = vec4(-1.0);   // UG_DBGCOLOR=7: uv, raw ref / 4   // UG_DBGCOLOR=6: ref, stored depth of the last shadow stage
 
-vec4 stage_tex(int s, vec4 tc) {
-    uint m = D.tmode[s];
+vec4 stage_tex(int s, uint m, vec4 tc) {
     if (m == 0u) return vec4(0.0, 0.0, 0.0, 1.0);   // stage off: opaque black (alpha 0 made the alpha test drop walls whose texture is missing)
     if (m == 3u) return clamp(tc, 0.0, 1.0);
     vec2 uv = tc.xy / (tc.w != 0.0 ? tc.w : 1.0);
     if (m == 2u || m == 4u) uv *= D.tsz[s].xy;
     vec4 t = s == 0 ? texture(tex0, uv) : s == 1 ? texture(tex1, uv) : s == 2 ? texture(tex2, uv) : texture(tex3, uv);
     if (m != 4u) return t;
-    if (D.mode.w == 8u) return vec4(1.0);   // UG_DBGCOLOR=8: every shadow lookup lit (debug)
+    if (SPEC == 0u && D.mode.w == 8u) return vec4(1.0);   // UG_DBGCOLOR=8: every shadow lookup lit (debug)
     // shadow map: compare the texcoord depth (Z-buffer units, projected) with the stored depth -> 1 lit / 0 shadowed
     float rr = tc.z / (tc.w != 0.0 ? tc.w : 1.0) * D.tsz[s].z;
     float r = clamp(rr, 0.0, 1.0), d = t.r;   // fixed-point ref saturates
@@ -109,17 +124,7 @@ float outop1(float x, uint ocw) {
     return clamp(x, -1.0, 1.0);
 }
 
-void main() {
-    vec4 t0 = stage_tex(0, i_t0), t1 = stage_tex(1, i_t1), t2 = stage_tex(2, i_t2), t3 = stage_tex(3, i_t3);
-    uint ctl = D.comb[0].x;
-    REG[0] = vec4(0.0); REG[1] = D.cfac[0]; REG[2] = D.cfac[8]; REG[3] = vec4(D.fogc.rgb, D.fogp.z != 0.0 ? i_fog : 1.0);   // fog disabled: factor 1 (no fog)
-    REG[4] = i_d0; REG[5] = i_d1; REG[6] = vec4(0.0); REG[7] = vec4(0.0);
-    REG[8] = t0; REG[9] = t1; REG[10] = t2; REG[11] = t3;
-    REG[12] = vec4(0.0, 0.0, 0.0, t0.a); REG[13] = vec4(0.0); REG[14] = vec4(0.0); REG[15] = vec4(0.0);
-    int count = int(min(ctl & 0xFFu, 8u));
-    for (int st = 0; st < count; st++) {
-        uvec4 w = D.comb[1 + st];
-        uint ci = w.x, co = w.y, ai = w.z, ao = w.w;
+void stage(int st, uint ctl, uint ci, uint co, uint ai, uint ao) {
         if ((ctl & 0x1000u) != 0u) REG[1] = D.cfac[st];
         if ((ctl & 0x10000u) != 0u) REG[2] = D.cfac[8 + st];
         vec3 A = inp_rgb(ci >> 24), B = inp_rgb((ci >> 16) & 0xFFu), C = inp_rgb((ci >> 8) & 0xFFu), Dd = inp_rgb(ci & 0xFFu);
@@ -141,9 +146,27 @@ void main() {
         if (asum_dst != 0u) REG[asum_dst].a = asum;
         if ((co & 0x80000u) != 0u && ab_dst != 0u) REG[ab_dst].a = cab.b;   // AB blue to alpha
         if ((co & 0x40000u) != 0u && cd_dst != 0u) REG[cd_dst].a = ccd.b;   // CD blue to alpha
-    }
+}
+
+void main() {
+    bool sp = SPEC != 0u;
+    vec4 t0 = stage_tex(0, sp ? S_TM0 : D.tmode.x, i_t0), t1 = stage_tex(1, sp ? S_TM1 : D.tmode.y, i_t1);
+    vec4 t2 = stage_tex(2, sp ? S_TM2 : D.tmode.z, i_t2), t3 = stage_tex(3, sp ? S_TM3 : D.tmode.w, i_t3);
+    uint ctl = sp ? S_CTL : D.comb[0].x;
+    REG[0] = vec4(0.0); REG[1] = D.cfac[0]; REG[2] = D.cfac[8]; REG[3] = vec4(D.fogc.rgb, D.fogp.z != 0.0 ? i_fog : 1.0);   // fog disabled: factor 1 (no fog)
+    REG[4] = i_d0; REG[5] = i_d1; REG[6] = vec4(0.0); REG[7] = vec4(0.0);
+    REG[8] = t0; REG[9] = t1; REG[10] = t2; REG[11] = t3;
+    REG[12] = vec4(0.0, 0.0, 0.0, t0.a); REG[13] = vec4(0.0); REG[14] = vec4(0.0); REG[15] = vec4(0.0);
+    int count = int(min(ctl & 0xFFu, 8u));
+    if (sp) {
+        if (count > 0) stage(0, ctl, SW0, SW1, SW2, SW3);
+        if (count > 1) stage(1, ctl, SW4, SW5, SW6, SW7);
+        if (count > 2) stage(2, ctl, SW8, SW9, SW10, SW11);
+        if (count > 3) stage(3, ctl, SW12, SW13, SW14, SW15);
+    } else
+        for (int st = 0; st < count; st++) { uvec4 w = D.comb[1 + st]; stage(st, ctl, w.x, w.y, w.z, w.w); }
     // final combiner: rgb = A*B + (1-A)*C + D, alpha = G; sum = r0 + v1, ef = E*F
-    uint f0 = D.comb[0].y, f1 = D.comb[0].z;
+    uint f0 = sp ? S_F0 : D.comb[0].y, f1 = sp ? S_F1 : D.comb[0].z;
     REG[1] = D.sfac[0]; REG[2] = D.sfac[1];   // the final combiner has its own constants
     REG[14].rgb = (f1 & 0x80u) != 0u ? clamp(REG[12].rgb + REG[5].rgb, 0.0, 1.0) : REG[12].rgb + REG[5].rgb;
     REG[15].rgb = inp_rgb(f1 >> 24) * inp_rgb((f1 >> 16) & 0xFFu);
@@ -151,15 +174,16 @@ void main() {
     vec4 o;
     o.rgb = clamp(A * B + (1.0 - A) * C + Dd, 0.0, 1.0);
     o.a = clamp(inp_a((f1 >> 8) & 0xFFu), 0.0, 1.0);
-    if (D.alpha.z > 0.0) {
+    if (sp ? S_AF != 0u : D.alpha.z > 0.0) {
         float av = floor(o.a * 255.0 + 0.5), r = D.alpha.x;
-        int f = int(D.alpha.y);
+        int f = sp ? int(S_AF) - 1 : int(D.alpha.y);
         bool p = true;
         if (f == 0) p = false; else if (f == 1) p = av < r; else if (f == 2) p = av == r; else if (f == 3) p = av <= r;
         else if (f == 4) p = av > r; else if (f == 5) p = av != r; else if (f == 6) p = av >= r;
         if (!p) discard;
     }
     o.a *= D.alpha.w;
+    if (sp) { o_color = o; return; }
     if ((D.mode.w & 255u) == 10u)                                       // UG_DBGCOLOR=10: draw index (gpu_vulkan.c)
         o = vec4(float((D.mode.w >> 8) & 255u) / 255.0, float((D.mode.w >> 16) & 255u) / 255.0, 0.5, 1.0);
     else if (D.mode.w == 1u) o = vec4(1.0, 0.0, 1.0, 1.0);            // UG_DBGCOLOR=1

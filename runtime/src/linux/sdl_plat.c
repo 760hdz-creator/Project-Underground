@@ -327,6 +327,30 @@ void android_start(void) {
     linux_create_window();
 }
 
+/* Android's performance hints (ADPF): the game thread's work of each frame against its deadline, so that the scheduler
+ * gives it a fast enough core and clock (it sleeps between frames, which alone keeps the clock low). UG_PERFHINT=0: off. */
+#include <android/performance_hint.h>
+#include <unistd.h>
+void android_frame_hint(int64_t busy_ns, int64_t target_ns) {
+    static APerformanceHintSession *ses;
+    static int state, tid;
+    static int64_t target;
+    if (state == 0) {
+        state = 2;
+        const char *e = getenv("UG_PERFHINT");
+        APerformanceHintManager *m = e && *e == '0' ? NULL : APerformanceHint_getManager();
+        if (m) {
+            int32_t t = (int32_t)gettid();
+            ses = APerformanceHint_createSession(m, &t, 1, target_ns);
+        }
+        if (ses) { state = 1; tid = (int)gettid(); target = target_ns; }
+        LOG("[android] performance hints %s", ses ? "on\n" : "not available\n");
+    }
+    if (state != 1 || (int)gettid() != tid || busy_ns <= 0) return;
+    if (target_ns != target) { APerformanceHint_updateTargetWorkDuration(ses, target_ns); target = target_ns; }
+    APerformanceHint_reportActualWorkDuration(ses, busy_ns);
+}
+
 /* HalReturnToFirmware: UndergroundActivity.relaunch() starts a helper process that opens the game again and ends
  * this one (an Android app cannot exec itself) */
 void android_relaunch(void) {
