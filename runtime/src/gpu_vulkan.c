@@ -428,7 +428,9 @@ static int swapchain_create(void) {
     ci.imageUsage = VK_IMAGE_USAGE_TRANSFER_DST_BIT | VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT;
     shot_out = getenv("UG_SHOTOUT") && (caps.supportedUsageFlags & VK_IMAGE_USAGE_TRANSFER_SRC_BIT);
     if (shot_out) ci.imageUsage |= VK_IMAGE_USAGE_TRANSFER_SRC_BIT;
-    ci.imageSharingMode = VK_SHARING_MODE_EXCLUSIVE; ci.preTransform = caps.currentTransform;
+    ci.imageSharingMode = VK_SHARING_MODE_EXCLUSIVE;
+    /* the picture is drawn upright: on a phone held sideways (currentTransform = rotate 90 / 270) the compositor turns it */
+    ci.preTransform = (caps.supportedTransforms & VK_SURFACE_TRANSFORM_IDENTITY_BIT_KHR) ? VK_SURFACE_TRANSFORM_IDENTITY_BIT_KHR : caps.currentTransform;
     sc_transform = caps.currentTransform;
     ci.compositeAlpha = VK_COMPOSITE_ALPHA_OPAQUE_BIT_KHR; ci.presentMode = pm; ci.clipped = VK_TRUE;
     ci.oldSwapchain = swapchain;
@@ -448,8 +450,8 @@ static int swapchain_create(void) {
             vkCreateSemaphore(dev, &si, 0, &sc_done[i]);
         }
     }
-    LOG("[gpu] swapchain %ux%u, %u images, format %d, present mode %d, transform %X\n", sc_ext.width, sc_ext.height,
-        sc_count, sc_fmt, pm, (unsigned)sc_transform);
+    LOG("[gpu] swapchain %ux%u, %u images, format %d, present mode %d, transform %X (surface %X)\n", sc_ext.width, sc_ext.height,
+        sc_count, sc_fmt, pm, (unsigned)ci.preTransform, (unsigned)sc_transform);
     return 1;
 }
 
