@@ -25,14 +25,16 @@ A static recompilation by 8gram Labs: the original x86 game code is translated t
 
 > [!IMPORTANT]
 > **No download yet.** The first release ships when the Windows, Linux and Android builds are all ready
-> together. Windows and Linux are playable today. The Android build still has to be tested on a real phone.
+> together. Windows and Linux are playable today. The Android build runs on a first phone and is being tested.
 > Developers can [build it from source](#building-from-source-developers) now.
 
 <div align="center">
 
 ![New Jersey](docs/images/gameplay_nj.jpg)
 
-![Grinding in New Jersey](docs/images/gameplay_grind.jpg)
+![Nosegrind](docs/images/gameplay_grind.jpg)
+
+![Wall ride in Moscow](docs/images/gameplay_wall.jpg)
 
 </div>
 
@@ -41,8 +43,8 @@ A static recompilation by 8gram Labs: the original x86 game code is translated t
 - **Native builds, no emulator.** Every function of `default.xbe` is lifted to C and compiled for the machine it
   runs on: 64-bit Windows, Linux (x86-64) and Android (arm64).
 - **Own Vulkan renderer.** The Xbox GPU's (NV2A) push buffer goes straight to Vulkan on every platform: vertex
-  programs and register combiners run as shader interpreters, with shadow maps, fog and texture generation. No
-  Direct3D, no DXVK.
+  programs and register combiners run as shader interpreters, with shadow maps, lighting, fog and texture
+  generation. No Direct3D, no DXVK.
 - **High resolution and supersampling.** The game renders at a multiple of the Xbox's 480 lines: 2x (960 lines) by
   default, up to 8x, scaled down cleanly to the window. Changes live in the in-game menu.
 - **Optional graphics.** Anti-aliasing and ambient occlusion (the HUD stays sharp), anisotropic texture filtering,
@@ -88,8 +90,6 @@ Two players, split screen:
 
 ## HD textures
 
-![Original and HD texture pack, same frame](docs/images/hd_compare.jpg)
-
 Optional. Unpack a PCSX2 replacement pack for the PS2 version (*Tony Hawk's Underground (USA) [SLUS-20731]*), then
 pick its folder, for example `...\SLUS-20731\replacements`, in the launcher (**Settings**, **HD texture pack**).
 Linux: `./setup.sh --hd <folder>` or `UG_HDTEX=<folder>` in `settings.ini`. The pack is used where it is and is not
@@ -123,17 +123,17 @@ rebuild the game in place and keep your saves and settings.
 | Story mode: intro cutscene, Create-a-Skater, New Jersey level | Working, skater controllable, HUD, 60 fps |
 | Saves, loading, cutscene streaming | Working |
 | Sound, music, movies | Working (DirectSound mixed in software) |
-| Renderer: textures, combiners, fog, shadow maps, texgen, depth clamp, polygon offset | Working |
+| Renderer: textures, combiners, fog, lighting, skater shadows, texgen, depth clamp, polygon offset | Working |
 | Widescreen 16:9 (the game's own mode), window size, monitor, fullscreen | Working |
-| Other levels | Not checked yet: renderer gaps (FF lighting, cube maps, some texgen modes) may show up |
+| Other levels | All 15 load and play in free skate; story goals beyond New Jersey are not checked |
 | Installer, launcher, updates, uninstall (Windows) | Install, update and uninstall tested |
 | Linux | Boots to New Jersey gameplay; install, update, uninstall and the updater tested (Ubuntu 24.04, WSL) |
-| Android | APK builds and signs on Windows and Linux; not yet run on a phone |
+| Android | APK builds and signs on Windows and Linux; first phone (Galaxy S26 Ultra): boots, menus, New Jersey free skate |
 | HD texture packs (PS2 PCSX2 packs, matched by picture) | Working (optional; F10 toggles) |
 
 Known gaps:
-- A translucent dark band sometimes crosses the sky (cosmetic).
-- Only the first levels have been played so far; later levels may need renderer work.
+- The story has been played only through its first level; the other levels were checked in free skate.
+- Two-player split screen draws no skater shadows.
 - Not yet tested on a clean PC, on a real Linux GPU, or with real controllers on Linux.
 
 ## Controls
