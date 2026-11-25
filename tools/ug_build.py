@@ -213,6 +213,8 @@ def main():
         if code:
             fail("Could not read the disc image. Use an Xbox (XISO or redump) image of Tony Hawk's Underground (USA).")
     xbe = os.path.join(game, "default.xbe")
+    if a.progress and not os.path.exists(xbe):
+        fail("The game's files are not here any more. Choose your disc image of Tony Hawk's Underground (Xbox, USA) and set it up again.")
     if not os.path.exists(xbe):
         fail("game\\default.xbe is missing: run a full install with your disc image.")
     step("Checking default.xbe")
