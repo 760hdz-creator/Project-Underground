@@ -88,6 +88,17 @@ Two players, split screen:
 
 ![Split screen](docs/images/split_screen.jpg)
 
+## Android
+
+![New Jersey on a phone](docs/images/android_nj.jpg)
+
+![Moscow on a phone](docs/images/android_ru.jpg)
+
+![Hawaii on a phone](docs/images/android_hi.jpg)
+
+A Galaxy S26 Ultra, 3x supersampling, with the on-screen controls (they hide when a controller is connected). The orange
+button opens the in-game menu: tap a row to change it, tap outside to close it.
+
 ## HD textures
 
 Optional. Unpack a PCSX2 replacement pack for the PS2 version (*Tony Hawk's Underground (USA) [SLUS-20731]*), then
@@ -128,7 +139,7 @@ rebuild the game in place and keep your saves and settings.
 | Other levels | All 15 load and play in free skate; story goals beyond New Jersey are not checked |
 | Installer, launcher, updates, uninstall (Windows) | Install, update and uninstall tested |
 | Linux | Boots to New Jersey gameplay; install, update, uninstall and the updater tested (Ubuntu 24.04, WSL) |
-| Android | APK builds and signs on Windows and Linux; first phone (Galaxy S26 Ultra): boots, menus, New Jersey free skate |
+| Android | APK builds and signs on Windows and Linux; one phone (Galaxy S26 Ultra): story start, free skate, saving and loading, touch controls, in-game menu. Not yet tested there: the player-built APK, controllers, long sessions |
 | HD texture packs (PS2 PCSX2 packs, matched by picture) | Working (optional; F10 toggles) |
 
 Known gaps:

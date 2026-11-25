@@ -2629,11 +2629,7 @@ static void submit_and_present(Surface *s) {
         }
         if (shoot) {
             VkBufferImageCopy rg = {0, 0, 0, {VK_IMAGE_ASPECT_COLOR_BIT, 0, 0, 1}, {0, 0, 0}, {(uint32_t)shw, (uint32_t)shh, 1}};
-            if (out) {
-                raw_barrier(cb, sc_img[img], VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL);
-                vkCmdCopyImageToBuffer(cb, sc_img[img], VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, shot.buf, 1, &rg);
-                raw_barrier(cb, sc_img[img], VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL);
-            } else {
+            if (!out) {   /* the window's image: below, with the touch controls */
                 barrier(cb, &s->color, VK_IMAGE_ASPECT_COLOR_BIT, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL);
                 vkCmdCopyImageToBuffer(cb, s->color.img, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, shot.buf, 1, &rg);
             }
@@ -2641,8 +2637,14 @@ static void submit_and_present(Surface *s) {
     }
     if (img != UINT32_MAX) {
         int drawn = touch_draw(cb, img);
-        raw_barrier(cb, sc_img[img], drawn ? VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL : VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
-                    VK_IMAGE_LAYOUT_PRESENT_SRC_KHR);
+        VkImageLayout lay = drawn ? VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL : VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL;
+        if (shoot && out) {
+            VkBufferImageCopy rg = {0, 0, 0, {VK_IMAGE_ASPECT_COLOR_BIT, 0, 0, 1}, {0, 0, 0}, {(uint32_t)shw, (uint32_t)shh, 1}};
+            raw_barrier(cb, sc_img[img], lay, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL);
+            vkCmdCopyImageToBuffer(cb, sc_img[img], VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, shot.buf, 1, &rg);
+            lay = VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL;
+        }
+        raw_barrier(cb, sc_img[img], lay, VK_IMAGE_LAYOUT_PRESENT_SRC_KHR);
     }
     vkEndCommandBuffer(f->up);
     vkEndCommandBuffer(cb);

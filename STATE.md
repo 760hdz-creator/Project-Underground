@@ -238,7 +238,11 @@ SESSION 2026-11-24 (polish, after the graphics options):
   needs [settings]), tap.sh. Fixes: preTransform identity (was shown vertical and squeezed), UG_PERFHINT, touch menu button,
   baked combiners (UG_SPEC, out/pipelines.cache), packed vertices (KLayout, VA(), D.vmap). Speed in NJ at 3x: 33 -> ~57 fps
   cool; default 2x on phones. The phone throttles after several runs while charging (dumpsys thermalservice, status 3):
-  measure at status 0. NOT tested: the player APK (first-start unpack of 3.2 GB), RestartActivity relaunch, real controllers,
+  measure at status 0. SAVES on the phone checked: story started, saved in Chapter 1 ("Save Successful"), app restarted, "Load last save" YES = back in
+  Chapter 1 without Create-a-Skater (a free-skate save with the unlock cheat shows no difference after loading: the unlock was
+  not visible in level select; not compared with the PC). Sweep 6 (baked combiners, packed vertices): 15 of 15 maps clean on
+  Windows. README has phone shots (UG_SHOTOUT=1 now includes the touch controls).
+  NOT tested: the player APK (first-start unpack of 3.2 GB), RestartActivity relaunch, real controllers,
   sound by ear, long sessions, other levels. The CPU is the limit now (9-12 ms busy, dips to ~50 fps).
 - BAKED COMBINERS also on PC (worker thread; interpreter until ready): paused Vancouver, baked against interpreted: 99.6 % of the
   world pixels equal, the rest within 7/255. F9 id frames (UG_DBGCOLOR) always interpret.
