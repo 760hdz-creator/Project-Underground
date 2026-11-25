@@ -121,6 +121,8 @@ print(','.join(ev))")" UG_SHOT=1200 ./out/underground.exe   (NJ level by ~frame 
   -21 dB RMS, per-voice gains spread (UG_DSLOG=1 prints a level table each second). Bink is now -2.4 dB (6 bins at
   0 dB, volume -10 dB) vs gameplay music -9 dB: if movies sound too loud, that is the place. Sliders not driven by
   script: user to confirm by ear (SFX master = float at 0x2299A8, setter 3E840; music/speech via 33D70).
+  2ac01ec (user: ambience still loud, music quieter, NPCs a bit louder): mix trims UG_MIXSFX -4 / UG_MIXVOICE +3 (mono
+  streams) / UG_MIXMUSIC +4 (stereo streams) dB, Bink untouched, soft limiter above -2 dB. Installed to the user's OneDrive install.
 
 RESUME HERE (paused 2026-11-24 ~00:30, user's request):
 A. PINK HOUSE (FIXED 2026-11-24, see "PINK HOUSE FIXED" below; kept for history) (NJ, user screenshot): a pink house wall shows a diagonal split, an untextured flat-pink part and
