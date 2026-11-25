@@ -257,6 +257,9 @@ SESSION 2026-11-24 (polish, after the graphics options):
   all files; "Load last save" then reads it without an error. Test windows take the user's controller: ask before a scripted run.
 - RecompLauncher: submitted 2026-11-24 from the Octagram Labs-group developer account (Made by 8gram Labs); review 24-48 h.
   After it is listed: point the README badge at its own page. Their form check does not open GitLab release files (said so in the note).
+- RELEASED v0.1.5 (tag e6e4e3e, 2026-11-25): the two save fixes above, Windows + Linux, both sites; downloads match the notes. The real
+  setup updated the user's install (--update --dir). Linux: fresh --iso install in WSL only. Not tested: the launcher's own update
+  0.1.4 -> 0.1.5, Android on the phone. Build script for WSL: out/dev/rel/relb.sh. Saves before it: G:/ug_backup/hdd_before_0.1.5.
 - RELEASED v0.1.4 (tag 7472f6a): RecompLauncher support (recomplauncher.json, --prepare / --play / --data, portable Windows zip,
   Linux package renamed to ProjectUnderground-Linux-x64-<ver>.tar.gz: our updaters match the ProjectUnderground-Linux prefix).
   Standards: https://github.com/elripalda/RecompLauncher docs/ADD-SUPPORT.md + DEVELOPERS.md. Tested with its commands and
