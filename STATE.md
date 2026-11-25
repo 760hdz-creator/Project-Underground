@@ -246,6 +246,8 @@ SESSION 2026-11-24 (polish, after the graphics options):
   sound by ear, long sessions, other levels. The CPU is the limit now (9-12 ms busy, dips to ~50 fps).
 - BAKED COMBINERS also on PC (worker thread; interpreter until ready): paused Vancouver, baked against interpreted: 99.6 % of the
   world pixels equal, the rest within 7/255. F9 id frames (UG_DBGCOLOR) always interpret.
+- RecompLauncher: submitted 2026-11-24 from the Octagram Labs-group developer account (Made by 8gram Labs); review 24-48 h.
+  After it is listed: point the README badge at its own page. Their form check does not open GitLab release files (said so in the note).
 - RELEASED v0.1.4 (tag 7472f6a): RecompLauncher support (recomplauncher.json, --prepare / --play / --data, portable Windows zip,
   Linux package renamed to ProjectUnderground-Linux-x64-<ver>.tar.gz: our updaters match the ProjectUnderground-Linux prefix).
   Standards: https://github.com/elripalda/RecompLauncher docs/ADD-SUPPORT.md + DEVELOPERS.md. Tested with its commands and
