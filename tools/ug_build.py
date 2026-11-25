@@ -1,6 +1,7 @@
 """Build Project Underground on this PC from the player's own disc image (what the installer runs).
 
 usage: python -I tools/ug_build.py --root <install dir> [--iso <image.iso>] [--version V] [--jobs N]
+       ... --progress [--game <image or extracted folder>]   (a launcher's setup step: see class Progress)
   1. --iso: extract the XDVDFS image into <root>/game (without --iso, update mode keeps the data)
   2. check game/default.xbe is the supported USA release (SHA-256)
   3. llvm-mingw (pinned, SHA-256 checked, from its GitHub release) -> <root>/toolchain (once, ~190 MB download)
@@ -26,6 +27,7 @@ import traceback
 HERE = os.path.dirname(os.path.abspath(__file__))
 KIT = os.path.dirname(HERE)  # the build kit: recomp/, runtime/, third_party/, tools/
 XBE_SHA256 = "979424bddf7aec098e429ea0a7255aef4b257411348e497a26558f13be9de29e"
+WRONG = "This is another game or version. Project Underground needs Tony Hawk's Underground for the original Xbox, USA."
 
 
 def step(msg):
@@ -59,6 +61,44 @@ def rmtree(path):
                     os.chmod(p, os.stat(p).st_mode | stat.S_IWRITE)
         shutil.rmtree(path)
     retry("Could not delete an old folder (close programs that use it and try again)", once)
+
+
+class Progress:
+    """--progress: a launcher runs the build without a window. stdout gets "progress 0.4 Text" lines and, last, what went
+    wrong; everything else goes to <root>/build/setup.log."""
+    AT = {"Extracting": .02, "Copying": .02, "Checking": .25, "Getting": .27, "downloading": .28, "extracting": .34,
+          "Translating": .4, "Finding": .52, "Compiling": .54, "Linking": .95, "Done": 1}
+
+    def __init__(self, log):
+        self.out, self.buf, self.err = sys.stdout, "", False
+        os.makedirs(os.path.dirname(log), exist_ok=True)
+        self.log = open(log, "w", encoding="utf-8", buffering=1)
+
+    def write(self, s):
+        self.buf += s
+        while "\n" in self.buf:
+            line, self.buf = self.buf.split("\n", 1)
+            self.log.write(line + "\n")
+            if line.startswith("## "):
+                self.say(f"progress {self.AT.get(line[3:].split(' ')[0], .3)} {line[3:]}")
+            elif line.startswith("compiled ") and line.endswith(")"):
+                a, b = line[line.rindex("(") + 1:-1].split("/")
+                if int(b) > 2:
+                    self.say(f"progress {.54 + .4 * int(a) / int(b):.3f} Compiling ({a} of {b})")
+            elif line.startswith("ERROR: ") or self.err:
+                self.err = True
+                self.say(line.replace("ERROR: ", "", 1))
+        return len(s)
+
+    def say(self, line):
+        self.out.write(line + "\n")
+        self.out.flush()
+
+    def flush(self):
+        self.log.flush()
+
+    def isatty(self):
+        return False
 
 
 def sha256(path):
@@ -122,6 +162,8 @@ def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--root", required=True)
     ap.add_argument("--iso")
+    ap.add_argument("--game", help="like --iso; also a folder with the extracted disc (default.xbe)")
+    ap.add_argument("--progress", action="store_true")
     ap.add_argument("--version", default="0.0.0")
     ap.add_argument("--jobs", type=int, default=0)
     a = ap.parse_args()
@@ -129,11 +171,41 @@ def main():
     game, bdir = os.path.join(root, "game"), os.path.join(root, "build")
     jobs = a.jobs or max(1, min(os.cpu_count() or 2, 16))
     os.makedirs(root, exist_ok=True)
+    ready = os.path.join(bdir, "version.txt")   # written once the build has finished
+    disc_ok = os.path.join(bdir, "disc.txt")    # ... once the whole disc is in <root>/game
+    if a.progress:
+        sys.stdout = Progress(os.path.join(bdir, "setup.log"))
+        exe = os.path.join(root, "underground.exe" if os.name == "nt" else "underground")
+        if all(map(os.path.exists, (ready, disc_ok, exe, os.path.join(game, "default.xbe")))):
+            with open(ready) as f:
+                if f.read().strip() == a.version:
+                    sys.stdout.say("progress 1 Already built")
+                    return
+    if os.path.exists(ready):
+        os.remove(ready)
+    if a.game and a.progress and os.path.exists(disc_ok):
+        a.game = None   # an update: the disc of the first setup is still there
     py = [sys.executable, "-I"]
     if os.name != "nt":   # Linux: the kit's capstone (pylib/) goes on sys.path; -I ignores PYTHONPATH
         py.append(os.path.join(HERE, "pyrun.py"))
 
+    if a.game and os.path.isdir(a.game):
+        src = os.path.abspath(a.game)
+        if not os.path.exists(os.path.join(src, "default.xbe")):
+            fail("There is no default.xbe in that folder. Choose the extracted disc of Tony Hawk's Underground (Xbox, USA).")
+        if sha256(os.path.join(src, "default.xbe")) != XBE_SHA256:
+            fail(WRONG)
+        if src != os.path.abspath(game):
+            step("Copying the game folder")
+            if os.path.exists(disc_ok):
+                os.remove(disc_ok)
+            rmtree(game)
+            shutil.copytree(src, game)
+    elif a.game:
+        a.iso = a.game
     if a.iso:
+        if os.path.exists(disc_ok):
+            os.remove(disc_ok)
         step("Extracting the disc image")
         rmtree(game)
         code, out = run(py + [os.path.join(HERE, "extract_xiso.py"), a.iso, game])
@@ -145,7 +217,11 @@ def main():
         fail("game\\default.xbe is missing: run a full install with your disc image.")
     step("Checking default.xbe")
     if sha256(xbe) != XBE_SHA256:
-        fail("default.xbe is not the supported version (Tony Hawk's Underground, Xbox, USA).")
+        fail(WRONG)
+    if a.iso or a.game:
+        os.makedirs(bdir, exist_ok=True)
+        with open(disc_ok, "w") as f:
+            f.write(XBE_SHA256 + "\n")
 
     if os.name != "nt":
         lifted = os.path.join(bdir, "lifted")
@@ -191,6 +267,8 @@ def main():
         if os.path.exists(src):
             retry("Could not replace " + f, lambda: shutil.copy2(src, os.path.join(root, f)))
     os.makedirs(os.path.join(root, "out"), exist_ok=True)   # saves (out/hdd) and the log live here
+    with open(ready, "w") as f:
+        f.write(a.version + "\n")
     step("Done")
 
 

@@ -281,7 +281,8 @@ void updater_start(void) {
 #ifdef __ANDROID__
     return;   /* a new version is a new APK, built on the PC */
 #endif
-    const char *no = getenv("UG_NOUPDATE");
+    const char *no = getenv("UG_NOUPDATE"), *rl = getenv("RECOMPLAUNCHER");
+    if (rl && *rl == '1') return;   /* RecompLauncher brings the updates */
     if (!UG_VERSION[0] || getenv("UG_INPUT") || (no && *no == '1')) return;
     HANDLE t = CreateThread(NULL, 0, update_thread, NULL, 0, NULL);
     if (t) CloseHandle(t);

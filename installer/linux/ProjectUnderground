@@ -1,0 +1,45 @@
+#!/bin/sh
+# Project Underground (Linux), the program RecompLauncher starts (recomplauncher.json):
+#   --prepare --data <folder> [--game <disc image or extracted folder>]   builds the game there, no window, "progress 0.4 Text" lines
+#   --play --data <folder>                                                plays it
+# Without these it is setup.sh (or the game, when RecompLauncher set it up before).
+here=$(cd -- "$(dirname -- "$0")" && pwd) || exit 1
+data=${RECOMPLAUNCHER_DATA:-} game= mode=
+for a in "$@"; do
+    case $a in --prepare|--play) mode=$a ;; esac
+done
+if [ -n "$mode" ]; then
+    while [ $# -gt 0 ]; do
+        case $1 in
+        --game=*) game=${1#--game=} ;;
+        --data=*) data=${1#--data=} ;;
+        --game) game=${2:-}; shift ;;
+        --data) data=${2:-}; shift ;;
+        esac
+        [ $# -gt 0 ] && shift
+    done
+    [ -n "$data" ] || { echo "$mode needs --data <folder>"; exit 2; }
+fi
+
+play() {
+    cd -- "$1" || exit 2
+    mkdir -p out
+    export UG_INSTALLED=1 UG_NOUPDATE=1
+    [ "${RECOMPLAUNCHER_MODE:-}" != bigpicture ] || export UG_FULLSCREEN=1
+    exec ./underground 2>out/underground.log
+}
+
+case $mode in
+--prepare)
+    command -v python3 >/dev/null 2>&1 || { echo "python3 is missing. Install it with your package manager, then set the game up again."; exit 1; }
+    set -- --progress --root "$data" --version "$(cat "$here/kit/VERSION")"
+    [ -z "$game" ] || set -- "$@" --game "$game"
+    exec python3 -I -B "$here/kit/tools/ug_build.py" "$@"
+    ;;
+--play)
+    [ -x "$data/underground" ] || { echo "The game is not set up in $data"; exit 2; }
+    play "$data"
+    ;;
+esac
+[ $# -gt 0 ] || [ -z "$data" ] || [ ! -x "$data/underground" ] || play "$data"
+exec sh "$here/setup.sh" "$@"
