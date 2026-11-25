@@ -364,7 +364,7 @@ static int Uninstall(const std::wstring& dir) {
         DeleteFileW((KnownDir(FOLDERID_Programs) + L"\\" + kShortcut).c_str());
     }
     // never out\ (saves, log)
-    const wchar_t* parts[] = {L"python", L"tools", L"recomp", L"runtime", L"third_party", L"licenses", L"build", L"game", L"sdl3",
+    const wchar_t* parts[] = {L"python", L"tools", L"recomp", L"runtime", L"third_party", L"licenses", L"build", L"game", L"sdl3", L"installer",
                               L"toolchain", L"android\\ndk", L"android\\template.apk", L"android\\include",
                               L"android\\libugrt.a"};   // keeps android\signing-key.json (a new APK installs over the old one)
     for (auto p : parts) {

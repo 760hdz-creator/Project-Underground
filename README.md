@@ -11,7 +11,7 @@
 [![Android](https://img.shields.io/badge/Android-in_testing-3DDC84?logo=android&logoColor=white)](#status)
 [![Vulkan](https://img.shields.io/badge/renderer-Vulkan-A41E22?logo=vulkan&logoColor=white)](#how-it-works)
 [![60 fps](https://img.shields.io/badge/60_fps-default-success)](#features)
-[![Release](https://img.shields.io/badge/first_release-coming_soon-lightgrey)](#status)
+[![Release](https://img.shields.io/badge/release-Windows_%2B_Linux-success)](#download)
 
 A static recompilation by 8gram Labs: the original x86 game code is translated to C and compiled natively for
 64-bit Windows, Linux and Android phones, with its own Vulkan renderer, higher resolutions, 60 fps and a launcher.
@@ -23,10 +23,20 @@ A static recompilation by 8gram Labs: the original x86 game code is translated t
 > No game code or data ships with this project. The installer builds the game **on your PC from your own
 > Tony Hawk's Underground (Xbox, USA) disc image**.
 
-> [!IMPORTANT]
-> **No download yet.** The first release ships when the Windows, Linux and Android builds are all ready
-> together. Windows and Linux are playable today. The Android build runs on a first phone and is being tested.
-> Developers can [build it from source](#building-from-source-developers) now.
+## Download
+
+| | File |
+|---|---|
+| **Windows 10/11** (64-bit, Vulkan 1.3 GPU) | `ProjectUnderground-Setup-<version>.exe` |
+| **Linux** (x86-64, glibc 2.38+, Vulkan 1.3 GPU) | `ProjectUnderground-Linux-<version>.tar.gz` |
+
+Get them from the releases on [git.8gramlabs.com](https://git.8gramlabs.com/8gramlabs/Project-Underground/releases) or
+[GitLab](https://gitlab.com/octagram-labs-group/Project-Underground/-/releases). You need your own disc image. The launcher
+(Windows) and the game (Linux) offer new versions. The setup is not code-signed, so Windows may warn about it.
+
+> [!NOTE]
+> **Android is in testing.** The game runs on a first phone, but the APK that the launcher builds has not been tested on one
+> yet.
 
 <div align="center">
 
@@ -151,7 +161,7 @@ rebuild the game in place and keep your saves and settings.
 Known gaps:
 - The story has been played only through its first level; the other levels were checked in free skate.
 - Two-player split screen draws no skater shadows.
-- Not yet tested on a clean PC, on a real Linux GPU, or with real controllers on Linux.
+- Not yet tested on a PC without any developer tools, on a real Linux GPU, or with real controllers on Linux.
 
 ## Controls
 

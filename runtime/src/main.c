@@ -103,10 +103,9 @@ void x87_store80(uint32_t a, double v) {
 }
 
 #ifdef _WIN32
-static LONG WINAPI crash_handler(EXCEPTION_POINTERS *ep) {
+static LONG WINAPI crash_report(EXCEPTION_POINTERS *ep) {
     EXCEPTION_RECORD *r = ep->ExceptionRecord;
     uintptr_t addr = r->NumberParameters >= 2 ? (uintptr_t)r->ExceptionInformation[1] : 0;
-    if (r->ExceptionCode < 0xC0000000u) return EXCEPTION_CONTINUE_SEARCH; /* debug prints etc. */
     HMODULE base = GetModuleHandleA(NULL);
     LOG("FATAL: host exception %08lX at +%llX, data %p (guest %08llX)\n", r->ExceptionCode,
         (unsigned long long)((uintptr_t)r->ExceptionAddress - (uintptr_t)base), (void *)addr,
@@ -122,6 +121,28 @@ static LONG WINAPI crash_handler(EXCEPTION_POINTERS *ep) {
     }
     LOG("\n");
     ExitProcess(3);
+}
+
+/* Sees every exception before its own handlers do: only real faults end the game here. Software exceptions (bit 29: a C++
+ * throw E06D7363, .NET, ...) come from DLLs (driver, overlays, audio) that mostly catch them themselves; one that nobody
+ * catches still reaches crash_report through the unhandled filter. */
+static LONG WINAPI crash_handler(EXCEPTION_POINTERS *ep) {
+    EXCEPTION_RECORD *r = ep->ExceptionRecord;
+    if (r->ExceptionCode < 0xC0000000u) return EXCEPTION_CONTINUE_SEARCH;   /* debug prints etc. */
+    if (r->ExceptionCode & 0x20000000u) {
+        static volatile LONG n;
+        if (InterlockedIncrement(&n) <= 5) {
+            char mod[MAX_PATH] = "?";
+            HMODULE m = NULL;
+            /* a C++ throw: the thrower's image base is the 4th parameter; the address itself is in KERNELBASE */
+            if (r->ExceptionCode == 0xE06D7363u && r->NumberParameters >= 4) m = (HMODULE)r->ExceptionInformation[3];
+            if (m) GetModuleFileNameA(m, mod, sizeof mod);
+            const char *b = strrchr(mod, '\\');
+            LOG("[rt] exception %08lX in %s, left to its own handler\n", r->ExceptionCode, b ? b + 1 : mod);
+        }
+        return EXCEPTION_CONTINUE_SEARCH;
+    }
+    return crash_report(ep);
 }
 
 static HANDLE g_main_thread;
@@ -305,6 +326,8 @@ int main(int argc, char **argv) {
     ULONG guarantee = 0x10000;
     SetThreadStackGuarantee(&guarantee);
     AddVectoredExceptionHandler(1, crash_handler);
+    SetUnhandledExceptionFilter(crash_report);
+    if (getenv("UG_TESTEXC")) RaiseException((DWORD)strtoul(getenv("UG_TESTEXC"), NULL, 16), 0, 0, NULL);   /* debug */
     g_missed = fopen("out/missed_targets.txt", "a");
     DuplicateHandle(GetCurrentProcess(), GetCurrentThread(), GetCurrentProcess(), &g_main_thread, 0, FALSE,
                     DUPLICATE_SAME_ACCESS);
