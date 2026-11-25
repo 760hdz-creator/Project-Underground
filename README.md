@@ -44,6 +44,8 @@ Get them from the releases on [git.8gramlabs.com](https://git.8gramlabs.com/8gra
 > - **SmartScreen ("Windows protected your PC"):** click **More info**, then **Run anyway**.
 > - **Your antivirus quarantines `underground.exe` after the build:** restore it and allow the install folder, then run the
 >   setup again and choose the update. Don't turn your antivirus off completely.
+> - Only download from the official [Forge](https://git.8gramlabs.com/8gramlabs/Project-Underground/releases) or
+>   [GitLab](https://gitlab.com/octagram-labs-group/Project-Underground/-/releases) release pages.
 
 > [!NOTE]
 > **Online play is being worked on.** For now only local two-player split screen is available.
