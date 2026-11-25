@@ -16,7 +16,7 @@ static float scr_w = 3120, scr_h = 1440;
 static float stick_ox, stick_oy;   /* base of the stick while held */
 static int pad_present;
 
-enum { B_A, B_B, B_X, B_Y, B_WHITE, B_BLACK, B_LT, B_RT, B_BACK, B_START, NBTN };
+enum { B_A, B_B, B_X, B_Y, B_WHITE, B_BLACK, B_LT, B_RT, B_BACK, B_START, B_MENU, NBTN };
 typedef struct { float x, y, r; uint16_t bit; float cr, cg, cb; } Button;
 static Button btn[NBTN];
 static float stick_r, stick_dx, stick_dy;
@@ -33,6 +33,7 @@ static void layout(void) {
     btn[B_RT] = (Button){W - 0.14f * H, 0.13f * H, 0.085f * H, 0, 0.70f, 0.70f, 0.72f};
     btn[B_BACK] = (Button){W / 2 - 0.14f * H, 0.08f * H, 0.05f * H, 0x0020, 0.60f, 0.60f, 0.62f};
     btn[B_START] = (Button){W / 2 + 0.14f * H, 0.08f * H, 0.05f * H, 0x0010, 0.60f, 0.60f, 0.62f};
+    btn[B_MENU] = (Button){W / 2, 0.08f * H, 0.05f * H, 0, 0.94f, 0.47f, 0.16f};   /* our in-game menu */
     stick_r = 0.16f * H;
 }
 
@@ -59,6 +60,19 @@ static void update_stick(void) {
 void touch_event(uint32_t type, uint64_t id, float nx, float ny) {
     if (!btn[B_A].r) layout();
     float x = nx * scr_w, y = ny * scr_h;
+    extern int menu_is_open(void);
+    extern void menu_tap(int x, int y, int w, int h);
+    extern volatile int g_menu_req;
+    if (menu_is_open()) {   /* taps go to the menu; nothing stays held */
+        memset(fingers, 0, sizeof fingers);
+        update_stick();
+        if (type == SDL_EVENT_FINGER_DOWN) menu_tap((int)x, (int)y, (int)scr_w, (int)scr_h);
+        return;
+    }
+    if (type == SDL_EVENT_FINGER_DOWN && !pad_present) {
+        float dx = x - btn[B_MENU].x, dy = y - btn[B_MENU].y, rr = btn[B_MENU].r * 1.3f;
+        if (dx * dx + dy * dy <= rr * rr) { g_menu_req = 1; return; }
+    }
     int k = -1;
     for (int i = 0; i < MAX_FINGERS; i++) if (fingers[i].used && fingers[i].id == id) k = i;
     if (type == SDL_EVENT_FINGER_DOWN) {
@@ -105,13 +119,18 @@ void touch_merge(HostState *s) {
 int touch_shapes(float (*out)[8], int max, int w, int h) {
     if (w != (int)scr_w || h != (int)scr_h) { scr_w = (float)w; scr_h = (float)h; layout(); }
     if (!btn[B_A].r) layout();
-    if (pad_present) return 0;
+    extern int menu_is_open(void);
+    if (pad_present || menu_is_open()) return 0;
     int n = 0;
     for (int b = 0; b < NBTN && n < max; b++) {
         float a = pressed(b) ? 0.60f : 0.30f;
         out[n][0] = btn[b].x; out[n][1] = btn[b].y; out[n][2] = btn[b].r; out[n][3] = 0;
         out[n][4] = btn[b].cr; out[n][5] = btn[b].cg; out[n][6] = btn[b].cb; out[n][7] = a;
         n++;
+    }
+    for (int d = -1; d <= 1 && n < max; d++) {   /* three dots on the menu button */
+        float dot[8] = {btn[B_MENU].x + d * 0.4f * btn[B_MENU].r, btn[B_MENU].y, 0.11f * btn[B_MENU].r, 0, 1, 1, 1, 0.85f};
+        memcpy(out[n++], dot, sizeof dot);
     }
     int held = 0;
     for (int i = 0; i < MAX_FINGERS; i++) held |= fingers[i].used && fingers[i].stick;

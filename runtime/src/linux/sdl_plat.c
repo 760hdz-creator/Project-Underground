@@ -316,6 +316,10 @@ void android_start(void) {
     if (!freopen("out/underground.log", "w", stderr)) {}
     LOG("[android] files folder %s\n", dir);
     mkdir("game", 0755);
+    if (access("settings.ini", F_OK)) {   /* the in-game menu saves here */
+        FILE *f = fopen("settings.ini", "w");
+        if (f) { fputs("[settings]\n", f); fclose(f); }
+    }
     unpack_game();
     if (access("game/default.xbe", R_OK)) {
         char msg[1024];

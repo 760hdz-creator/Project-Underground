@@ -34,6 +34,11 @@ void menu_key(int k) {
     mkq[mk_head % 32] = k;
     InterlockedIncrement(&mk_head);
 }
+static int panel_tap(int x, int y, int w, int h);
+void menu_tap(int x, int y, int w, int h) {   /* a finger on a w x h window (linux/touch.c) */
+    int k = panel_tap(x, y, w, h);
+    if (k) menu_key(k);
+}
 static int menu_key_next(void) {
     if (mk_tail == mk_head) return 0;
     int k = (int)mkq[mk_tail % 32];
@@ -167,6 +172,9 @@ static int on_y(void) {
     return !(e && *e == '0');   /* flipped by default; UG_INVERTY=0 = original direction */
 }
 static int item_shown(int i) {
+#ifdef __ANDROID__
+    if (i == IT_FULLSCREEN) return 0;
+#endif
     if (i == IT_HD) return hdtex_enabled();
     if (i == IT_ANISO) return gpu_has_aniso();
     if (i >= IT_UNLOCK && i <= IT_SKITCH) return career() != 0;
@@ -257,6 +265,19 @@ static int item_change(int i, int dir) {
     return 0;
 }
 
+static int row_item[IT_COUNT], row_y[IT_COUNT], rows;   /* as drawn, for taps */
+static int panel_tap(int x, int y, int w, int h) {
+    x -= (w - pw) / 2; y -= (h - ph) / 2;
+    if (x < 0 || y < 0 || x >= pw || y >= ph) return 6;   /* MK_BACK: outside closes */
+    for (int k = 0; k < rows; k++) {
+        if (y < row_y[k] - 3 * sc || y >= row_y[k] + 11 * sc) continue;
+        int i = row_item[k], value = i != IT_RESUME && i != IT_QUIT && i != IT_UNLOCK;
+        int left = value && x >= 12 * sc + 18 * 8 * sc && x < 12 * sc + 22 * 8 * sc;   /* on the "<" */
+        return 0x1000 | i << 4 | (left ? 1 : value ? 2 : 3);
+    }
+    return 0;
+}
+
 static void draw(void) {
     int vis[IT_COUNT], nv = 0;
     for (int i = 0; i < IT_COUNT; i++) if (item_shown(i)) vis[nv++] = i;
@@ -280,10 +301,15 @@ static void draw(void) {
         }
         if (i == IT_QUIT && gap == 1) gap = 2;
         int y = pad + (k + 2 + (gap ? 1 : 0)) * line;
+        row_item[k] = i; row_y[k] = y; rows = k + 1;
         if (i == sel) fill(pad - 4 * sc, y - 3 * sc, pw - 2 * pad + 8 * sc, 14 * sc, 0x3A2416);
         text(pad, y, item_label(i, buf, sizeof buf), i == sel ? 0xFFFFFF : 0xB4B4BE);
     }
+#ifdef __ANDROID__
+    text(pad, ph - pad - 8 * sc, "Tap. Outside closes.", 0x8C8C96);
+#else
     text(pad, ph - pad - 8 * sc, "A/Enter ok  B/Esc back", 0x8C8C96);
+#endif
     static int dump = -1;
     if (dump < 0) dump = getenv("UG_MENUSHOT") != NULL;
     if (dump) {
@@ -317,7 +343,9 @@ void menu_run(void) {
     int dirty = 1, closing = 0;
     double last_draw = 0;
     while (!closing) {
-#ifndef _WIN32
+#ifdef __ANDROID__
+        ug_sched_yield();   /* events and pads are polled on the main stack; the other guest threads are held (sched.c) */
+#elif !defined(_WIN32)
         extern void linux_pump_events(void);
         linux_pump_events();
 #endif
@@ -341,6 +369,12 @@ void menu_run(void) {
             else if (press & 0x1000) k = MK_OK;                 /* A */
             else if (press & (0x2000 | 0x0010 | 0x0020)) k = MK_BACK;   /* B, START, BACK */
         }
+        if (k & 0x1000) {   /* a tap: item and action */
+            sel = k >> 4 & 31;
+            k = (k & 15) == 1 ? MK_LEFT : (k & 15) == 2 ? MK_RIGHT : MK_OK;
+            if (sel == IT_UNLOCK || sel == IT_RESUME || sel == IT_QUIT) k = MK_OK;
+            if (sel != IT_QUIT) quit_armed = 0;
+        }
         switch (k) {
         case MK_UP: sel = step(-1); quit_armed = 0; dirty = 1; break;
         case MK_DOWN: sel = step(1); quit_armed = 0; dirty = 1; break;
@@ -357,15 +391,17 @@ void menu_run(void) {
         }
         Sleep(10);
     }
-    g_menu_open = 0;
     /* nothing that closed the menu may reach the game: wait for every key and button to be released (max 2 s) */
     for (double t = host_ms(); host_ms() - t < 2000 && (menu_pad_buttons() || menu_keys_down());) {
-#ifndef _WIN32
+#ifdef __ANDROID__
+        ug_sched_yield();
+#elif !defined(_WIN32)
         extern void linux_pump_events(void);
         linux_pump_events();
 #endif
         Sleep(10);
     }
+    g_menu_open = 0;
     double paused = host_ms() - t0;
     sched_pause_add((uint64_t)(paused * 10000.0));
     g_audio_hold = 0;

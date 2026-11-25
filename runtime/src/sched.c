@@ -248,6 +248,9 @@ static void idle_sleep(void) {
 }
 #endif
 
+#ifdef __ANDROID__
+static GThread *last_run;
+#endif
 void sched_run(void) {
     sched_now_100ns(); /* start the clock */
     int idle_ok = !(getenv("UG_NOIDLE") && *getenv("UG_NOIDLE") == '1');
@@ -258,6 +261,16 @@ void sched_run(void) {
         for (GThread *t = threads; t; t = t->next) {
             if (t->state == T_DONE) continue;
             alive = 1;
+#ifdef __ANDROID__
+            {   /* the in-game menu (menu.c) runs on the thread that flipped: the others wait */
+                extern int menu_is_open(void);
+                static GThread *menu_thread;
+                if (!menu_is_open()) menu_thread = NULL;
+                else if (!menu_thread) menu_thread = last_run;
+                if (menu_thread && t != menu_thread) continue;
+            }
+            last_run = t;
+#endif
             current = t;
             slice_start = sched_now_100ns();
             SwitchToFiber(t->fiber);
@@ -272,6 +285,10 @@ void sched_run(void) {
             }
         }
         if (!alive) return;
+#ifdef __ANDROID__
+        extern int menu_is_open(void);
+        if (!menu_is_open())
+#endif
         kernel_poll();
 #ifndef _WIN32
         linux_pump_events();   /* SDL events belong to this (main) thread; the Windows build has a window thread */
