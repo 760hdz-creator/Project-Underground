@@ -96,7 +96,7 @@ Gauntlet's installer (G:\Project Gauntlet\docs\installer.md) without its Visual 
    --tag v<ver> --title v<ver> --note "<notes>" --asset dist/ProjectUnderground-Setup-<ver>.exe` and
    `glab release create v<ver> dist/ProjectUnderground-Setup-<ver>.exe`.
    Linux: `bash tools/package_linux.sh` in WSL from a fresh clone, attach dist/ProjectUnderground-Linux-<ver>.tar.gz
-   to both releases too. Release gate: Windows + Linux + Android together.
+   to both releases too. Windows and Linux are released since v0.1.3; Android works on a Galaxy S26 Ultra (developer build).
 
 ## Verified (2026-11-23, dev box; toolchain junctioned, so the llvm-mingw download itself was not re-run)
 - `--iso` into an empty folder (~53 s): all steps, launcher, shortcuts, registry. Installed game run from another

@@ -8,7 +8,7 @@
 
 [![Windows](https://img.shields.io/badge/Windows-playable-0078D6?logo=windows&logoColor=white)](#status)
 [![Linux](https://img.shields.io/badge/Linux-playable-FCC624?logo=linux&logoColor=black)](#status)
-[![Android](https://img.shields.io/badge/Android-in_testing-3DDC84?logo=android&logoColor=white)](#status)
+[![Android](https://img.shields.io/badge/Android-works_on_Galaxy_S26_Ultra-3DDC84?logo=android&logoColor=white)](#status)
 [![Vulkan](https://img.shields.io/badge/renderer-Vulkan-A41E22?logo=vulkan&logoColor=white)](#how-it-works)
 [![60 fps](https://img.shields.io/badge/60_fps-default-success)](#features)
 [![Release](https://img.shields.io/badge/release-Windows_%2B_Linux-success)](#download)
@@ -51,8 +51,10 @@ Get them from the releases on [git.8gramlabs.com](https://git.8gramlabs.com/8gra
 > **Online play is being worked on.** For now only local two-player split screen is available.
 
 > [!NOTE]
-> **Android is in testing.** The game runs on a first phone, but the APK that the launcher builds has not been tested on one
-> yet.
+> **Android works on a Samsung Galaxy S26 Ultra** (Snapdragon, Adreno 840, Android 17): story start, free skate, saving and
+> loading, touch controls and the in-game menu. It is the only phone tried so far. That test used a developer build of the same
+> code; the APK that the launcher builds is still to be tested on a phone. Other phones need arm64, Android 13 or newer and
+> Vulkan 1.3: please report how yours does.
 
 <div align="center">
 
@@ -123,8 +125,9 @@ Two players, split screen:
 
 ![Hawaii on a phone](docs/images/android_hi.jpg)
 
-A Galaxy S26 Ultra, 3x supersampling, with the on-screen controls (they hide when a controller is connected). The orange
-button opens the in-game menu: tap a row to change it, tap outside to close it.
+Working on a Samsung Galaxy S26 Ultra: about 50 to 60 fps in New Jersey while the phone is cool (a hot phone slows itself
+down; the default is 2x supersampling). The pictures are from that phone at 3x, with the on-screen controls (they hide when a
+controller is connected). The orange button opens the in-game menu: tap a row to change it, tap outside to close it.
 
 ## HD textures
 
@@ -171,7 +174,7 @@ rebuild the game in place and keep your saves and settings.
 | Other levels | All 15 load and play in free skate; story goals beyond New Jersey are not checked |
 | Installer, launcher, updates, uninstall (Windows) | Install, update and uninstall tested |
 | Linux | Boots to New Jersey gameplay; install, update, uninstall and the updater tested (Ubuntu 24.04, WSL) |
-| Android | APK builds and signs on Windows and Linux; one phone (Galaxy S26 Ultra): story start, free skate, saving and loading, touch controls, in-game menu. Not yet tested there: the player-built APK, controllers, long sessions |
+| Android | Working on a Galaxy S26 Ultra: story start, free skate (New Jersey, Moscow, Hawaii), saving and loading, touch controls, in-game menu, leaving and resuming. Not yet tested: the launcher-built APK, controllers, long sessions, other phones |
 | HD texture packs (PS2 PCSX2 packs, matched by picture) | Working (optional; F10 toggles) |
 
 Known gaps:
