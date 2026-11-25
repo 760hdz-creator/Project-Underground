@@ -132,6 +132,25 @@ static void iosb(uint32_t p, uint32_t status, uint32_t info) {
     WR32(p + 4, info);
 }
 
+/* A save folder that was never filled: empty, or only a 0-byte SaveMeta.xbx. A failed or interrupted XCreateSaveGame
+ * (0x1768F4) leaves one, and then refuses its name for good (meta check 0x176818 -> ERROR_CANNOT_MAKE), because only the
+ * Xbox dashboard could delete it. */
+static int unfilled_save(const char *host) {
+    if (_strnicmp(host, "out\\hdd\\p1\\UDATA\\", 17)) return 0;
+    char pat[MAX_PATH];
+    WIN32_FIND_DATAA fd;
+    snprintf(pat, sizeof pat, "%s\\*", host);
+    HANDLE f = FindFirstFileA(pat, &fd);
+    if (f == INVALID_HANDLE_VALUE) return 0;
+    int unfilled = 1;
+    do {
+        if (!strcmp(fd.cFileName, ".") || !strcmp(fd.cFileName, "..")) continue;
+        if (_stricmp(fd.cFileName, "SaveMeta.xbx") || fd.nFileSizeLow || fd.nFileSizeHigh) unfilled = 0;
+    } while (unfilled && FindNextFileA(f, &fd));
+    FindClose(f);
+    return unfilled;
+}
+
 static uint32_t open_common(uint32_t handle_out, uint32_t oa, uint32_t io, uint32_t disposition, uint32_t options) {
     char gpath[MAX_PATH], host[MAX_PATH];
     obj_attr_path(oa, gpath);
@@ -151,6 +170,10 @@ static uint32_t open_common(uint32_t handle_out, uint32_t oa, uint32_t io, uint3
         exists = attr != INVALID_FILE_ATTRIBUTES;
     }
     int is_dir = exists && (attr & FILE_ATTRIBUTE_DIRECTORY);
+    if (is_dir && disposition == 2 && !created && unfilled_save(host)) {
+        LOG("[fs] %s: unfilled save folder, reused\n", gpath);
+        created = 1;
+    }
     HANDLE h = INVALID_HANDLE_VALUE;
     if (is_dir) {
         /* FILE_CREATE on a directory that already existed: collision. One just made here is a success (it used to

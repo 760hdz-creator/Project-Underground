@@ -246,6 +246,11 @@ SESSION 2026-11-24 (polish, after the graphics options):
   sound by ear, long sessions, other levels. The CPU is the limit now (9-12 ms busy, dips to ~50 fps).
 - BAKED COMBINERS also on PC (worker thread; interpreter until ready): paused Vancouver, baked against interpreted: 99.6 % of the
   world pixels equal, the rest within 7/255. F9 id frames (UG_DBGCOLOR) always interpret.
+- SAVE NAME BLOCKED (2026-11-25, after 0.1.4): a save folder holding only a 0-byte SaveMeta.xbx (left by the save bug before 8c04593)
+  made XCreateSaveGame (0x1768F4, meta check 0x176818) return 0x52 for that name for good. fs.c unfilled_save(): FILE_CREATE on such a
+  folder now counts as just made. Route: out/dev/svrun.sh <name>. Seeded folder: old exe writes nothing, new exe saves; without the
+  folder both save. Folder name = (h * 65536 + wchar) mod (2^48 - 59) over "<name>-Story/Skater". Not built on Linux/Android.
+  The user's install is still 0.1.4: its empty folder was moved to G:/ug_backup/orphan_save.
 - RecompLauncher: submitted 2026-11-24 from the Octagram Labs-group developer account (Made by 8gram Labs); review 24-48 h.
   After it is listed: point the README badge at its own page. Their form check does not open GitLab release files (said so in the note).
 - RELEASED v0.1.4 (tag 7472f6a): RecompLauncher support (recomplauncher.json, --prepare / --play / --data, portable Windows zip,
