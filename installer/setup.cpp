@@ -54,7 +54,7 @@ static const wchar_t kShortcut[] = L"Project Underground.lnk";
 enum { ID_ISO_BROWSE = 200, ID_DIR_BROWSE, ID_DESKTOP, ID_STARTMENU, ID_INSTALL, ID_PROGRESS,
        ID_STATUS, ID_PLAY, ID_UPDATE, ID_UNINSTALL, ID_FULLSCREEN, ID_SCALE, ID_PADS, ID_FPS60, ID_VSYNC, ID_LOGS,
        ID_MONITOR, ID_ANDROID, ID_SETTINGS, ID_QUIT, ID_CLOSE, ID_WINSIZE, ID_SCREEN, ID_FIT, ID_LEVEL, ID_HD, ID_CAMERA,
-       ID_ANISO, ID_FXAA, ID_AO, ID_DRAWDIST };
+       ID_ANISO, ID_FXAA, ID_AO, ID_DRAWDIST, ID_HDGET };
 #define WM_APP_STATUS (WM_APP + 1)
 #define WM_APP_PROGRESS (WM_APP + 2)
 #define WM_APP_DONE (WM_APP + 3)
@@ -659,7 +659,22 @@ static std::wstring g_isoPath, g_dirPath;
 static int S(int v) { return (int)lround(v * g_scale); }
 static RECT SR(const RECT& r) { return {S(r.left), S(r.top), S(r.right), S(r.bottom)}; }
 
-static HBITMAP LoadArt(int w, int h) {
+static HBITMAP LoadArt(int w, int h, bool fast) {
+    static HBITMAP full;   // the whole picture, for the fast path
+    if (fast) {
+        if (!full) full = LoadArt(kArtW, kArtH, false);
+        if (!full) return nullptr;
+        HDC screen = GetDC(nullptr), a = CreateCompatibleDC(screen), b = CreateCompatibleDC(screen);
+        HBITMAP bmp = CreateCompatibleBitmap(screen, w, h);
+        HGDIOBJ oa = SelectObject(a, full), ob = SelectObject(b, bmp);
+        SetStretchBltMode(b, HALFTONE);
+        SetBrushOrgEx(b, 0, 0, nullptr);
+        StretchBlt(b, 0, 0, w, h, a, 0, 0, kArtW, kArtH, SRCCOPY);
+        SelectObject(a, oa); SelectObject(b, ob);
+        DeleteDC(a); DeleteDC(b);
+        ReleaseDC(nullptr, screen);
+        return bmp;
+    }
     HRSRC r = FindResourceW(nullptr, MAKEINTRESOURCEW(IDR_INSTALLER_BG), RT_RCDATA);
     if (!r) return nullptr;
     IWICImagingFactory* f = nullptr;
@@ -699,10 +714,12 @@ static void ArtText(HDC dc, const RECT& r, HFONT f, COLORREF c, const std::wstri
     DrawTextW(dc, s.c_str(), (int)s.size(), &sr, fmt | DT_NOPREFIX);
 }
 // g_artBmp: the art + the version on the bottom bar. g_artPanelBmp (launcher): the same with the settings panel.
-static void BuildArt(int w, int h) {
+static void BuildArt(int w, int h, bool fast = false) {
     HDC screen = GetDC(nullptr);
+    HBITMAP oldArt = g_artBmp, oldPanel = g_artPanelBmp;
+    HDC oldDC = g_artDC;
     g_artDC = CreateCompatibleDC(screen);
-    g_artBmp = LoadArt(w, h);
+    g_artBmp = LoadArt(w, h, fast);
     if (!g_artBmp) g_artBmp = CreateCompatibleBitmap(screen, w, h);
     g_artPanelBmp = CreateCompatibleBitmap(screen, w, h);
     ReleaseDC(nullptr, screen);
@@ -736,7 +753,55 @@ static void BuildArt(int w, int h) {
         ArtText(pd, {700, 612, 1500, 692}, g_smallFont, kDim, L"Saved at once to settings.ini",
                 DT_SINGLELINE | DT_VCENTER | DT_RIGHT);
     }
+    for (HDC d : {g_artDC, pd}) {   // resize grip, bottom right corner
+        HPEN pen = CreatePen(PS_SOLID, std::max(1, S(5)), kAccent);
+        HGDIOBJ op = SelectObject(d, pen);
+        for (int i = 1; i <= 3; i++) {
+            MoveToEx(d, w - S(8) - S(16) * i, h - S(8), nullptr);
+            LineTo(d, w - S(8), h - S(8) - S(16) * i);
+        }
+        SelectObject(d, op);
+        DeleteObject(pen);
+    }
     DeleteDC(pd);
+    if (oldDC) DeleteDC(oldDC);
+    if (oldArt) DeleteObject(oldArt);
+    if (oldPanel) DeleteObject(oldPanel);
+    for (HBRUSH b : {g_plainBrush, g_panelBrush}) if (b) DeleteObject(b);
+    g_plainBrush = CreatePatternBrush(g_artBmp);
+    g_panelBrush = CreatePatternBrush(g_artPanelBmp);
+    g_artBrush = g_panel ? g_panelBrush : g_plainBrush;
+    if (g_panel) SelectObject(g_artDC, g_artPanelBmp);
+}
+static void MakeFonts() {
+    struct { HFONT* f; int px, weight; const wchar_t* face; } list[] = {
+        {&g_font, 38, FW_NORMAL, L"Segoe UI"}, {&g_smallFont, 32, FW_NORMAL, L"Segoe UI"}, {&g_subFont, 32, FW_SEMIBOLD, L"Segoe UI"},
+        {&g_statusFont, 24, FW_NORMAL, L"Segoe UI"},   // setup status line, above the skateboard bar
+        {&g_titleFont, 76, FW_NORMAL, L"Impact"}, {&g_boardFont, 84, FW_NORMAL, L"Impact"}};
+    for (auto& l : list)
+        *l.f = CreateFontW(-S(l.px), 0, 0, 0, l.weight, 0, 0, 0, DEFAULT_CHARSET, 0, 0, CLEARTYPE_QUALITY, 0, l.face);
+}
+// Every control in art pixels, with its font: a resize moves them all.
+struct Placed { HWND h; int x, y, w, ht; HFONT* font; };
+static std::vector<Placed> g_placed;
+static void Relayout(bool fast) {
+    RECT r;
+    GetClientRect(g_wnd, &r);
+    if (r.right < 100 || r.bottom < 60) return;   // minimized
+    g_scale = (double)r.right / kArtW;
+    HFONT* all[] = {&g_font, &g_titleFont, &g_smallFont, &g_boardFont, &g_subFont, &g_statusFont};
+    std::vector<HFONT> old;
+    for (HFONT* f : all) old.push_back(*f);
+    MakeFonts();
+    BuildArt(r.right, r.bottom, fast);
+    SendMessageW(g_wnd, WM_SETREDRAW, FALSE, 0);
+    for (auto& p : g_placed) {
+        SendMessageW(p.h, WM_SETFONT, (WPARAM)*p.font, FALSE);
+        SetWindowPos(p.h, nullptr, S(p.x), S(p.y), S(p.w), S(p.ht), SWP_NOZORDER | SWP_NOACTIVATE);
+    }
+    SendMessageW(g_wnd, WM_SETREDRAW, TRUE, 0);
+    for (HFONT f : old) DeleteObject(f);
+    RedrawWindow(g_wnd, nullptr, nullptr, RDW_INVALIDATE | RDW_ERASE | RDW_ALLCHILDREN);
 }
 
 // Owner-drawn buttons. GWLP_USERDATA bits:
@@ -768,6 +833,9 @@ static HWND Make(const wchar_t* cls, const wchar_t* text, DWORD style, int id, i
     HWND c = CreateWindowExW(0, cls, text, WS_CHILD | WS_VISIBLE | style, S(x), S(y), S(w), S(h), g_wnd,
                              (HMENU)(INT_PTR)id, GetModuleHandleW(nullptr), nullptr);
     SendMessageW(c, WM_SETFONT, (WPARAM)(font ? font : g_font), TRUE);
+    HFONT* slot = &g_font;
+    for (HFONT* f : {&g_titleFont, &g_smallFont, &g_boardFont, &g_subFont, &g_statusFont}) if (font && font == *f) slot = f;
+    g_placed.push_back({c, x, y, w, h, slot});
     if (kind) {
         SetWindowLongPtrW(c, GWLP_USERDATA, kind);
         SetWindowSubclass(c, HoverProc, 1, 0);
@@ -958,7 +1026,7 @@ static void Launch(const std::wstring& dir) {
 // Launcher settings controls (shown on the panel over the art when the SETTINGS board is on).
 static HWND g_settingsBtn;
 static const int kSettingIds[] = {ID_DRAWDIST, ID_FXAA, ID_AO, ID_ANISO, ID_FULLSCREEN, ID_FPS60, ID_VSYNC, ID_MONITOR, ID_WINSIZE, ID_SCREEN, ID_FIT, ID_SCALE,
-                                  ID_PADS, ID_CAMERA, ID_LEVEL, ID_HD};
+                                  ID_PADS, ID_CAMERA, ID_LEVEL, ID_HDGET, ID_HD};
 // HD texture pack (UG_HDTEX=<folder>, runtime/src/hdtex.c): a PCSX2 replacement pack made for the PS2 version, used
 // where it is. Combo: Off / the folder / Choose folder... The folder is remembered in [launcher] HdFolder while off.
 static int CountDds(const std::wstring& dir, int depth = 0) {
@@ -1010,6 +1078,29 @@ static void HdComboChanged() {
         IniSet(g_instDir, L"settings", L"UG_HDTEX", sel == 1 && !folder.empty() ? folder : L"");
     }
     FillHdCombo();
+}
+
+// Where the community's pack is (not ours): the direct file, or the page it is on. The launcher only opens the browser.
+static const wchar_t kHdPage[] = L"https://archive.org/download/pcsx2-hd-texture-packs";
+static const wchar_t kHdFile[] = L"https://archive.org/download/pcsx2-hd-texture-packs/Tony%20Hawk%27s%20Underground%20%28USA%29%20"
+                                 L"%5BSLUS-20731%5D%20HD%20Remaster.rar";
+static void GetHdPack() {
+    TASKDIALOG_BUTTON b[] = {{101, L"Download the HD Remaster pack\n573 MB .rar from the Internet Archive, in your browser"},
+                             {102, L"Open the page of the packs\narchive.org, all PCSX2 HD texture packs"}};
+    TASKDIALOGCONFIG c = {sizeof c};
+    c.hwndParent = g_wnd;
+    c.dwFlags = TDF_USE_COMMAND_LINKS | TDF_ALLOW_DIALOG_CANCELLATION | TDF_POSITION_RELATIVE_TO_WINDOW;
+    c.dwCommonButtons = TDCBF_CANCEL_BUTTON;
+    c.pszWindowTitle = kAppName;
+    c.pszMainInstruction = L"Get an HD texture pack";
+    c.pszContent = L"The packs are made by the community for the PS2 version; they are not part of Project Underground.\n\n"
+                   L"After the download: unpack it (7-Zip, WinRAR or Windows 11), then choose \"Choose pack folder...\" in the "
+                   L"HD texture pack list here and pick its SLUS-20731\\replacements folder.";
+    c.cButtons = 2;
+    c.pButtons = b;
+    int r = 0;
+    if (FAILED(TaskDialogIndirect(&c, &r, nullptr, nullptr))) r = 102;
+    if (r == 101 || r == 102) ShellExecuteW(g_wnd, L"open", r == 101 ? kHdFile : kHdPage, nullptr, nullptr, SW_SHOWNORMAL);
 }
 
 static void ShowSettings(bool on) {
@@ -1139,6 +1230,9 @@ static bool LauncherCommand(HWND h, int id, int code) {
     case ID_DRAWDIST:
         if (code == BN_CLICKED) SaveSettings();
         return true;
+    case ID_HDGET:
+        GetHdPack();
+        return true;
     case ID_HD:
         if (code == CBN_SELCHANGE) HdComboChanged();
         return true;
@@ -1150,6 +1244,8 @@ static bool LauncherCommand(HWND h, int id, int code) {
     return false;
 }
 
+static bool g_sizing;
+static int g_sizedW;   // the width while the frame is dragged
 static LRESULT CALLBACK WndProc(HWND h, UINT m, WPARAM wp, LPARAM lp) {
     switch (m) {
     case WM_PAINT: {
@@ -1162,10 +1258,59 @@ static LRESULT CALLBACK WndProc(HWND h, UINT m, WPARAM wp, LPARAM lp) {
         return 0;
     }
     case WM_ERASEBKGND: return 1;
-    case WM_NCHITTEST: {   // borderless: drag the window by the art
-        LRESULT r = DefWindowProcW(h, m, wp, lp);
-        return r == HTCLIENT ? HTCAPTION : r;
+    case WM_NCCALCSIZE: if (wp) return 0; break;   // WS_THICKFRAME (for resizing) without its frame
+    case WM_NCACTIVATE: return DefWindowProcW(h, m, wp, -1);   // no default frame painted
+    case WM_NCHITTEST: {   // borderless: resize at the edges, drag the window by the art
+        RECT r;
+        GetWindowRect(h, &r);
+        int x = (short)LOWORD(lp), y = (short)HIWORD(lp), e = std::max(6, S(14)), c = std::max(20, S(60));
+        bool bl = x < r.left + e, br = x >= r.right - e, bt = y < r.top + e, bb = y >= r.bottom - e;
+        bool cr = x >= r.right - c && y >= r.bottom - c;
+        if (cr || (bb && x >= r.right - c) || (br && y >= r.bottom - c)) return HTBOTTOMRIGHT;
+        if ((bt && x < r.left + c) || (bl && y < r.top + c)) return HTTOPLEFT;
+        if ((bb && x < r.left + c) || (bl && y >= r.bottom - c)) return HTBOTTOMLEFT;
+        if ((bt && x >= r.right - c) || (br && y < r.top + c)) return HTTOPRIGHT;
+        if (bl) return HTLEFT;
+        if (br) return HTRIGHT;
+        if (bt) return HTTOP;
+        if (bb) return HTBOTTOM;
+        return HTCAPTION;
     }
+    case WM_GETMINMAXINFO: {
+        auto* mm = (MINMAXINFO*)lp;
+        MONITORINFO mi = {sizeof mi};
+        GetMonitorInfoW(MonitorFromWindow(h, MONITOR_DEFAULTTONEAREST), &mi);
+        int mw = mi.rcWork.right - mi.rcWork.left, mh = mi.rcWork.bottom - mi.rcWork.top;
+        if (mh * kArtW / kArtH < mw) mw = mh * kArtW / kArtH;
+        mm->ptMinTrackSize = {800, 800 * kArtH / kArtW};
+        mm->ptMaxTrackSize = {mw, mw * kArtH / kArtW};
+        return 0;
+    }
+    case WM_SIZING: {   // keep the shape of the art
+        auto* r = (RECT*)lp;
+        int w = r->right - r->left, ht = r->bottom - r->top;
+        if (wp == WMSZ_TOP || wp == WMSZ_BOTTOM) w = ht * kArtW / kArtH;
+        ht = w * kArtH / kArtW;
+        if (wp == WMSZ_LEFT || wp == WMSZ_TOPLEFT || wp == WMSZ_BOTTOMLEFT) r->left = r->right - w; else r->right = r->left + w;
+        if (wp == WMSZ_TOP || wp == WMSZ_TOPLEFT || wp == WMSZ_TOPRIGHT) r->top = r->bottom - ht; else r->bottom = r->top + ht;
+        return TRUE;
+    }
+    case WM_ENTERSIZEMOVE: g_sizing = true; return 0;
+    case WM_EXITSIZEMOVE: {
+        g_sizing = false;
+        RECT r;
+        GetClientRect(h, &r);
+        if (r.right != g_sizedW) return 0;   // only moved
+        g_sizedW = 0;
+        Relayout(false);
+        if (g_launcher) IniSet(g_instDir, L"launcher", L"Width", std::to_wstring(r.right));
+        return 0;
+    }
+    case WM_SIZE:
+        if (wp == SIZE_MINIMIZED || !g_artDC || g_placed.empty() || (int)lround(g_scale * kArtW) == LOWORD(lp)) return 0;
+        g_sizedW = LOWORD(lp);
+        Relayout(g_sizing);
+        return 0;
     case WM_CTLCOLOREDIT:
     case WM_CTLCOLORLISTBOX:
         SetTextColor((HDC)wp, kText);
@@ -1412,6 +1557,7 @@ static void CreateLauncherControls() {
     MakeCombo(ID_PADS, kPads, 2, 720, 1160, 780);
     MakeCombo(ID_CAMERA, kCamera, 4, 720, 1220, 780);
     MakeCombo(ID_LEVEL, kLevel, 18, 720, 1280, 780);
+    Make(L"BUTTON", L"GET IT", BS_PUSHBUTTON | WS_TABSTOP, ID_HDGET, 560, 1342, 144, 52, g_smallFont);
     MakeCombo(ID_HD, nullptr, 0, 720, 1340, 780);
     FillHdCombo();
     for (int id : kSettingIds) ShowWindow(GetDlgItem(g_wnd, id), SW_HIDE);
@@ -1468,19 +1614,15 @@ int WINAPI wWinMain(HINSTANCE inst, HINSTANCE, PWSTR, int) {
     SystemParametersInfoW(SPI_GETWORKAREA, 0, &wa, 0);
     g_scale = std::min((wa.right - wa.left) * 0.7 / kArtW, (wa.bottom - wa.top) * 0.8 / kArtH);
     int w = S(kArtW), h = S(kArtH);
-    auto font = [](int px, int weight, const wchar_t* face) {
-        return CreateFontW(-S(px), 0, 0, 0, weight, 0, 0, 0, DEFAULT_CHARSET, 0, 0, CLEARTYPE_QUALITY, 0, face);
-    };
-    g_font = font(38, FW_NORMAL, L"Segoe UI");
-    g_smallFont = font(32, FW_NORMAL, L"Segoe UI");
-    g_subFont = font(32, FW_SEMIBOLD, L"Segoe UI");
-    g_statusFont = font(24, FW_NORMAL, L"Segoe UI");   // setup status line, above the skateboard bar
-    g_titleFont = font(76, FW_NORMAL, L"Impact");
-    g_boardFont = font(84, FW_NORMAL, L"Impact");
+    if (launcher) {   // the size it was last resized to
+        int lw = _wtoi(IniGet(g_instDir, L"launcher", L"Width").c_str());
+        if (lw >= 800 && lw <= wa.right - wa.left && lw * kArtH / kArtW <= wa.bottom - wa.top) {
+            w = lw; h = w * kArtH / kArtW; g_scale = (double)w / kArtW;
+        }
+    }
+    MakeFonts();
     g_fieldBrush = CreateSolidBrush(kField);
     BuildArt(w, h);
-    g_artBrush = g_plainBrush = CreatePatternBrush(g_artBmp);
-    g_panelBrush = CreatePatternBrush(g_artPanelBmp);
 
     WNDCLASSW wc = {};
     wc.style = CS_DROPSHADOW;
@@ -1492,8 +1634,9 @@ int WINAPI wWinMain(HINSTANCE inst, HINSTANCE, PWSTR, int) {
     RegisterClassW(&wc);
     g_wnd = CreateWindowExW(WS_EX_APPWINDOW, wc.lpszClassName,
                             launcher ? L"Project Underground" : L"Project Underground Setup",
-                            WS_POPUP | WS_SYSMENU | WS_MINIMIZEBOX, wa.left + (wa.right - wa.left - w) / 2,
+                            WS_POPUP | WS_SYSMENU | WS_MINIMIZEBOX | WS_THICKFRAME, wa.left + (wa.right - wa.left - w) / 2,
                             wa.top + (wa.bottom - wa.top - h) / 2, w, h, nullptr, nullptr, inst, nullptr);
+    SetWindowPos(g_wnd, nullptr, 0, 0, 0, 0, SWP_NOMOVE | SWP_NOSIZE | SWP_NOZORDER | SWP_FRAMECHANGED);   // WM_NCCALCSIZE
     SetWindowLongPtrW(MakeAt(L"BUTTON", L"", BS_PUSHBUTTON, ID_CLOSE, kClose), GWLP_USERDATA, K_CLOSE);
     if (launcher) {
         CreateLauncherControls();
