@@ -32,7 +32,21 @@ A static recompilation by 8gram Labs: the original x86 game code is translated t
 
 Get them from the releases on [git.8gramlabs.com](https://git.8gramlabs.com/8gramlabs/Project-Underground/releases) or
 [GitLab](https://gitlab.com/octagram-labs-group/Project-Underground/-/releases). You need your own disc image. The launcher
-(Windows) and the game (Linux) offer new versions. The setup is not code-signed, so Windows may warn about it.
+(Windows) and the game (Linux) offer new versions.
+
+> [!WARNING]
+> **Antivirus and "Windows protected your PC" warnings.** `ProjectUnderground-Setup.exe` is not code-signed (signing
+> certificates cost money), so Windows SmartScreen and some antivirus programs may warn about it or flag it on heuristics. It
+> also builds a brand-new `underground.exe` on your PC that no antivirus has seen before, which some engines dislike. These are
+> false positives: nothing in it is malicious, and all of the source code is in this repository, so you can
+> [build it yourself](#building-from-source-developers).
+>
+> - **SmartScreen ("Windows protected your PC"):** click **More info**, then **Run anyway**.
+> - **Your antivirus quarantines `underground.exe` after the build:** restore it and allow the install folder, then run the
+>   setup again and choose the update. Don't turn your antivirus off completely.
+
+> [!NOTE]
+> **Online play is being worked on.** For now only local two-player split screen is available.
 
 > [!NOTE]
 > **Android is in testing.** The game runs on a first phone, but the APK that the launcher builds has not been tested on one
@@ -74,7 +88,7 @@ Get them from the releases on [git.8gramlabs.com](https://git.8gramlabs.com/8gra
   with menu entry, updates and uninstall.
 - **Android.** Your PC turns your installed game into an APK for your phone (arm64, Android 13+, Vulkan 1.3), with
   on-screen touch controls.
-- **Two-player split screen.**
+- **Two-player split screen**, local. Online play is being worked on.
 - **Almost any controller.** Xbox, PlayStation 3/4/5, Switch Pro and Joy-Con, Steam Controller and Steam Deck,
   8BitDo and thousands more through SDL3 and the community controller database, on Windows, Linux and Android. Up
   to 2 players, plus the keyboard. See [Controls](#controls).
@@ -160,6 +174,7 @@ rebuild the game in place and keep your saves and settings.
 
 Known gaps:
 - The story has been played only through its first level; the other levels were checked in free skate.
+- Online play is not available yet (local two-player split screen only).
 - Two-player split screen draws no skater shadows.
 - Not yet tested on a PC without any developer tools, on a real Linux GPU, or with real controllers on Linux.
 
