@@ -17,8 +17,11 @@ import concurrent.futures
 import hashlib
 import os
 import shutil
+import stat
 import subprocess
 import sys
+import time
+import traceback
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 KIT = os.path.dirname(HERE)  # the build kit: recomp/, runtime/, third_party/, tools/
@@ -32,6 +35,30 @@ def step(msg):
 def fail(msg):
     print("ERROR: " + msg, flush=True)
     sys.exit(1)
+
+
+def retry(what, f):
+    """f(), tried for 20 s: OneDrive, virus scanners and indexers hold files for a moment."""
+    for i in range(40):
+        try:
+            return f()
+        except PermissionError as e:
+            if i == 39:
+                fail(f"{what}: {e.strerror or e}: {e.filename}")
+            time.sleep(0.5)
+
+
+def rmtree(path):
+    """Delete a folder. OneDrive marks its folders read-only, and Windows does not remove a read-only folder."""
+    def once():
+        if not os.path.isdir(path):
+            return
+        for d, dirs, files in os.walk(path):
+            for p in [d] + [os.path.join(d, f) for f in files]:
+                if not os.path.islink(p) and not os.stat(p).st_mode & stat.S_IWRITE:
+                    os.chmod(p, os.stat(p).st_mode | stat.S_IWRITE)
+        shutil.rmtree(path)
+    retry("Could not delete an old folder (close programs that use it and try again)", once)
 
 
 def sha256(path):
@@ -78,8 +105,7 @@ def build_linux(root, lifted, jobs):
             print(f"compiled {os.path.basename(src)} ({i}/{len(items)})", flush=True)
     step("Linking underground")
     lib = os.path.join(root, "lib")
-    if os.path.isdir(lib):
-        shutil.rmtree(lib)
+    rmtree(lib)
     shutil.copytree(os.path.join(rt, "lib"), lib)
     if os.path.exists(os.path.join(rt, "gamecontrollerdb.txt")):
         shutil.copy2(os.path.join(rt, "gamecontrollerdb.txt"), root)   # controller mappings (pad_sdl.c)
@@ -109,8 +135,7 @@ def main():
 
     if a.iso:
         step("Extracting the disc image")
-        if os.path.isdir(game):
-            shutil.rmtree(game)
+        rmtree(game)
         code, out = run(py + [os.path.join(HERE, "extract_xiso.py"), a.iso, game])
         print(out[-2000:], flush=True)
         if code:
@@ -125,8 +150,7 @@ def main():
     if os.name != "nt":
         lifted = os.path.join(bdir, "lifted")
         step("Translating the game code (about 30 seconds)")
-        if os.path.isdir(lifted):
-            shutil.rmtree(lifted)
+        rmtree(lifted)
         code, out = run(py + [os.path.join(KIT, "recomp", "lift.py"), xbe, lifted])
         print(out[-600:], flush=True)
         if code:
@@ -149,26 +173,30 @@ def main():
     os.makedirs(bdir, exist_ok=True)
     lifted = os.path.join(bdir, "lifted")
     step("Translating the game code (about 30 seconds)")
-    if os.path.isdir(lifted):
-        shutil.rmtree(lifted)
+    rmtree(lifted)
     build.lift_only(xbe, lifted)
 
     build.LIFTED = lifted
     build.RT_OBJ = os.path.join(bdir, "rt")
+    rmtree(build.RT_OBJ)   # never reuse objects of an earlier version: build.py compares file dates only
     step(f"Compiling with {jobs} jobs (1 to 3 minutes)")
     build.build_lifted(jobs)
     step("Linking underground.exe")
     exe = os.path.join(root, "underground.exe")
     build.build_runtime(jobs, exe=exe + ".new", defines=[f'-DUG_VERSION="{a.version}"'], gui=True)
-    os.replace(exe + ".new", exe)
+    retry("Could not replace underground.exe. Close the game and try again", lambda: os.replace(exe + ".new", exe))
     # SDL3.dll + gamecontrollerdb.txt: every controller SDL knows (runtime/src/pad_sdl.c; without them, XInput only)
     for f in ("SDL3.dll", "gamecontrollerdb.txt"):
         src = os.path.join(KIT, "sdl3", f)
         if os.path.exists(src):
-            shutil.copy2(src, os.path.join(root, f))
+            retry("Could not replace " + f, lambda: shutil.copy2(src, os.path.join(root, f)))
     os.makedirs(os.path.join(root, "out"), exist_ok=True)   # saves (out/hdd) and the log live here
     step("Done")
 
 
 if __name__ == "__main__":
-    main()
+    try:
+        main()
+    except Exception as e:   # the installer shows the ERROR line; the log keeps the details
+        traceback.print_exc()
+        fail(f"{type(e).__name__}: {e}")

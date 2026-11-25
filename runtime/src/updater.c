@@ -48,14 +48,21 @@ static int http_get(const wchar_t *url, char **out, size_t *len, const wchar_t *
     if (ok && to) ok = (f = _wfopen(to, L"wb")) != NULL;
     size_t n = 0, cap = 0;
     char *buf = NULL, chunk[65536];
-    DWORD got;
-    while (ok && WinHttpReadData(r, chunk, sizeof chunk, &got) && got) {
+    DWORD got = 0, want = 0, wl = sizeof want;
+    int sized = ok && WinHttpQueryHeaders(r, WINHTTP_QUERY_CONTENT_LENGTH | WINHTTP_QUERY_FLAG_NUMBER, NULL, &want, &wl, NULL);
+    unsigned long long total = 0;
+    while (ok) {
+        if (!WinHttpReadData(r, chunk, sizeof chunk, &got)) { ok = 0; break; }   /* the connection broke */
+        if (!got) break;
+        total += got;
         if (f) { if (fwrite(chunk, 1, got, f) != got) ok = 0; continue; }
         if (n + got + 1 > cap) { cap = (n + got + 1) * 2; buf = realloc(buf, cap); }
         memcpy(buf + n, chunk, got);
         n += got;
     }
-    if (f) fclose(f);
+    if (f && fclose(f)) ok = 0;
+    if (sized && total != want) ok = 0;
+    if (to && !ok) _wremove(to);   /* never run half a download */
     if (buf) buf[n] = 0;
     if (r) WinHttpCloseHandle(r);
     if (c) WinHttpCloseHandle(c);

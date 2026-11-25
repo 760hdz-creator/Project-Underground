@@ -145,14 +145,47 @@ static std::wstring ExeDir() {
     std::wstring d = self;
     return d.substr(0, d.find_last_of(L'\\'));
 }
-// Copies this exe to <dir>\launcher.exe. Retries for 15 s: the launcher that started this update may still be closing.
+// Deletes a folder with everything in it, read-only ones too (OneDrive marks its folders read-only). Links are not followed.
+static bool DeleteTree(const std::wstring& path) {
+    DWORD at = GetFileAttributesW(path.c_str());
+    if (at == INVALID_FILE_ATTRIBUTES) return true;
+    if (at & FILE_ATTRIBUTE_READONLY) SetFileAttributesW(path.c_str(), at & ~FILE_ATTRIBUTE_READONLY);
+    if (!(at & FILE_ATTRIBUTE_DIRECTORY)) return DeleteFileW(path.c_str());
+    if (!(at & FILE_ATTRIBUTE_REPARSE_POINT)) {
+        WIN32_FIND_DATAW fd;
+        HANDLE h = FindFirstFileW((path + L"\\*").c_str(), &fd);
+        if (h != INVALID_HANDLE_VALUE) {
+            do {
+                if (wcscmp(fd.cFileName, L".") && wcscmp(fd.cFileName, L"..")) DeleteTree(path + L"\\" + fd.cFileName);
+            } while (FindNextFileW(h, &fd));
+            FindClose(h);
+        }
+    }
+    return RemoveDirectoryW(path.c_str());
+}
+// The game runs from its exe: it cannot be replaced while it is open. Waits up to 15 s (the game may be closing for this update).
+static bool GameClosed(const std::wstring& dir) {
+    std::wstring exe = dir + L"\\underground.exe";
+    for (int i = 0; i < 30; i++) {
+        HANDLE h = CreateFileW(exe.c_str(), GENERIC_WRITE, FILE_SHARE_READ, nullptr, OPEN_EXISTING, 0, nullptr);
+        if (h != INVALID_HANDLE_VALUE) { CloseHandle(h); return true; }
+        DWORD e = GetLastError();
+        if (e == ERROR_FILE_NOT_FOUND || e == ERROR_PATH_NOT_FOUND) return true;
+        Sleep(500);
+    }
+    return false;
+}
+// Copies this exe to <dir>\launcher.exe. An open launcher cannot be overwritten, but it can be renamed (removed next time).
 static bool InstallLauncher(const std::wstring& dir) {
     wchar_t self[MAX_PATH];
     GetModuleFileNameW(nullptr, self, MAX_PATH);
     std::wstring l = dir + L"\\launcher.exe";
     if (!_wcsicmp(self, l.c_str())) return true;
+    std::wstring old = dir + L"\\launcher.old.exe";
     for (int i = 0; i < 30; i++) {
+        DeleteFileW(old.c_str());
         if (CopyFileW(self, l.c_str(), FALSE)) return true;
+        if (i >= 4) MoveFileExW(l.c_str(), old.c_str(), MOVEFILE_REPLACE_EXISTING);   // not closed after 2 s
         Sleep(500);
     }
     return false;
@@ -205,6 +238,8 @@ static bool Unpack(const std::wstring& dir) {
     SHCreateDirectoryExW(nullptr, dir.c_str(), nullptr);
     std::wstring zip = dir + L"\\payload.zip";
     if (!WriteResource(IDR_PAYLOAD, zip)) return false;
+    // files that a newer version no longer has must not stay behind (the build compiles what it finds)
+    for (auto p : {L"recomp", L"runtime", L"third_party", L"tools", L"python", L"licenses"}) DeleteTree(dir + L"\\" + p);
     wchar_t sys[MAX_PATH];
     GetSystemDirectoryW(sys, MAX_PATH);
     int code = RunLines(L"\"" + std::wstring(sys) + L"\\tar.exe\" -xf \"" + zip + L"\" -C \"" + dir + L"\"", L"",
@@ -219,6 +254,7 @@ static void Work(std::wstring iso, std::wstring dir, bool desktop, bool startMen
     g_error.clear();
     auto done = [&](bool ok) { g_doneDir = dir; PostMessageW(g_wnd, WM_APP_DONE, ok, 0); CoUninitialize(); };
     PostProgress(2);
+    if (!GameClosed(dir)) { g_error = L"Project Underground is running. Close the game, then try again."; return done(false); }
     if (!Unpack(dir)) { g_error = L"Could not write the files to " + dir + L"."; return done(false); }
     PostProgress(8);
     // ug_build.py fetches its own compiler (llvm-mingw, into <dir>\toolchain) on the first install: no admin, no VS
@@ -333,17 +369,9 @@ static int Uninstall(const std::wstring& dir) {
                               L"android\\libugrt.a"};   // keeps android\signing-key.json (a new APK installs over the old one)
     for (auto p : parts) {
         std::wstring path = dir + L"\\" + p;
-        DWORD at = GetFileAttributesW(path.c_str());
-        if (at == INVALID_FILE_ATTRIBUTES) continue;
-        if (at & FILE_ATTRIBUTE_REPARSE_POINT) {   // a junction / link: remove the link, never what it points to
-            RemoveDirectoryW(path.c_str());
-            continue;
-        }
-        std::wstring from = path + std::wstring(1, L'\0');
-        SHFILEOPSTRUCTW op = {nullptr, FO_DELETE, from.c_str(), nullptr, FOF_NO_UI};
-        SHFileOperationW(&op);
+        DeleteTree(path);   // a junction / link: the link, never what it points to
     }
-    for (auto f : {L"underground.exe", L"underground.ico", L"VERSION", L"settings.ini", L"SDL3.dll",
+    for (auto f : {L"underground.exe", L"underground.ico", L"VERSION", L"settings.ini", L"SDL3.dll", L"launcher.old.exe",
                    L"gamecontrollerdb.txt"})   // controllers.txt (the player's own mappings) is kept
         DeleteFileW((dir + L"\\" + f).c_str());
     if (registered) {
@@ -388,12 +416,19 @@ static bool HttpGet(const std::wstring& url, std::string* out, const wchar_t* to
     FILE* f = nullptr;
     if (ok && to) ok = (f = _wfopen(to, L"wb")) != nullptr;
     char chunk[65536];
-    DWORD got;
-    while (ok && WinHttpReadData(r, chunk, sizeof chunk, &got) && got) {
+    DWORD got = 0, want = 0, wl = sizeof want;
+    bool sized = ok && WinHttpQueryHeaders(r, WINHTTP_QUERY_CONTENT_LENGTH | WINHTTP_QUERY_FLAG_NUMBER, nullptr, &want, &wl, nullptr);
+    unsigned long long total = 0;
+    while (ok) {
+        if (!WinHttpReadData(r, chunk, sizeof chunk, &got)) { ok = false; break; }   // the connection broke
+        if (!got) break;
+        total += got;
         if (f) ok = fwrite(chunk, 1, got, f) == got;
         else if (out) out->append(chunk, got);
     }
-    if (f) fclose(f);
+    if (f && fclose(f)) ok = false;
+    if (sized && total != want) ok = false;
+    if (to && !ok) DeleteFileW(to);   // never run half a download
     if (r) WinHttpCloseHandle(r);
     if (c) WinHttpCloseHandle(c);
     WinHttpCloseHandle(s);
