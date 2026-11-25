@@ -69,7 +69,9 @@ typedef struct {
     uint8_t bins[DSMIXBINS_MAX];
     int32_t bin_vol[32];         /* level per bin, hundredths of a dB */
     float gl, gr;                /* resulting gain in the stereo output (levels_update) */
+    int kind;                    /* MIX_*: which player mix trim applies */
 } Levels;
+enum { MIX_NONE, MIX_SFX, MIX_VOICE, MIX_MUSIC };
 
 typedef struct {
     uint32_t guest;              /* object address the guest holds */
@@ -237,6 +239,26 @@ static float db_gain(int32_t vol) {
 /* Stereo downmix of the mix bins: 0/1 front, 2 center, 4/5 back, 6/7 and 8/9 the crosstalk (3D) front and back pairs;
  * center and back at -3 dB. Left out: 3 (low frequency: the same sound again for a subwoofer), 10 (I3DL2 reverb) and up
  * (effect sends, no DSP here). */
+/* Player mix trims in dB (settings.ini or environment): UG_MIXSFX (sound effect buffers: ambience, cars; default -4),
+ * UG_MIXVOICE (mono streams: positional speech; default +3), UG_MIXMUSIC (stereo streams: music; default +4). The
+ * movie buffer (Bink sets its own headroom) is left alone. The output has a soft limiter, so the trims do not clip. */
+static float mix_trim(int kind) {
+    static float t[4];
+    static int init;
+    if (!init) {
+        static const char *const names[4] = {NULL, "UG_MIXSFX", "UG_MIXVOICE", "UG_MIXMUSIC"};
+        static const float defs[4] = {0, -4, 3, 4};
+        for (int k = 0; k < 4; k++) {
+            const char *e = names[k] ? getenv(names[k]) : NULL;
+            float db = e && *e ? (float)atof(e) : defs[k];
+            if (db > 12) db = 12;
+            t[k] = powf(10.0f, db / 20.0f);
+        }
+        init = 1;
+    }
+    return t[kind & 3];
+}
+
 static void levels_update(Levels *lv) {
     static const float left[10]  = {1, 0, 0.7071f, 0, 0.7071f, 0, 1, 0, 0.7071f, 0};
     static const float right[10] = {0, 1, 0.7071f, 0, 0, 0.7071f, 0, 1, 0, 0.7071f};
@@ -248,8 +270,10 @@ static void levels_update(Levels *lv) {
         gl += left[b] * g;
         gr += right[b] * g;
     }
-    lv->gl = gl;
-    lv->gr = gr;
+    int kind = lv->kind == MIX_SFX && lv->headroom != DSBHEADROOM_DEFAULT_ ? MIX_NONE : lv->kind;
+    float t = mix_trim(kind);
+    lv->gl = gl * t;
+    lv->gr = gr * t;
 }
 
 /* SetMixBinVolumes (0x1BE6CA): only the bins listed change, the others keep their level. `mb` is a guest DSMIXBINS
@@ -384,7 +408,9 @@ static void mix(int16_t *dst, int n) {
     }
     LeaveCriticalSection(&g_lock);
     for (int i = 0; i < 2 * n; i++) {
-        float x = acc[i] * 32767.0f;
+        float a = acc[i], m = fabsf(a);
+        if (m > 0.8f) a = copysignf(0.8f + 0.2f * tanhf((m - 0.8f) / 0.2f), a);   /* soft limit above -2 dB */
+        float x = a * 32767.0f;
         dst[i] = (int16_t)(x > 32767.0f ? 32767 : x < -32768.0f ? -32768 : x);
     }
     /* UG_WAVDUMP=<file>: raw s16 stereo 48 kHz copy of the mixer output, for checking audio offline */
@@ -620,6 +646,7 @@ static uint32_t create_buffer(uint32_t d) {
     read_fmt(wfx, &v->fmt);
     v->adpcm_block = -1;
     v->lv.headroom = DSBHEADROOM_DEFAULT_;
+    v->lv.kind = MIX_SFX;
     levels_mix_bins(&v->lv, RD32(d + 16), (flags & 0x10) != 0);
     if (bytes) { v->data = v->owned = mem_alloc(bytes, 16); v->bytes = bytes; }
     if (slot == g_nvoices) g_nvoices++;
@@ -647,6 +674,7 @@ static uint32_t create_stream(uint32_t d) {
     read_fmt(wfx, &s->fmt);
     s->maxpk = maxpk;
     s->lv.headroom = DSBHEADROOM_DEFAULT_;
+    s->lv.kind = s->fmt.channels == 2 ? MIX_MUSIC : MIX_VOICE;
     levels_mix_bins(&s->lv, RD32(d + 20), 0);
     if (s->fmt.tag == WAVE_FORMAT_XBOX_ADPCM) {   /* decoded to s16 PCM in Process */
         s->adpcm = 1;
