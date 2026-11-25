@@ -64,7 +64,7 @@ Gauntlet's installer (G:\Project Gauntlet\docs\installer.md) without its Visual 
   only). gpu_vulkan.c takes its instance extensions and surface from SDL. volk dlopens libvulkan.so.1.
 - `tools/build_linux.sh <dir> [--version V] [--lifted <dir>]`: libugrt.a + lib/libSDL3.so.0 (+ the game).
   Deps (built once by the TTT2 Linux port): ~/ttt2-deps/sdl3/install (UG_SDL3), DXVK Native source (UG_WINHDR).
-- `tools/package_linux.sh` (WSL, from a clean clone so files are LF) -> dist/ProjectUnderground-Linux-<ver>.tar.gz
+- `tools/package_linux.sh` (WSL, from a clean clone so files are LF) -> dist/ProjectUnderground-Linux-x64-<ver>.tar.gz
   (~4 MB): setup.sh, README-Linux.txt, kit/ (SHIP files, tools/pyrun.py, pylib/capstone 5.0.7 manylinux wheel,
   linux/libugrt.a + lib/ + include/ + gamecontrollerdb.txt + icon.png, licenses). FORBIDDEN check as on Windows.
 - `ug_build.py` on Linux: lift through pyrun.py (byte-identical to the Windows lift apart from CRLF), compile with
@@ -77,6 +77,14 @@ Gauntlet's installer (G:\Project Gauntlet\docs\installer.md) without its Visual 
 - Verified 2026-11-23 in WSL Ubuntu 24.04 (llvmpipe): install from the ISO in 72 s, launch, --update, --uninstall,
   and the updater loop against a local release JSON (UG_UPDATE_API, fake zenity): prompt, download, rebuild, relaunch.
   Scripted route reaches NJ gameplay. Not tested: a real GPU on Linux, real controllers, Wayland desktop sessions.
+
+## RecompLauncher
+- `recomplauncher.json` (repo root) ships in the Windows zip (installer/build.py) and the Linux package (package_linux.sh), at the
+  top. Guide: https://github.com/elripalda/RecompLauncher, docs/DEVELOPERS.md; keep it in step with the UG_* settings.
+- One program, `ProjectUnderground(.exe)`: `--prepare --game=<image or extracted folder> --data=<folder>` builds there without a
+  window (`progress 0.4 Text` lines, log in build/setup.log, build/version.txt last), `--play --data=<folder>` plays and waits. Without
+  them: the setup (Linux: setup.sh), or our launcher in RECOMPLAUNCHER_DATA when Easy Setup is skipped (no registry, shortcuts, updates).
+- Needs a compiler: Windows downloads llvm-mingw, Linux uses the system's (there is none in the RecompLauncher Flatpak).
 
 ## Android
 - Kit: `tools/build_android.sh <dir>` in WSL -> <dir>/android-kit (libugrt.a, include/, template.apk with SDL3 + our
@@ -95,7 +103,7 @@ Gauntlet's installer (G:\Project Gauntlet\docs\installer.md) without its Visual 
 4. Tag `v<ver>`, push origin + forge, then `tea release create --login forge --repo 8gramlabs/Project-Underground
    --tag v<ver> --title v<ver> --note "<notes>" --asset dist/ProjectUnderground-Setup-<ver>.exe` and
    `glab release create v<ver> dist/ProjectUnderground-Setup-<ver>.exe`.
-   Linux: `bash tools/package_linux.sh` in WSL from a fresh clone, attach dist/ProjectUnderground-Linux-<ver>.tar.gz
+   Linux: `bash tools/package_linux.sh` in WSL from a fresh clone, attach dist/ProjectUnderground-Linux-x64-<ver>.tar.gz
    to both releases too. Windows and Linux are released since v0.1.3; Android works on a Galaxy S26 Ultra (developer build).
 
 ## Verified (2026-11-23, dev box; toolchain junctioned, so the llvm-mingw download itself was not re-run)
