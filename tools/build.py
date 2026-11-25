@@ -114,6 +114,15 @@ def build_runtime(jobs, exe=None, defines=(), gui=False):
     objs = [os.path.join(RT_OBJ, os.path.basename(f)[:-2] + ".o") for f in srcs]
     objs += sorted(glob.glob(os.path.join(LIFTED, "*.o")))
     exe = exe or os.path.join(OUT, "underground.exe")
+    res = os.path.join(RT_OBJ, "underground.res.o")
+    if os.path.exists(res):
+        os.remove(res)
+    code, out = run([os.path.join(BIN, "x86_64-w64-mingw32-windres.exe"), "-O", "coff", "-I", os.path.join(ROOT, "runtime"),
+                     "-i", os.path.join(ROOT, "runtime", "underground.rc"), "-o", res])
+    if code or not os.path.exists(res):   # the game works without its icon
+        print("warning: no icon: " + out[-500:])
+    else:
+        objs.append(res)
     code, out = run([CC, "-static", "-g", "-o", exe] + (["-mwindows"] if gui else []) + objs + RT_LIBS)
     if code:
         sys.exit("ERROR: link failed\n" + out[-4000:])

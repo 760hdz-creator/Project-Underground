@@ -25,7 +25,7 @@ GCDB_REV = "4e87e3c6c2574f49e1cdf8526b6f829b61e5ccb3"   # SDL_GameControllerDB, 
 GCDB_URL = f"https://raw.githubusercontent.com/mdqinc/SDL_GameControllerDB/{GCDB_REV}/"
 CAPSTONE_VER = "5.0.7"   # the dev lift's version: a different decoder could change the lifted code
 SHIP = ["VERSION", "recomp/lift.py", "recomp/hle.txt", "recomp/hooks.txt", "recomp/seeds_extra.txt",
-        "recomp/include/*", "runtime/src/*", "third_party/vulkan/*", "tools/ug_build.py", "tools/build.py",
+        "recomp/include/*", "runtime/src/*", "runtime/underground.rc", "installer/res/app.ico", "third_party/vulkan/*", "tools/ug_build.py", "tools/build.py",
         "tools/bootstrap.py", "tools/extract_xiso.py", "tools/xbedis.py", "tools/ug_android.py"]
 # Android kit (tools/build_android.sh in WSL: android-kit/ = libugrt.a, include/, template.apk, licenses/; no game code)
 ANDROID_KIT = Path(__import__("os").environ.get("UG_ANDROID_KIT", ROOT / "dist" / "_cache" / "android-kit"))

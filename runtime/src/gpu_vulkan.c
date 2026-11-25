@@ -146,15 +146,7 @@ static DWORD WINAPI window_thread(LPVOID ev) {
     wc.hCursor = LoadCursor(NULL, IDC_ARROW);
     wc.hbrBackground = (HBRUSH)GetStockObject(BLACK_BRUSH);
     wc.lpszClassName = L"UndergroundRecomp";
-    {   /* window/taskbar icon: underground.ico, which the installer puts next to the exe (dev runs have none) */
-        wchar_t ico[MAX_PATH];
-        DWORD n = GetModuleFileNameW(NULL, ico, MAX_PATH);
-        while (n && ico[n - 1] != L'\\') n--;
-        if (n && n + 16 < MAX_PATH) {
-            wcscpy(ico + n, L"underground.ico");
-            wc.hIcon = (HICON)LoadImageW(NULL, ico, IMAGE_ICON, 0, 0, LR_LOADFROMFILE | LR_DEFAULTSIZE);
-        }
-    }
+    wc.hIcon = LoadIconW(wc.hInstance, MAKEINTRESOURCEW(1));   /* underground.rc */
     RegisterClassW(&wc);
     const char *me = getenv("UG_MONITOR");
     int dev_run = GetConsoleWindow() != NULL;
@@ -191,6 +183,12 @@ static DWORD WINAPI window_thread(LPVOID ev) {
     g_hwnd = CreateWindowExW(0, wc.lpszClassName, L"Tony Hawk's Underground (recomp)", WS_OVERLAPPEDWINDOW,
                              x, y, fw, fh, NULL, NULL, wc.hInstance, NULL);
     SetWindowPos(g_hwnd, NULL, x, y, fw, fh, SWP_NOZORDER | SWP_NOACTIVATE);
+    for (int big = 0; big < 2; big++) {   /* title bar, taskbar / Alt+Tab: their own sizes */
+        HICON ic = (HICON)LoadImageW(wc.hInstance, MAKEINTRESOURCEW(1), IMAGE_ICON, GetSystemMetrics(big ? SM_CXICON : SM_CXSMICON),
+                                     GetSystemMetrics(big ? SM_CYICON : SM_CYSMICON), LR_DEFAULTCOLOR);
+        if (ic) SendMessageW(g_hwnd, WM_SETICON, big ? ICON_BIG : ICON_SMALL, (LPARAM)ic);
+        else LOG("[gpu] no window icon in the exe\n");
+    }
     g_creating = 0;
     if (dev_run) ShowWindow(g_hwnd, SW_SHOWNOACTIVATE);
     else { ShowWindow(g_hwnd, SW_SHOW); SetForegroundWindow(g_hwnd); }

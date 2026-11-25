@@ -1,0 +1,2 @@
+// icon of underground.exe and its window (tools/build.py compiles it with llvm-mingw's windres)
+1 ICON "../installer/res/app.ico"

@@ -32,6 +32,7 @@ HWND linux_create_window(void) {
     /* made by android_start on the main stack; always fullscreen landscape */
     if (g_win) return (HWND)g_win;
     SDL_SetHint(SDL_HINT_ORIENTATIONS, "LandscapeLeft LandscapeRight");
+    SDL_SetAppMetadata("Project Underground", NULL, "project-underground");   /* = project-underground.desktop */
     SDL_SetHint(SDL_HINT_APP_NAME, "Project Underground");
     if (!SDL_InitSubSystem(SDL_INIT_VIDEO)) { LOG("[gpu] SDL video unavailable: %s\n", SDL_GetError()); return NULL; }
     g_video = 1;
@@ -44,6 +45,7 @@ HWND linux_create_window(void) {
     return (HWND)g_win;
 #endif
     SDL_SetHint(SDL_HINT_JOYSTICK_ALLOW_BACKGROUND_EVENTS, "1");
+    SDL_SetAppMetadata("Project Underground", NULL, "project-underground");   /* = project-underground.desktop */
     SDL_SetHint(SDL_HINT_APP_NAME, "Project Underground");
     if (!SDL_InitSubSystem(SDL_INIT_VIDEO | SDL_INIT_GAMEPAD)) {
         LOG("[gpu] SDL video unavailable: %s\n", SDL_GetError());
@@ -90,6 +92,11 @@ HWND linux_create_window(void) {
     SDL_ShowWindow(g_win);
     SDL_SyncWindow(g_win);
 #ifndef __ANDROID__
+    {   /* the installed kit's icon (the desktop file's on Wayland: its app id below) */
+        SDL_Surface *ic = SDL_LoadPNG("kit/linux/icon.png");
+        if (!ic) ic = SDL_LoadPNG("installer/res/icon.png");
+        if (ic) { SDL_SetWindowIcon(g_win, ic); SDL_DestroySurface(ic); }
+    }
     SDL_StartTextInput(g_win);   /* SDL_EVENT_TEXT_INPUT for the game's text entry (no on-screen keyboard on desktop) */
 #endif
     return (HWND)g_win;

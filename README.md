@@ -101,6 +101,11 @@ button opens the in-game menu: tap a row to change it, tap outside to close it.
 
 ## HD textures
 
+**Where to get a pack:** the *HD Remaster* pack is in the Internet Archive's
+[PCSX2 HD texture packs](https://archive.org/download/pcsx2-hd-texture-packs) collection. Direct download (573 MB):
+[Tony Hawk's Underground HD Remaster.rar](https://dn721905.ca.archive.org/0/items/pcsx2-hd-texture-packs/Tony%20Hawk%27s%20Underground%20%28USA%29%20%5BSLUS-20731%5D%20HD%20Remaster.rar).
+It is made by the community, not by this project.
+
 Optional. Unpack a PCSX2 replacement pack for the PS2 version (*Tony Hawk's Underground (USA) [SLUS-20731]*), then
 pick its folder, for example `...\SLUS-20731\replacements`, in the launcher (**Settings**, **HD texture pack**).
 Linux: `./setup.sh --hd <folder>` or `UG_HDTEX=<folder>` in `settings.ini`. The pack is used where it is and is not
