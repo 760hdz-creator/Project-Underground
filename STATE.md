@@ -110,6 +110,18 @@ print(','.join(ev))")" UG_SHOT=1200 ./out/underground.exe   (NJ level by ~frame 
   random count; 6A330 NaN-vs-NaN payload only (clang swaps commutative mulss operands). No lifter bug found.
 
 ## Next
+- 2026-11-25: AUDIO LEVELS FIXED (user: volume sliders did nothing, cars/crickets louder than NPC speech).
+  THUG keeps SetVolume at 0 and sends every slider, pan and distance as mix-bin levels: streams through
+  1BF5C6 (= IDirectSoundStream_SetMixBinVolumes, was mislabelled SetMixBins and ignored), SFX through 1BF4E1 on bins
+  6/2/7/9/8 (+3 LFE, 10 reverb; only bins 0/1 were read). So every sound played at 0 dB and the mix clipped hard.
+  dsound.c now keeps per-voice routing + levels (Levels: SetMixBins replaces, SetMixBinVolumes updates only the listed
+  bins as 0x1BE6CA does, SetHeadroom; default headroom 600, Bink sets 0), level = volume - headroom + bin, mute <= -64
+  dB, stereo downmix: 0/6 left, 1/7 right, 2 both -3 dB, 4/8 left -3 dB, 5/9 right -3 dB, 3 and >= 10 dropped.
+  Check: NJ free skate headless WAV dump, before 13k-41k clipped samples per 10 s at -7 dB RMS, after 0 clipped,
+  -21 dB RMS, per-voice gains spread (UG_DSLOG=1 prints a level table each second). Bink is now -2.4 dB (6 bins at
+  0 dB, volume -10 dB) vs gameplay music -9 dB: if movies sound too loud, that is the place. Sliders not driven by
+  script: user to confirm by ear (SFX master = float at 0x2299A8, setter 3E840; music/speech via 33D70).
+
 RESUME HERE (paused 2026-11-24 ~00:30, user's request):
 A. PINK HOUSE (FIXED 2026-11-24, see "PINK HOUSE FIXED" below; kept for history) (NJ, user screenshot): a pink house wall shows a diagonal split, an untextured flat-pink part and
    sky through the wall (also in our A/B shot 12300 of the HD run: skater standing in front of it). Tool ready

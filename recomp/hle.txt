@@ -38,6 +38,6 @@
 1BFA11 IDirectSoundBuffer_SetMixBins
 1BFF68 IDirectSoundBuffer_SetBufferData
 1BF5C1 IDirectSoundStream_SetVolume
-1BF5C6 IDirectSoundStream_SetMixBins
+1BF5C6 IDirectSoundStream_SetMixBinVolumes
 1BF5CB IDirectSoundStream_Pause
 1BF5D0 IDirectSoundStream_FlushEx

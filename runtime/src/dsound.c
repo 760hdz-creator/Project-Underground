@@ -56,14 +56,28 @@ typedef struct {
     uint32_t rate;
 } Fmt;
 
+/* Voice levels. Each voice (buffer or stream) is sent to up to 8 mix bins, each with its own level; the hardware level
+ * per bin is volume - headroom + bin level, with -64 dB = mute (XDK 5659 0x1C3356). THUG keeps SetVolume at 0 and puts
+ * every slider, pan and distance into the bin levels (33D70 and 33EC0 streams, 3EC30 sound effects). */
+#define DSMIXBINS_MAX 8
+#define DSBHEADROOM_DEFAULT_ 600
+#define DSBVOLUME_HW_MIN (-6400)
+typedef struct {
+    int32_t volume;              /* hundredths of a dB, <= 0 */
+    int32_t headroom;
+    int nbins;                   /* bins the voice is routed to */
+    uint8_t bins[DSMIXBINS_MAX];
+    int32_t bin_vol[32];         /* level per bin, hundredths of a dB */
+    float gl, gr;                /* resulting gain in the stereo output (levels_update) */
+} Levels;
+
 typedef struct {
     uint32_t guest;              /* object address the guest holds */
     Fmt fmt;
     uint32_t data, bytes;        /* guest audio data */
     uint32_t owned;              /* buffer we allocated at create (freed on Release); 0 if none */
     uint32_t freq;               /* 0 = fmt.rate */
-    int32_t volume;              /* hundredths of a dB, <= 0 */
-    int32_t bin_vol[2];          /* mix bins 0/1 (front left/right), hundredths of a dB; 0 until set */
+    Levels lv;
     int playing, looping;
     double pos;                  /* in frames */
     int32_t adpcm_block;         /* decoded block cache */
@@ -89,7 +103,7 @@ typedef struct {
     int qh, qn;
     Fmt fmt;
     int paused;
-    int32_t volume;              /* hundredths of a dB */
+    Levels lv;
     uint32_t callback, context;  /* DSSTREAMDESC lpfnCallback / lpvContext: run on packet completion */
     uint8_t *fifo;               /* raw packet bytes in fmt */
     uint32_t rd, wr;             /* byte counters, wrap at FIFO_BYTES */
@@ -216,8 +230,68 @@ static void voice_frame(Voice *v, uint32_t frame, float *l, float *r) {
 
 static float db_gain(int32_t vol) {
     if (vol >= 0) return 1.0f;
-    if (vol <= -10000) return 0.0f;
+    if (vol <= DSBVOLUME_HW_MIN) return 0.0f;
     return powf(10.0f, vol / 2000.0f);
+}
+
+/* Stereo downmix of the mix bins: 0/1 front, 2 center, 4/5 back, 6/7 and 8/9 the crosstalk (3D) front and back pairs;
+ * center and back at -3 dB. Left out: 3 (low frequency: the same sound again for a subwoofer), 10 (I3DL2 reverb) and up
+ * (effect sends, no DSP here). */
+static void levels_update(Levels *lv) {
+    static const float left[10]  = {1, 0, 0.7071f, 0, 0.7071f, 0, 1, 0, 0.7071f, 0};
+    static const float right[10] = {0, 1, 0.7071f, 0, 0, 0.7071f, 0, 1, 0, 0.7071f};
+    float gl = 0, gr = 0;
+    for (int i = 0; i < lv->nbins; i++) {
+        int b = lv->bins[i];
+        if (b >= 10) continue;
+        float g = db_gain(lv->volume - lv->headroom + lv->bin_vol[b]);
+        gl += left[b] * g;
+        gr += right[b] * g;
+    }
+    lv->gl = gl;
+    lv->gr = gr;
+}
+
+/* SetMixBinVolumes (0x1BE6CA): only the bins listed change, the others keep their level. `mb` is a guest DSMIXBINS
+ * {count, {bin, LONG volume} *}. */
+static void levels_bin_volumes(Levels *lv, uint32_t mb) {
+    uint32_t n = mb ? RD32(mb) : 0, pairs = mb ? RD32(mb + 4) : 0;
+    for (uint32_t i = 0; pairs && i < n && i < 32; i++)
+        lv->bin_vol[RD32(pairs + i * 8) & 31] = (int32_t)RD32(pairs + i * 8 + 4);
+    levels_update(lv);
+}
+
+/* SetMixBins (0x1BF62C), also at creation: routing and levels. No list: the defaults of the XDK (0x1C7B94 for 3D
+ * voices, else 0x1C798C by channel count; all at 0 dB). */
+static void levels_mix_bins(Levels *lv, uint32_t mb, int is3d) {
+    static const uint8_t def3d[5] = {6, 8, 7, 9, 10};
+    uint32_t n = mb ? RD32(mb) : 0, pairs = mb ? RD32(mb + 4) : 0;
+    if (!mb) {
+        lv->nbins = is3d ? 5 : 2;   /* mono and stereo: front pair */
+        for (int i = 0; i < lv->nbins; i++) { lv->bins[i] = is3d ? def3d[i] : (uint8_t)i; lv->bin_vol[lv->bins[i]] = 0; }
+    } else {
+        if (n > DSMIXBINS_MAX) n = DSMIXBINS_MAX;
+        if (!pairs) n = 0;
+        lv->nbins = (int)n;
+        for (uint32_t i = 0; i < n; i++) lv->bins[i] = (uint8_t)(RD32(pairs + i * 8) & 31);
+        levels_bin_volumes(lv, mb);
+    }
+    levels_update(lv);
+}
+
+/* UG_DSLOG: a guest DSMIXBINS as text */
+static const char *mixbins_text(uint32_t mb, char *buf, size_t cap) {
+    uint32_t n = mb ? RD32(mb) : 0, pairs = mb ? RD32(mb + 4) : 0;
+    size_t k = 0;
+    buf[0] = 0;
+    for (uint32_t i = 0; pairs && i < n && i < 16 && k + 24 < cap; i++)
+        k += (size_t)snprintf(buf + k, cap - k, " %u:%d", RD32(pairs + i * 8), (int)RD32(pairs + i * 8 + 4));
+    return buf;
+}
+static int dslog(void) {
+    static int v = -1;
+    if (v < 0) { const char *e = getenv("UG_DSLOG"); v = e && *e == '1'; }
+    return v;
 }
 
 /* ------------------------------------------------------------------ mixer */
@@ -227,7 +301,7 @@ static void mix_voice(Voice *v, float *out, int n) {
     if (!v->data || !frames) { v->playing = 0; return; }
     uint32_t rate = v->freq ? v->freq : v->fmt.rate;
     double step = (double)rate / OUT_RATE;
-    float gl = db_gain(v->volume + v->bin_vol[0]), gr = db_gain(v->volume + v->bin_vol[1]);
+    float gl = v->lv.gl, gr = v->lv.gr;
     for (int i = 0; i < n; i++) {
         if (v->pos >= frames) {
             if (!v->looping) { v->playing = 0; v->pos = 0; return; }
@@ -247,7 +321,7 @@ static void mix_voice(Voice *v, float *out, int n) {
 
 static void mix_stream(Stream *s, float *out, int n) {
     if (!s->guest || s->paused || !s->fifo) return;
-    float g = db_gain(s->volume);
+    float gl = s->lv.gl, gr = s->lv.gr;
     const Fmt *f = &s->fmt;
     if (f->tag != WAVE_FORMAT_PCM_ || !f->block_align) return;
     double step = (double)f->rate / OUT_RATE;
@@ -274,8 +348,8 @@ static void mix_stream(Stream *s, float *out, int n) {
             }
             l += (l1 - l) * t; r += (r1 - r) * t;
         }
-        out[2 * i] += l * g;
-        out[2 * i + 1] += r * g;
+        out[2 * i] += l * gl;
+        out[2 * i + 1] += r * gr;
         s->frac += step;
         while (s->frac >= 1.0) { s->frac -= 1.0; s->rd += f->block_align; }
     }
@@ -290,6 +364,24 @@ static void mix(int16_t *dst, int n) {
     for (int i = 0; i < g_nvoices; i++)
         if (g_voices[i].playing) mix_voice(&g_voices[i], acc, n);
     for (int i = 0; i < g_nstreams; i++) mix_stream(&g_streams[i], acc, n);
+    /* UG_DSLOG: once a second, what is audible (gain in dB left/right) and the peak before the clamp */
+    static int frames;
+    static float peak;
+    if (dslog()) {
+        for (int i = 0; i < 2 * n; i++) if (fabsf(acc[i]) > peak) peak = fabsf(acc[i]);
+        if ((frames += n) >= OUT_RATE) {
+            LOG("[dsound] levels: peak %.2f\n", peak);
+            frames = 0; peak = 0;
+            for (int i = 0; i < g_nvoices; i++)
+                if (g_voices[i].playing)
+                    LOG("[dsound]   voice %08X ch %u %.1f / %.1f dB\n", g_voices[i].guest, g_voices[i].fmt.channels,
+                        20 * log10f(g_voices[i].lv.gl + 1e-5f), 20 * log10f(g_voices[i].lv.gr + 1e-5f));
+            for (int i = 0; i < g_nstreams; i++)
+                if (g_streams[i].guest && g_streams[i].started)
+                    LOG("[dsound]   stream %08X ch %u %.1f / %.1f dB\n", g_streams[i].guest, g_streams[i].fmt.channels,
+                        20 * log10f(g_streams[i].lv.gl + 1e-5f), 20 * log10f(g_streams[i].lv.gr + 1e-5f));
+        }
+    }
     LeaveCriticalSection(&g_lock);
     for (int i = 0; i < 2 * n; i++) {
         float x = acc[i] * 32767.0f;
@@ -527,6 +619,8 @@ static uint32_t create_buffer(uint32_t d) {
     v->guest = mem_alloc(0x40, 16);
     read_fmt(wfx, &v->fmt);
     v->adpcm_block = -1;
+    v->lv.headroom = DSBHEADROOM_DEFAULT_;
+    levels_mix_bins(&v->lv, RD32(d + 16), (flags & 0x10) != 0);
     if (bytes) { v->data = v->owned = mem_alloc(bytes, 16); v->bytes = bytes; }
     if (slot == g_nvoices) g_nvoices++;
     LeaveCriticalSection(&g_lock);
@@ -552,6 +646,8 @@ static uint32_t create_stream(uint32_t d) {
     s->context = RD32(d + 16);
     read_fmt(wfx, &s->fmt);
     s->maxpk = maxpk;
+    s->lv.headroom = DSBHEADROOM_DEFAULT_;
+    levels_mix_bins(&s->lv, RD32(d + 20), 0);
     if (s->fmt.tag == WAVE_FORMAT_XBOX_ADPCM) {   /* decoded to s16 PCM in Process */
         s->adpcm = 1;
         s->fmt.tag = WAVE_FORMAT_PCM_; s->fmt.bits = 16; s->fmt.block_align = (uint16_t)(2 * s->fmt.channels);
@@ -622,12 +718,17 @@ int dsound_hle(X86Context *c, uint32_t va) {
     case 0x1BF5C1: case 0x1BF5C6: case 0x1BF5CB: case 0x1BF5D0: {
         Stream *s = stream_of(ARG(0));
         if (!s) rt_fatal("DSOUND: stream call %X on unknown object %08X", va, ARG(0));
+        if (dslog() && va != 0x1BF5C6) LOG("[dsound] %06X(%08X, %08X)\n", va, ARG(0), ARG(1));
+        if (dslog() && va == 0x1BF5C6) {
+            char t[256];
+            LOG("[dsound] %06X(%08X)%s\n", va, ARG(0), mixbins_text(ARG(1), t, sizeof t));
+        }
         EnterCriticalSection(&g_lock);
         int nargs = 2;
-        if (va == 0x1BF5C1) s->volume = (int32_t)ARG(1);          /* IDirectSoundStream_SetVolume(this, LONG) */
+        if (va == 0x1BF5C1) { s->lv.volume = (int32_t)ARG(1); levels_update(&s->lv); }   /* SetVolume(this, LONG) */
+        else if (va == 0x1BF5C6) levels_bin_volumes(&s->lv, ARG(1));   /* SetMixBinVolumes(this, LPCDSMIXBINS) */
         else if (va == 0x1BF5CB) s->paused = (ARG(1) & 1) != 0;   /* IDirectSoundStream_Pause(this, DWORD) */
         else if (va == 0x1BF5D0) nargs = 4;                       /* FlushEx(this, REFERENCE_TIME, DWORD flags) */
-        /* 0x1BF5C6 IDirectSoundStream_SetMixBins(this, LPCDSMIXBINS): ignored */
         LeaveCriticalSection(&g_lock);
         if (va == 0x1BF5D0) stream_flush(c, s);
         ret_std(c, nargs, 0);
@@ -647,28 +748,27 @@ int dsound_hle(X86Context *c, uint32_t va) {
     case 0x1BF591: nargs = 8; break;
     default: return 0;
     }
-    static int dslog = -1;
-    if (dslog < 0) { const char *e = getenv("UG_DSLOG"); dslog = e && *e == '1'; }
-    if (dslog) LOG("[dsound] %06X(%08X, %08X, %08X, %08X)\n", va, ARG(0), ARG(1), ARG(2), ARG(3));
+    if (dslog() && (va == 0x1BF4E1 || va == 0x1BFA11)) {
+        char t[256];
+        LOG("[dsound] %06X(%08X)%s\n", va, ARG(0), mixbins_text(ARG(1), t, sizeof t));
+    } else if (dslog()) LOG("[dsound] %06X(%08X, %08X, %08X, %08X)\n", va, ARG(0), ARG(1), ARG(2), ARG(3));
     EnterCriticalSection(&g_lock);
     Voice *v = voice_of(ARG(0));
     uint32_t eax = 0;
     switch (va) {
     case 0x1BF4A9: /* SetVolume(this, LONG) */
-        v->volume = (int32_t)ARG(1);
+        v->lv.volume = (int32_t)ARG(1);
+        levels_update(&v->lv);
         break;
     case 0x1BF4C5: /* SetHeadroom(this, DWORD) */
+        v->lv.headroom = (int32_t)ARG(1);
+        levels_update(&v->lv);
         break;
-    case 0x1BF4E1: { /* SetMixBinVolumes(this, LPCDSMIXBINS {count, {bin, LONG volume}*}): front pair only */
-        uint32_t mb = ARG(1);
-        uint32_t n = mb ? RD32(mb) : 0, pairs = mb ? RD32(mb + 4) : 0;
-        for (uint32_t i = 0; i < n && i < 8 && pairs; i++) {
-            uint32_t bin = RD32(pairs + i * 8);
-            if (bin < 2) v->bin_vol[bin] = (int32_t)RD32(pairs + i * 8 + 4);
-        }
+    case 0x1BF4E1: /* SetMixBinVolumes(this, LPCDSMIXBINS) */
+        levels_bin_volumes(&v->lv, ARG(1));
         break;
-    }
     case 0x1BFA11: /* SetMixBins(this, LPCDSMIXBINS) */
+        levels_mix_bins(&v->lv, ARG(1), 0);
         break;
     case 0x1BF9F5: /* SetFrequency(this, DWORD): 0 = format rate */
         v->freq = ARG(1);
