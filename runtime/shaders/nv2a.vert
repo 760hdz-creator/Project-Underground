@@ -4,12 +4,12 @@
 // through the composite matrix (as Project Gauntlet's D3D11 renderer). Field layout of the 128-bit NV2A vertex
 // instruction as documented by the community (xemu's vsh field table; no code copied).
 
-layout(std430, set = 0, binding = 1) readonly buffer Verts { vec4 v_in[]; };   // 16 float4 attributes per vertex
+layout(std430, set = 0, binding = 1) readonly buffer Verts { vec4 v_in[]; };   // see V()
 
 layout(std140, set = 0, binding = 0) uniform Draw {
     vec4 comp[4];          // composite matrix rows (fixed function)
     vec4 texm[16];         // texture matrices, 4 rows each
-    vec4 vpo;              // viewport offset (fixed function)
+    vec4 vpo;              // viewport offset (fixed function); w: float4s per vertex
     vec4 surf;             // guest surface w, h, 1/w, 1/h
     vec4 zr;               // clip min, clip max, 1/zmax (fixed function), unused
     uvec4 mode;            // x: transform mode, y: program start, z: texmat enables (bit per stage), w: unused
@@ -22,6 +22,7 @@ layout(std140, set = 0, binding = 0) uniform Draw {
     uvec4 tmode;
     vec4 sfac[2];          // final combiner c0, c1 (SET_SPECULAR_FOG_FACTOR)
     vec4 fogp;             // fog params 0, 1; function (0 off, 1 linear, 2 exp, 3 exp2); abs
+    uvec4 vmap;            // per vertex attribute a byte: its place in the vertex, 255 = constant
     vec4 mv[4];            // fixed function model-view 0 (rows = output components, as comp)
     vec4 imv[4];           // its inverse
     uvec4 tgen;            // texgen per stage, a byte per s/t/r/q: 0 off, 4 normal map, 5 reflection map
@@ -44,7 +45,11 @@ layout(location = 4) out vec4 o_t2;
 layout(location = 5) out vec4 o_t3;
 layout(location = 6) out float o_fog;
 
-vec4 V(int i) { return v_in[gl_VertexIndex * 16 + i]; }
+// the first 16 are the constants, then the vertices: D.vpo.w float4 each, in the order of D.vmap
+vec4 V(int i) {
+    uint s = (D.vmap[i >> 2] >> uint((i & 3) * 8)) & 255u;
+    return s == 255u ? v_in[i] : v_in[16 + gl_VertexIndex * int(D.vpo.w) + int(s)];
+}
 
 uint fld(uvec4 ins, int w, int lo, int n) { return (ins[w] >> uint(lo)) & ((1u << uint(n)) - 1u); }
 

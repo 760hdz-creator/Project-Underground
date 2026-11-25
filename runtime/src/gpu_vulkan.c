@@ -1,7 +1,7 @@
 /* Host renderer for NV2A Kelvin state: native Vulkan 1.3 backend (Project Underground).
  *
  * - Guest color/zeta surfaces map to host images keyed by physical address (scaled by UG_SCALE).
- * - Vertices arrive decoded (KVertex, 16 x float4) with a triangle/line/point index list; the vertex shader pulls
+ * - Vertices arrive decoded (float4 per array attribute, KLayout) with a triangle/line/point index list; the vertex shader pulls
  *   them from a storage buffer and either interprets the guest's NV2A vertex program or does the fixed-function
  *   composite transform (runtime/shaders/nv2a.vert). The fragment shader interprets the register combiners.
  *   Both are precompiled SPIR-V (shaders_spv.h), so no shader compiler is needed at run time.
@@ -1469,6 +1469,7 @@ typedef struct {
     uint32_t tmode[4];
     float sfac[2][4];            /* final combiner c0, c1 (SET_SPECULAR_FOG_FACTOR) */
     float fogp[4];               /* fog params 0, 1; function (0 off, 1 linear, 2 exp, 3 exp2); abs */
+    uint32_t vmap[4];            /* per vertex attribute a byte: its place in the vertex, 0xFF = constant */
     float mv[4][4], imv[4][4];   /* fixed function: model-view 0 and its inverse (texgen) */
     uint32_t tgen[4];            /* texgen per stage, 8 bits per s/t/r/q: 0 off, 4 normal map, 5 reflection map */
     uint32_t lctl[4];            /* fixed-function lighting: on, color material, light types, normalize */
@@ -1919,16 +1920,16 @@ static FxView *fx_view(void) {
 }
 
 /* called for each draw with its targets selected */
-static void fx_watch(const KVertex *v) {
+static void fx_watch(const float (*v)[4]) {
     if ((!g_fxaa && !g_ao) || fx_done || !cur_zs || cur_rt->w < 320 || cur_rt->h < 200) return;   /* not the shadow maps */
     int vprog = (KREG(K_TRANSFORM_MODE) & 3) == 2, zwrite = KREG(K_DEPTH_MASK) & 1;
-    if (vprog && !zwrite && v[0].a[0][2] == 0 && v[0].a[0][3] == 0) {   /* HUD */
+    if (vprog && !zwrite && VA(v, 0, 0)[2] == 0 && VA(v, 0, 0)[3] == 0) {   /* HUD */
         if (fx_rt == cur_rt) fx_apply(); else fx_hud = 1;
         return;
     }
     if (!zwrite) return;
     if (vprog) {
-        if (v[0].a[0][3] != 0) fx_view();
+        if (VA(v, 0, 0)[3] != 0) fx_view();
         return;
     }
     /* composite rows: x, y = screen (guest pixels) times w, z = depth (Z-buffer units) times w, w = view distance */
@@ -1954,7 +1955,7 @@ static void fx_watch(const KVertex *v) {
     vw->ok = 1;
 }
 
-static void draw_impl(int topo, const KVertex *v, uint32_t nv, const uint32_t *idx, uint32_t ni) {
+static void draw_impl(int topo, const float (*v)[4], uint32_t nv, const uint32_t *idx, uint32_t ni) {
     st_draws++; st_verts += nv;
     if (!ready() || !ni) return;
     {   /* UG_SKIPFMT=<hex>: drop draws whose texture 0 has this colour format (debug) */
@@ -1980,14 +1981,14 @@ static void draw_impl(int topo, const KVertex *v, uint32_t nv, const uint32_t *i
         if (pf < 0) { const char *e = getenv("UG_PHFIX"); pf = !(e && *e == '0'); }
         float lo = 1e30f;
         int in = pf;
-        for (uint32_t i = 0; in && i < nv; i++) { if (v[i].a[0][0] != 1291.5625f) in = 0; if (v[i].a[0][1] < lo) lo = v[i].a[0][1]; }
+        for (uint32_t i = 0; in && i < nv; i++) { if (VA(v, i, 0)[0] != 1291.5625f) in = 0; if (VA(v, i, 0)[1] < lo) lo = VA(v, i, 0)[1]; }
         if (in && lo == -1791.875f) return;
         if (in && lo == -1763.125f) {
             uint32_t n = 0;
             for (uint32_t i = 0; i + 2 < ni; i += 3) {
                 int big = 0;
                 for (uint32_t j = 0; j < 3; j++) {
-                    float y = v[idx[i + j]].a[0][1];
+                    float y = VA(v, idx[i + j], 0)[1];
                     if (y == -1763.125f || y == -1723.9375f || y == -1067.75f || y == -1063.625f) big = 1;
                 }
                 if (!big) { memcpy(&ph_idx[n], &idx[i], 12); n += 3; }
@@ -2004,7 +2005,7 @@ static void draw_impl(int topo, const KVertex *v, uint32_t nv, const uint32_t *i
         uint32_t fm = KREG(K_TEX_FORMAT(0));
         if (sf && (fm == 0x06710C29 || fm == 0x07710C29)) {
             float lo = 1e30f, hi = -1e30f;
-            for (uint32_t i = 0; i < nv; i++) { if (v[i].a[0][1] < lo) lo = v[i].a[0][1]; if (v[i].a[0][1] > hi) hi = v[i].a[0][1]; }
+            for (uint32_t i = 0; i < nv; i++) { if (VA(v, i, 0)[1] < lo) lo = VA(v, i, 0)[1]; if (VA(v, i, 0)[1] > hi) hi = VA(v, i, 0)[1]; }
             if (nv == 15 ? lo == 54.5f && hi > 476.9f && hi < 477.2f : lo == 411.25f && hi > 696.0f && hi < 696.2f) return;
         }
     }
@@ -2021,9 +2022,10 @@ static void draw_impl(int topo, const KVertex *v, uint32_t nv, const uint32_t *i
     static int light = -1;   /* UG_LIGHT=0: no fixed-function lighting, 2: off in odd frames (A/B shots, debug) */
     if (light < 0) { const char *e = getenv("UG_LIGHT"); light = e ? atoi(e) : 1; }
     int lit = !vprog && (g_kreg[0x314 >> 2] & 1) && light && !(light == 2 && (frame_no & 1));
+    VkDeviceSize vsize = (16 + (VkDeviceSize)nv * g_vl.stride) * 16;   /* the 16 constants, then the vertices */
     size_t usize = vprog ? sizeof(DrawUBO) : lit ? DRAW_HEAD : DRAW_UNLIT;
     void *udst = ring_alloc(&f->ubo, usize, pprops.limits.minUniformBufferOffsetAlignment, &uoff);
-    void *vp = ring_alloc(&f->vtx, (VkDeviceSize)nv * sizeof(KVertex), pprops.limits.minStorageBufferOffsetAlignment, &voff);
+    void *vp = ring_alloc(&f->vtx, vsize, pprops.limits.minStorageBufferOffsetAlignment, &voff);
     void *ip = ring_alloc(&f->idx, (VkDeviceSize)ni * 4, 4, &ioff);
     if (!udst || !vp || !ip) {
         static int warned;
@@ -2032,7 +2034,9 @@ static void draw_impl(int topo, const KVertex *v, uint32_t nv, const uint32_t *i
                            (unsigned long long)f->ubo.pos >> 20);
         return;
     }
-    memcpy(vp, v, (size_t)nv * sizeof(KVertex));
+    memcpy(vp, g_vl.cur, sizeof g_vl.cur);
+    memcpy((char *)vp + sizeof g_vl.cur, v, (size_t)nv * g_vl.stride * 16);
+    memcpy(u->vmap, g_vl.slot, 16);
     memcpy(ip, idx, (size_t)ni * 4);
     if (vprog) {
         memcpy(u->prog, g_vp_prog, sizeof u->prog);
@@ -2041,7 +2045,7 @@ static void draw_impl(int topo, const KVertex *v, uint32_t nv, const uint32_t *i
     for (int i = 0; i < 16; i++) u->comp[i / 4][i % 4] = kf(K_COMPOSITE + i * 4);
     for (int s = 0; s < 4; s++)
         for (int j = 0; j < 16; j++) u->texm[s * 4 + j / 4][j % 4] = kf(K_TEXTURE_MATRIX + s * 64 + j * 4);
-    u->vpo[0] = kf(K_VIEWPORT_OFFSET); u->vpo[1] = kf(K_VIEWPORT_OFFSET + 4); u->vpo[2] = u->vpo[3] = 0;
+    u->vpo[0] = kf(K_VIEWPORT_OFFSET); u->vpo[1] = kf(K_VIEWPORT_OFFSET + 4); u->vpo[2] = 0; u->vpo[3] = (float)g_vl.stride;
     u->surf[0] = (float)cur_rt->w; u->surf[1] = (float)cur_rt->h; u->surf[2] = 1.0f / cur_rt->w; u->surf[3] = 1.0f / cur_rt->h;
     uint32_t zfmt = (KREG(K_SURF_FORMAT) >> 4) & 0xF;
     u->zr[0] = kf(K_CLIP_MIN); u->zr[1] = kf(K_CLIP_MAX); u->zr[2] = 1.0f / (zfmt == 1 ? 65535.0f : 16777215.0f); u->zr[3] = 0;
@@ -2171,8 +2175,8 @@ static void draw_impl(int topo, const KVertex *v, uint32_t nv, const uint32_t *i
                 float lo[4] = {1e30f, 1e30f, 1e30f, 1e30f}, hi[4] = {-1e30f, -1e30f, -1e30f, -1e30f};
                 for (uint32_t i = 0; i < nv; i++)
                     for (int k = 0; k < 4; k++) {
-                        if (v[i].a[0][k] < lo[k]) lo[k] = v[i].a[0][k];
-                        if (v[i].a[0][k] > hi[k]) hi[k] = v[i].a[0][k];
+                        if (VA(v, i, 0)[k] < lo[k]) lo[k] = VA(v, i, 0)[k];
+                        if (VA(v, i, 0)[k] > hi[k]) hi[k] = VA(v, i, 0)[k];
                     }
                 LOG("[draw]   fog en %X mode %X gen %X color %08X params %g %g sfac %08X %08X fogp.z %g\n", KREG(K_FOG_ENABLE),
                     KREG(K_FOG_MODE), KREG(K_FOG_GEN_MODE), KREG(K_FOG_COLOR), u->fogp[0], u->fogp[1],
@@ -2186,7 +2190,7 @@ static void draw_impl(int topo, const KVertex *v, uint32_t nv, const uint32_t *i
                     /* the driver writes the inverse-transpose 3x3 of MV into IMV (translation row/col zero), same
                      * row layout as MV: eye normal j = dot(imv[j], n) */
                     LOG("[draw]   texgen %08X %08X %08X %08X vfmt2 %08X n0 %g %g %g light ctl %08X\n", u->tgen[0], u->tgen[1],
-                        u->tgen[2], u->tgen[3], KREG(K_VTX_FORMAT + 8), v[0].a[2][0], v[0].a[2][1], v[0].a[2][2],
+                        u->tgen[2], u->tgen[3], KREG(K_VTX_FORMAT + 8), VA(v, 0, 2)[0], VA(v, 0, 2)[1], VA(v, 0, 2)[2],
                         g_kreg[0x294 >> 2]);
                     for (int i = 0; i < 4; i++)
                         LOG("[draw]   mv %g %g %g %g | imv %g %g %g %g | comp %g %g %g %g\n", u->mv[i][0], u->mv[i][1], u->mv[i][2],
@@ -2220,9 +2224,9 @@ static void draw_impl(int topo, const KVertex *v, uint32_t nv, const uint32_t *i
                     lo[3], hi[3]);
             }
             for (uint32_t i = 0; i < nv && i < 4; i++)
-                LOG("[draw]   v%u pos %g %g %g %g d %g %g %g %g t0 %g %g %g %g\n", i, v[i].a[0][0], v[i].a[0][1], v[i].a[0][2],
-                    v[i].a[0][3], v[i].a[3][0], v[i].a[3][1], v[i].a[3][2], v[i].a[3][3], v[i].a[9][0], v[i].a[9][1],
-                    v[i].a[9][2], v[i].a[9][3]);
+                LOG("[draw]   v%u pos %g %g %g %g d %g %g %g %g t0 %g %g %g %g\n", i, VA(v, i, 0)[0], VA(v, i, 0)[1], VA(v, i, 0)[2],
+                    VA(v, i, 0)[3], VA(v, i, 3)[0], VA(v, i, 3)[1], VA(v, i, 3)[2], VA(v, i, 3)[3], VA(v, i, 9)[0], VA(v, i, 9)[1],
+                    VA(v, i, 9)[2], VA(v, i, 9)[3]);
             for (int st = 0; st < (int)(ctl & 0xFF) && st < 8; st++)
                 LOG("[draw]   st%d %08X %08X %08X %08X f0 %08X f1 %08X\n", st, u->comb[1 + st][0], u->comb[1 + st][1],
                     u->comb[1 + st][2], u->comb[1 + st][3], KREG(K_COMB_FACTOR0 + st * 4), KREG(K_COMB_FACTOR1 + st * 4));
@@ -2245,7 +2249,7 @@ static void draw_impl(int topo, const KVertex *v, uint32_t nv, const uint32_t *i
      * range); 256-entry cache, dropped with the frame's pool. A destroyed view cannot come back within the frame:
      * img_destroy_later keeps it until the frame is done. */
     VkDescriptorSet set = 0;
-    VkDeviceSize vrange = (VkDeviceSize)nv * sizeof(KVertex);
+    VkDeviceSize vrange = vsize;
     static struct { uint32_t serial; VkDescriptorSet set; VkDescriptorImageInfo ii[4]; } dcache[256], *dc;
     dc = &dcache[XXH3_64bits(ii, sizeof ii) & 255];
     if (!opt_off() && vrange <= VTX_PAD && dc->serial == pool_serial && dc->set && !memcmp(dc->ii, ii, sizeof ii)) set = dc->set;
@@ -2804,7 +2808,7 @@ static void flip_impl(uint32_t addr) {
 
 static SRWLOCK gpu_lock = SRWLOCK_INIT;
 
-void gpu_draw(int topo, const KVertex *v, uint32_t nv, const uint32_t *idx, uint32_t ni) {
+void gpu_draw(int topo, const float (*v)[4], uint32_t nv, const uint32_t *idx, uint32_t ni) {
     AcquireSRWLockExclusive(&gpu_lock); draw_impl(topo, v, nv, idx, ni); ReleaseSRWLockExclusive(&gpu_lock);
 }
 void gpu_clear(uint32_t flags) {

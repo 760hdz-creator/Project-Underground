@@ -289,8 +289,7 @@ int main(int argc, char **argv) {
 #endif
     load_settings();
 #ifdef __ANDROID__
-    setenv("UG_SCALE", "3", 0);   /* phone defaults (settings.ini in the files folder overrides) */
-    setenv("UG_MSAA", "2", 0);
+    setenv("UG_SCALE", "2", 0);   /* phone defaults (settings.ini in the files folder overrides) */
 #endif
     CreateDirectoryA("out", NULL);
 #ifndef _WIN32

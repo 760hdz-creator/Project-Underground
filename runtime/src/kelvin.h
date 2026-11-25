@@ -103,7 +103,11 @@ static inline float kf(uint32_t m) { union { uint32_t u; float f; } x; x.u = KRE
 /* Decoded vertex: the 16 NV2A vertex attributes as float4.
  * 0 position, 1 weight, 2 normal, 3 diffuse, 4 specular, 5 fog, 6 point size,
  * 7 back diffuse, 8 back specular, 9-12 texcoord 0-3. */
-typedef struct { float a[16][4]; } KVertex;
+/* The vertices of one begin/end: only the attributes that come from arrays (stride of them, slot[a] = 0xFF for the others,
+ * which are constant: cur[a]), as float4. VA(v, i, a): attribute a of vertex i. */
+typedef struct { uint32_t stride; uint8_t slot[16]; float cur[16][4]; } KLayout;
+extern KLayout g_vl;
+#define VA(v, i, a) (g_vl.slot[a] == 0xFF ? (const float *)g_vl.cur[a] : (const float *)(v)[(size_t)(i) * g_vl.stride + g_vl.slot[a]])
 
 enum { KTOPO_POINTS, KTOPO_LINES, KTOPO_TRIS };
 
@@ -124,7 +128,7 @@ int nv2a_overlay(NvOverlay *o);              /* 1 if an overlay frame is shown *
 
 /* ---- backend (gpu_d3d11.c) ---- */
 void gpu_init(void);
-void gpu_draw(int topo, const KVertex *v, uint32_t nv, const uint32_t *idx, uint32_t ni);
+void gpu_draw(int topo, const float (*v)[4], uint32_t nv, const uint32_t *idx, uint32_t ni);
 void gpu_clear(uint32_t flags);              /* NV097_CLEAR_SURFACE */
 void gpu_flip(uint32_t surface_phys);        /* present the surface at this physical address */
 void gpu_vblank(void);                       /* 60 Hz, DPC thread: presents the overlay when no 3D flips happen */

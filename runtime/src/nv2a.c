@@ -97,7 +97,8 @@ uint64_t g_flip_exit;   /* end of the last flip, pacing wait included (gpu_vulka
 /* ---- vertex fetch and primitive assembly ---- */
 static float k_cur[16][4];             /* current (inline) attribute values for disabled arrays */
 static uint32_t k_prim;                /* NV097_SET_BEGIN_END op, 0 = outside begin/end */
-static KVertex *kv; static uint32_t kv_n, kv_cap;
+static float (*kv)[4]; static uint32_t kv_n, kv_cap;   /* kv_n vertices of g_vl.stride float4 */
+KLayout g_vl;
 static uint32_t *ki; static uint32_t ki_n, ki_cap;
 static uint32_t *kelem; static uint32_t kelem_n, kelem_cap;   /* ARRAY_ELEMENT indices */
 
@@ -157,52 +158,77 @@ static uint32_t attr_bytes(uint32_t type, uint32_t size) {
     return (b + 3) & ~3u;
 }
 
-/* Vertex arrays: the enabled attributes, resolved once per batch; the disabled ones are constant (k_cur) and come from
- * the template vertex. */
+/* Vertex arrays: the enabled attributes, resolved once per batch; the disabled ones are constant (g_vl.cur). */
 typedef struct { uint32_t a, type, size, stride, addr, past; } VtxAttr;
 static VtxAttr va[16];
 static int n_va;
-static KVertex va_template;
 static float u8f[256];
 
-static void vertex_setup(void) {
+static void vertex_setup(uint32_t add) {
     if (!u8f[255]) for (int i = 0; i < 256; i++) u8f[i] = i / 255.f;
     n_va = 0;
-    memcpy(&va_template, k_cur, sizeof va_template);
+    memcpy(g_vl.cur, k_cur, sizeof g_vl.cur);
+    memset(g_vl.slot, 0xFF, sizeof g_vl.slot);
     for (uint32_t a = 0; a < 16; a++) {
         uint32_t fmt = KREG(K_VTX_FORMAT + a * 4), size = (fmt >> 4) & 0xF;
         if (!size) continue;
         uint32_t off = KREG(0x1720 + a * 4);
+        g_vl.slot[a] = (uint8_t)n_va;
         VtxAttr *t = &va[n_va++];
         t->a = a; t->type = fmt & 0xF; t->size = size; t->stride = fmt >> 8;
         t->addr = nv2a_dma_base(KREG((off & 0x80000000u) ? K_DMA_VERTEX_B : K_DMA_VERTEX_A)) + (off & 0x7FFFFFFF);
         t->past = (off & 0x7FFFFFFF) - (KREG(0x1720) & 0x7FFFFFFF) + 4 * size > t->stride;
     }
+    if (kv_n && (uint32_t)n_va != g_vl.stride) {   /* the arrays changed inside one begin/end: not seen, keep what fits */
+        static int w;
+        if (!w++) LOG("[pb] vertex arrays changed inside a primitive\n");
+        kv_n = ki_n = 0;
+    }
+    g_vl.stride = (uint32_t)n_va;
+    kv = grow(kv, &kv_cap, (kv_n + add) * (g_vl.stride ? g_vl.stride : 1), 16);
 }
 
-static void fetch_vertex(uint32_t index, KVertex *out) {
+/* Fetch n vertices (elem: their indices, else start, start + 1, ...) behind the kv_n already there. */
+static void fetch_vertices(uint32_t start, const uint32_t *elem, uint32_t n) {
     static float last[16][4];
-    memcpy(out, &va_template, sizeof *out);
+    uint32_t st = g_vl.stride;
     for (int k = 0; k < n_va; k++) {
         const VtxAttr *t = &va[k];
-        const uint8_t *q = g_mem + ((t->addr + index * t->stride) & 0x03FFFFFF);
-        float *o = out->a[t->a];
-        if (t->type == 0 && t->size == 4) { o[0] = u8f[q[2]]; o[1] = u8f[q[1]]; o[2] = u8f[q[0]]; o[3] = u8f[q[3]]; continue; }
-        if (t->type != 2) { decode_attr((int)t->a, t->type, t->size, q, o); continue; }
+        float (*o)[4] = kv + (size_t)kv_n * st + k;
+        uint32_t addr = t->addr, stride = t->stride;
+#define SRC (g_mem + ((addr + (elem ? elem[i] : start + i) * stride) & 0x03FFFFFF))
+        if (t->type == 0 && t->size == 4) {
+            for (uint32_t i = 0; i < n; i++, o += st) {
+                const uint8_t *q = SRC;
+                o[0][0] = u8f[q[2]]; o[0][1] = u8f[q[1]]; o[0][2] = u8f[q[0]]; o[0][3] = u8f[q[3]];
+            }
+            continue;
+        }
+        if (t->type != 2) {
+            for (uint32_t i = 0; i < n; i++, o += st) decode_attr((int)t->a, t->type, t->size, SRC, o[0]);
+            continue;
+        }
         /* float garbage (denormal / NaN / inf): an attribute that points at the next vertex in the array (THUG's cutscene
          * shadow receivers: stride 24, texcoords at +0x18 / +0x20) reads past the last vertex; take the previous vertex's
          * value (smeared, it drew dark shadow wedges). A denormal inside the vertex is real data (NJ has texcoords with
          * u = 5.6e-45): kept. Bit tests: above 1e30 (0x7149F2CA) covers inf and NaN; 1e-30 is 0x0DA24260. */
-        uint32_t w[4] = {0, 0, 0, 0x3F800000u}, n = t->size < 4 ? t->size : 4;
-        int bad = 0;
-        for (uint32_t i = 0; i < n; i++) {
-            w[i] = ld32(q + 4 * i);
-            uint32_t m = w[i] & 0x7FFFFFFF;
-            bad |= m > 0x7149F2CAu || (t->past && m && m < 0x0DA24260u);
+        uint32_t nc = t->size < 4 ? t->size : 4, past = t->past;
+        float *la = last[t->a];
+        for (uint32_t i = 0; i < n; i++, o += st) {
+            const uint8_t *q = SRC;
+            uint32_t w[4] = {0, 0, 0, 0x3F800000u};
+            int bad = 0;
+            for (uint32_t j = 0; j < nc; j++) {
+                w[j] = ld32(q + 4 * j);
+                uint32_t m = w[j] & 0x7FFFFFFF;
+                bad |= m > 0x7149F2CAu || (past && m && m < 0x0DA24260u);
+            }
+            if (bad) memcpy(o[0], la, 16);
+            else { memcpy(o[0], w, 16); memcpy(la, w, 16); }
         }
-        memcpy(o, w, 16);
-        if (bad) memcpy(o, last[t->a], 16); else memcpy(last[t->a], o, 16);
+#undef SRC
     }
+    kv_n += n;
 }
 
 static void assemble(uint32_t prim, uint32_t b, uint32_t n);
@@ -219,18 +245,16 @@ static void inline_array_flush(void) {
     }
     if (!vsize) { kinl_n = 0; return; }
     uint32_t n = kinl_n * 4 / vsize;
-    kv = grow(kv, &kv_cap, kv_n + n, sizeof(KVertex));
+    vertex_setup(n);
     uint32_t b = kv_n;
     const uint8_t *q = (const uint8_t *)kinl;
-    for (uint32_t v = 0; v < n; v++) {
-        KVertex *out = &kv[kv_n++];
-        for (int a = 0; a < 16; a++) {
-            uint32_t fmt = KREG(K_VTX_FORMAT + a * 4), type = fmt & 0xF, size = (fmt >> 4) & 0xF;
-            if (!size) { memcpy(out->a[a], k_cur[a], 16); continue; }
-            decode_attr(a, type, size, q, out->a[a]);
-            q += attr_bytes(type, size);
+    float (*out)[4] = kv + (size_t)kv_n * g_vl.stride;
+    for (uint32_t v = 0; v < n; v++, out += g_vl.stride)
+        for (int k = 0; k < n_va; k++) {
+            decode_attr((int)va[k].a, va[k].type, va[k].size, q, out[k]);
+            q += attr_bytes(va[k].type, va[k].size);
         }
-    }
+    kv_n += n;
     assemble(k_prim, b, n);
     kinl_n = 0;
 }
@@ -273,26 +297,24 @@ static void assemble(uint32_t prim, uint32_t b, uint32_t n) {
 
 static void draw_arrays(uint32_t data) {
     uint32_t start = data & 0xFFFFFF, n = (data >> 24) + 1;
-    kv = grow(kv, &kv_cap, kv_n + n, sizeof(KVertex));
+    vertex_setup(n);
     uint32_t b = kv_n;
-    vertex_setup();
-    for (uint32_t i = 0; i < n; i++) fetch_vertex(start + i, &kv[kv_n++]);
+    fetch_vertices(start, NULL, n);
     assemble(k_prim, b, n);
 }
 
 static void end_primitive(void) {
     if (kinl_n) inline_array_flush();
     if (kelem_n) {
-        kv = grow(kv, &kv_cap, kv_n + kelem_n, sizeof(KVertex));
+        vertex_setup(kelem_n);
         uint32_t b = kv_n;
-        vertex_setup();
-        for (uint32_t i = 0; i < kelem_n; i++) fetch_vertex(kelem[i], &kv[kv_n++]);
+        fetch_vertices(0, kelem, kelem_n);
         assemble(k_prim, b, kelem_n);
         kelem_n = 0;
     }
     if (ki_n) {
         int topo = k_prim <= 1 ? KTOPO_POINTS : k_prim <= 4 ? KTOPO_LINES : KTOPO_TRIS;
-        gpu_draw(topo, kv, kv_n, ki, ki_n);
+        gpu_draw(topo, (const float (*)[4])kv, kv_n, ki, ki_n);
     }
     kv_n = ki_n = 0;
 }
