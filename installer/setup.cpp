@@ -1591,6 +1591,7 @@ int WINAPI wWinMain(HINSTANCE inst, HINSTANCE, PWSTR, int) {
             return 1;
         }
         g_launcher = true;
+        DeleteFileW((g_instDir + L"\launcher.old.exe").c_str());   // left by an update made while the launcher was open
     }
     std::wstring dir = dirArg.empty() ? DefaultDir() : dirArg;
     if (uninstall) return Uninstall(dir);
