@@ -249,8 +249,12 @@ SESSION 2026-11-24 (polish, after the graphics options):
 - SAVE NAME BLOCKED (2026-11-25, after 0.1.4): a save folder holding only a 0-byte SaveMeta.xbx (left by the save bug before 8c04593)
   made XCreateSaveGame (0x1768F4, meta check 0x176818) return 0x52 for that name for good. fs.c unfilled_save(): FILE_CREATE on such a
   folder now counts as just made. Route: out/dev/svrun.sh <name>. Seeded folder: old exe writes nothing, new exe saves; without the
-  folder both save. Folder name = (h * 65536 + wchar) mod (2^48 - 59) over "<name>-Story/Skater". Not built on Linux/Android.
-  The user's install is still 0.1.4: its empty folder was moved to G:/ug_backup/orphan_save.
+  folder both save. Folder name = (h * 65536 + wchar) mod (2^48 - 59) over "<name>-Story/Skater".
+  The empty folder of the user's install was moved to G:/ug_backup/orphan_save.
+- OVERWRITE LOST THE SAVE (fixed in 0.1.5): OneDrive marks folders read-only and RemoveDirectoryA then fails (error 5), so the game
+  deleted the old files, kept the folder, made a 0-byte SaveMeta.xbx and stopped. NtSetInformationFile (delete) clears the flag first
+  and logs a failed delete. A/B with out/dev/ovr.sh on a read-only save folder: old exe leaves only the empty SaveMeta, new exe writes
+  all files; "Load last save" then reads it without an error. Test windows take the user's controller: ask before a scripted run.
 - RecompLauncher: submitted 2026-11-24 from the Octagram Labs-group developer account (Made by 8gram Labs); review 24-48 h.
   After it is listed: point the README badge at its own page. Their form check does not open GitLab release files (said so in the note).
 - RELEASED v0.1.4 (tag 7472f6a): RecompLauncher support (recomplauncher.json, --prepare / --play / --data, portable Windows zip,

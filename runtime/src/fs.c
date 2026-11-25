@@ -357,8 +357,13 @@ K(NtSetInformationFile) {
     case 13: /* FileDispositionInformation */
         if (RD8(in)) {
             CloseHandle(f->h);
-            if (f->is_dir) RemoveDirectoryA(f->host_path);
-            else DeleteFileA(f->host_path);
+#ifdef _WIN32
+            /* OneDrive marks folders read-only, and Windows then refuses to remove them: a deleted or overwritten save
+             * lost its files but kept its folder, which blocked the save name (see unfilled_save). */
+            SetFileAttributesA(f->host_path, FILE_ATTRIBUTE_NORMAL);
+#endif
+            if (!(f->is_dir ? RemoveDirectoryA(f->host_path) : DeleteFileA(f->host_path)))
+                LOG("[fs] delete %s failed: error %u\n", f->host_path, (unsigned)GetLastError());
             f->h = CreateFileA("NUL", GENERIC_READ, 0, NULL, OPEN_EXISTING, 0, NULL);
         }
         break;
