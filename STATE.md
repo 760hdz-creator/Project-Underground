@@ -246,6 +246,13 @@ SESSION 2026-11-24 (polish, after the graphics options):
   sound by ear, long sessions, other levels. The CPU is the limit now (9-12 ms busy, dips to ~50 fps).
 - BAKED COMBINERS also on PC (worker thread; interpreter until ready): paused Vancouver, baked against interpreted: 99.6 % of the
   world pixels equal, the rest within 7/255. F9 id frames (UG_DBGCOLOR) always interpret.
+- RELEASED v0.1.4 (tag 7472f6a): RecompLauncher support (recomplauncher.json, --prepare / --play / --data, portable Windows zip,
+  Linux package renamed to ProjectUnderground-Linux-x64-<ver>.tar.gz: our updaters match the ProjectUnderground-Linux prefix).
+  Standards: https://github.com/elripalda/RecompLauncher docs/ADD-SUPPORT.md + DEVELOPERS.md. Tested with its commands and
+  environment (out/dev/rel/rl.py, rl2.py; Linux in WSL), NOT inside RecompLauncher. Verified after publishing: both sites' files
+  match the notes, the installed 0.1.3 launcher updated to 0.1.4. Never rebuild a published version into dist/: raise VERSION first.
+  Open from its standards: AppImage, no compiler on the player's PC (Flatpak has none), older glibc, background controller input in
+  sdl_plat.c off by default, remapping, several logs, commented settings.ini, HD pack input, Recomp Achievements, Redump dumps.
 - RELEASED v0.1.3 (2026-11-24, tag at 1cbab29): first public release, Windows + Linux, by the user's word (Android follows). GitLab
   and forge, both assets; forge release-sync already lists the repo. Verified after publishing: releases/latest (Windows and WSL),
   downloads match the SHA-256 in the notes, the user's installed 0.1.2 launcher updated to 0.1.3 from the real release. Before it:
