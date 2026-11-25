@@ -246,6 +246,16 @@ SESSION 2026-11-24 (polish, after the graphics options):
   sound by ear, long sessions, other levels. The CPU is the limit now (9-12 ms busy, dips to ~50 fps).
 - BAKED COMBINERS also on PC (worker thread; interpreter until ready): paused Vancouver, baked against interpreted: 99.6 % of the
   world pixels equal, the rest within 7/255. F9 id frames (UG_DBGCOLOR) always interpret.
+- RELEASED v0.1.3 (2026-11-24, tag at 1cbab29): first public release, Windows + Linux, by the user's word (Android follows). GitLab
+  and forge, both assets; forge release-sync already lists the repo. Verified after publishing: releases/latest (Windows and WSL),
+  downloads match the SHA-256 in the notes, the user's installed 0.1.2 launcher updated to 0.1.3 from the real release. Before it:
+  the real setup exe as a fresh install (registration and shortcuts backed up and restored: out/dev/rel/fresh.ps1), fresh Linux
+  install. From now on: raise VERSION for every release, tag first, push the tag to both, then glab and tea releases with the
+  exact asset names. Never move or reuse a published version.
+- EXCEPTIONS (0.1.3): main.c crash_handler ended the game on any first-chance exception, also a C++ throw inside a DLL (seen once,
+  two copies starting together; not repeated in 11 starts). Now only real faults; others are logged ("left to its own handler") and
+  still reported when uncaught. UG_TESTEXC=<hex code> raises one (debug).
+- Online play: the user says it is being worked on (README and notes say so); no netplay code exists in this repo yet.
 - UPDATES FIXED (2026-11-24, d70c928 + 0.1.2): the user's install is in OneDrive, which marks folders read-only; shutil.rmtree of
   build/lifted failed with WinError 5 and the rebuild stopped. ug_build.py rmtree/retry, setup.cpp DeleteTree, GameClosed,
   launcher.old.exe, download length check (setup.cpp and updater.c), build/rt always rebuilt, stale kit folders removed.
