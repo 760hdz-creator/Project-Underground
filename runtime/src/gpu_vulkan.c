@@ -1857,6 +1857,31 @@ static void draw_impl(int topo, const KVertex *v, uint32_t nv, const uint32_t *i
         if (skipt && ((frame_no + 150) / 300 & 1) && (KREG(K_TEXMAT_EN) & 1 || KREG(K_TEXMAT_EN + 4) & 1 ||
                                                        KREG(K_TEXMAT_EN + 8) & 1 || KREG(K_TEXMAT_EN + 12) & 1)) return;
     }
+    static uint32_t ph_idx[117];
+    if (nv == 41 && ni == 117) {
+        /* Philadelphia: the fence at x = 1291.5625 (sector 3FF46E4E) holds one giant quad in the same plane as its panels and as
+         * the pillars, and the two-player blocker (sector 046E358B) repeats all of it: they flickered through each other. The
+         * quad and the repeat are dropped by their exact shape (drawing only, not collision); UG_PHFIX=0 keeps them. */
+        static int pf = -1;
+        if (pf < 0) { const char *e = getenv("UG_PHFIX"); pf = !(e && *e == '0'); }
+        float lo = 1e30f;
+        int in = pf;
+        for (uint32_t i = 0; in && i < nv; i++) { if (v[i].a[0][0] != 1291.5625f) in = 0; if (v[i].a[0][1] < lo) lo = v[i].a[0][1]; }
+        if (in && lo == -1791.875f) return;
+        if (in && lo == -1763.125f) {
+            uint32_t n = 0;
+            for (uint32_t i = 0; i + 2 < ni; i += 3) {
+                int big = 0;
+                for (uint32_t j = 0; j < 3; j++) {
+                    float y = v[idx[i + j]].a[0][1];
+                    if (y == -1763.125f || y == -1723.9375f || y == -1067.75f || y == -1063.625f) big = 1;
+                }
+                if (!big) { memcpy(&ph_idx[n], &idx[i], 12); n += 3; }
+            }
+            if (!n) return;
+            idx = ph_idx; ni = n;
+        }
+    }
     if ((nv == 15 || nv == 57) && !(KREG(K_DEPTH_MASK) & 1) && (KREG(K_TRANSFORM_MODE) & 3) != 2) {
         /* Santa Cruz: the sky scene holds a second, misplaced upper dome (sector 6D10C4BB, center -63 -85) drawn over the
          * seamless one (its 8 panels and cap join to within 4/255). Dropped by its exact shape; UG_SKYFIX=0 keeps it. */

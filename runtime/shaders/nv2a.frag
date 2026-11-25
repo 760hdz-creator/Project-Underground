@@ -56,10 +56,10 @@ vec4 stage_tex(int s, vec4 tc) {
     float r = clamp(rr, 0.0, 1.0), d = t.r;   // fixed-point ref saturates
     g_shadow_dbg = vec2(r, d);
     g_shadow_raw = vec4(uv, rr, tc.w);
-    // Outside the shadow map (uv beyond [0,1]), past its far plane (ref >= 1) or behind the light (w <= 0): lit.
-    // The saturated ref equals the cleared depth there, so THUG's "stored > ref" test failed and whole receiver
-    // triangles at the edge of the light's frustum went dark (hard-edged wedges over walls, floors and the sky).
-    if (tc.w <= 0.0 || rr >= 1.0 || any(lessThan(uv, vec2(0.0))) || any(greaterThan(uv, vec2(1.0)))) return vec4(1.0);
+    // Lit: outside the shadow map (uv beyond [0,1]), behind the light (w <= 0), or no caster at that texel (cleared depth:
+    // past the light's far plane the saturated ref equals it, and "stored > ref" would darken the rest of the map's square).
+    // The ref itself saturates: the far half of a long shadow (ref > 1) still compares with the caster's depth.
+    if (tc.w <= 0.0 || d >= 1.0 || any(lessThan(uv, vec2(0.0))) || any(greaterThan(uv, vec2(1.0)))) return vec4(1.0);
     int f = int(D.tsz[s].w);
     bool p = f == 1 ? d < r : f == 2 ? d == r : f == 3 ? d <= r : f == 4 ? d > r : f == 5 ? d != r : f == 6 ? d >= r : f == 7;   // stored OP ref
     return vec4(p ? 1.0 : 0.0);
