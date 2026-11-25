@@ -57,6 +57,7 @@ A static recompilation by 8gram Labs: the original x86 game code is translated t
   keep-aspect or stretch, and sharp output at any Windows display scaling.
 - **Launcher.** Play, display settings (fullscreen, monitor, window size, widescreen, picture fit, supersampling,
   graphics options, 60 fps, VSync, players), updates, logs, the Android build and uninstall, all on one screen.
+  The setup and launcher windows can be resized from any edge or corner.
 - **Builds on your PC, no Visual Studio.** The setup fetches its own compiler (llvm-mingw, about 190 MB, once) and
   builds the game in about a minute. No admin rights needed.
 - **Linux.** The same renderer on Vulkan, SDL3 for the window, sound and controllers, and a `setup.sh` installer
@@ -104,7 +105,7 @@ button opens the in-game menu: tap a row to change it, tap outside to close it.
 **Where to get a pack:** the *HD Remaster* pack is in the Internet Archive's
 [PCSX2 HD texture packs](https://archive.org/download/pcsx2-hd-texture-packs) collection. Direct download (573 MB):
 [Tony Hawk's Underground HD Remaster.rar](https://dn721905.ca.archive.org/0/items/pcsx2-hd-texture-packs/Tony%20Hawk%27s%20Underground%20%28USA%29%20%5BSLUS-20731%5D%20HD%20Remaster.rar).
-It is made by the community, not by this project.
+It is made by the community, not by this project. The launcher has the same link: **Settings**, **GET IT**.
 
 Optional. Unpack a PCSX2 replacement pack for the PS2 version (*Tony Hawk's Underground (USA) [SLUS-20731]*), then
 pick its folder, for example `...\SLUS-20731\replacements`, in the launcher (**Settings**, **HD texture pack**).

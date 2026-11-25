@@ -246,6 +246,17 @@ SESSION 2026-11-24 (polish, after the graphics options):
   sound by ear, long sessions, other levels. The CPU is the limit now (9-12 ms busy, dips to ~50 fps).
 - BAKED COMBINERS also on PC (worker thread; interpreter until ready): paused Vancouver, baked against interpreted: 99.6 % of the
   world pixels equal, the rest within 7/255. F9 id frames (UG_DBGCOLOR) always interpret.
+- UPDATES FIXED (2026-11-24, d70c928 + 0.1.2): the user's install is in OneDrive, which marks folders read-only; shutil.rmtree of
+  build/lifted failed with WinError 5 and the rebuild stopped. ug_build.py rmtree/retry, setup.cpp DeleteTree, GameClosed,
+  launcher.old.exe, download length check (setup.cpp and updater.c), build/rt always rebuilt, stale kit folders removed.
+  Tested on the user's own install with a local stand-in for the forge (out/dev/rel: srv.py, upd.ps1, man.ps1, ui.ps1; real release
+  JSON): launcher 0.1.0 -> 0.1.1 -> 0.1.2, cut-off download refused, manual installer (game file in use: message; launcher open:
+  works). Linux package: setup.sh --update twice, also with build/lifted read-only. NOT tested: the game's own update prompt
+  (updater.c) after the change. No release is published, so nobody receives an update yet (rule: all three ports first).
+  Backup of the user's saves and 0.1.0 exe: G:/ug_backup (delete when the user agrees).
+- SETUP/LAUNCHER WINDOW: resizable (WS_THICKFRAME without frame, Relayout: every control kept in art pixels in g_placed), aspect
+  locked, launcher width in settings.ini [launcher] Width. GET IT (ID_HDGET) opens the archive.org pack link. The window previews
+  show the install path: never publish them as they are.
 - Stopping a background sweep: TaskStop leaves its bash running; kill the sweep5.sh bash too, or it keeps starting games.
 - SPEED (e9b99d7): texture hash once per frame (stable textures), descriptor sets shared, dynamic state cached, vertex fetch
   resolved per batch (855 M vertices compared with the old code: 0 differences). Vancouver ~7000 draws: 15.0 -> 10.4 ms busy.
