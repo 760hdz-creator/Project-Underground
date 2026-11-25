@@ -167,7 +167,7 @@ C. README pictures (user asked): hd_compare.jpg REPLACED (static UG_SHOTAB pair 
    (UG_LEVEL redirect, UG_SHOT=600 from 4200; ~65 min). Do NOT run anything else meanwhile (shared out/shot_*,
    route timing). TaskStop does not kill the bash loop: kill bash + timeout + underground.exe by PID. Then pick
    the best widescreen shot per map (resize to 16:9), README gallery (docs/images/maps/*.jpg), commit, push.
-USER 2026-11-24: NO Android work until the user says so. Players limited to 2 (launcher, UG_PADS clamp, docs). Polish order: sweep fixes, split-screen AO, AO in vertex-program-only scenes, hitches, supersampling in the in-game menu, >60 fps check, README gallery + Linux package.
+USER 2026-11-24: NO Android work until the user says so (LIFTED the same evening). Players limited to 2 (launcher, UG_PADS clamp, docs). Polish order: sweep fixes, split-screen AO, AO in vertex-program-only scenes, hitches, supersampling in the in-game menu, >60 fps check, README gallery + Linux package.
 SESSION 2026-11-24 (polish, after the graphics options):
 - Surface clip origin = scissor (set_clip_scissor): in split screen view 2 drew over view 1. Post-processing is per
   surface clip (FxView), AO has each view's camera. Split-screen route: out/dev/in1.txt + UG_INPUT2="58:A,64:A", UG_PADS=2.
@@ -231,6 +231,17 @@ SESSION 2026-11-24 (polish, after the graphics options):
   created at start. The quad and the repeat are dropped in draw_impl (UG_PHFIX=0 keeps them; collision untouched). Not compared
   with a real Xbox. Tools: out/badattr/near.py, phn.py, phf.py, qbd.py (QB disassembler); out/dev/fl.py (pixels that toggle and
   return in 3 consecutive frames; texture motion counts too, so look at the mask).
+- ANDROID ON A PHONE (2026-11-24, Galaxy S26 Ultra, Android 17, Adreno 840; the user lifted the hold): boots, movies, menus, New
+  Jersey free skate, sound device opens, background and resume, in-game menu by touch. Debug APK, game files copied in: push a
+  tar to /data/local/tmp, then "cat tar | run-as <pkg> tar x -C <files>/game" (adb push into the app folder is denied; exec-in
+  dropped once). Tools: out/dev/abuild.sh (build + install), ph.sh <name> <s> VAR=.. (run, fetch log and dumps; settings.ini
+  needs [settings]), tap.sh. Fixes: preTransform identity (was shown vertical and squeezed), UG_PERFHINT, touch menu button,
+  baked combiners (UG_SPEC, out/pipelines.cache), packed vertices (KLayout, VA(), D.vmap). Speed in NJ at 3x: 33 -> ~57 fps
+  cool; default 2x on phones. The phone throttles after several runs while charging (dumpsys thermalservice, status 3):
+  measure at status 0. NOT tested: the player APK (first-start unpack of 3.2 GB), RestartActivity relaunch, real controllers,
+  sound by ear, long sessions, other levels. The CPU is the limit now (9-12 ms busy, dips to ~50 fps).
+- BAKED COMBINERS also on PC (worker thread; interpreter until ready): paused Vancouver, baked against interpreted: 99.6 % of the
+  world pixels equal, the rest within 7/255. F9 id frames (UG_DBGCOLOR) always interpret.
 - Stopping a background sweep: TaskStop leaves its bash running; kill the sweep5.sh bash too, or it keeps starting games.
 - SPEED (e9b99d7): texture hash once per frame (stable textures), descriptor sets shared, dynamic state cached, vertex fetch
   resolved per batch (855 M vertices compared with the old code: 0 differences). Vancouver ~7000 draws: 15.0 -> 10.4 ms busy.
