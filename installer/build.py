@@ -11,6 +11,7 @@ import glob
 import os
 import subprocess
 import sys
+import zipfile
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 ROOT = os.path.dirname(HERE)
@@ -53,6 +54,12 @@ def main():
          "-mwindows", "-DUNICODE", "-D_UNICODE", f'-DUG_SETUP_VERSION="{ver}"', "-Wall", "-Wno-missing-braces",
          "setup.cpp", res, "-o", exe, "-s"] + ["-l" + lib for lib in LIBS], HERE)
     os.remove(res)
+    # the portable zip (RecompLauncher): the same program and recomplauncher.json
+    zname = os.path.join(dist, f"ProjectUnderground-{ver}-Windows-x64.zip")
+    with zipfile.ZipFile(zname, "w", zipfile.ZIP_DEFLATED) as z:
+        z.write(exe, "ProjectUnderground.exe")
+        z.write(os.path.join(ROOT, "recomplauncher.json"), "recomplauncher.json")
+    print(f"Built {zname} ({os.path.getsize(zname) / 1e6:.1f} MB)")
     print(f"Built {exe} ({os.path.getsize(exe) / 1e6:.1f} MB)")
 
 

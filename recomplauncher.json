@@ -1,0 +1,189 @@
+{
+  "$schema": "https://recomplauncher.com/schema/recomplauncher.json",
+  "format": 1,
+  "name": "Project Underground",
+  "inputs": [
+    {
+      "id": "game",
+      "role": "game",
+      "label": "Your copy of Tony Hawk's Underground for the original Xbox, USA (NTSC-U): its disc image (.iso or .xiso), or its extracted folder with default.xbe.",
+      "formats": [{ "type": "file", "extensions": ["iso", "xiso"] }, { "type": "folder" }],
+      "check": { "xdvdfs": "default.xbe", "file": "default.xbe" }
+    }
+  ],
+  "start": {
+    "program": ["ProjectUnderground.exe", "ProjectUnderground"],
+    "args": ["--play", "--data={data}"]
+  },
+  "prepare": {
+    "program": ["ProjectUnderground.exe", "ProjectUnderground"],
+    "args": ["--prepare", "--game={input:game}", "--data={data}"],
+    "label": "Builds the game from your disc (on Windows the first time downloads the llvm-mingw compiler, 190 MB; on Linux it uses your clang or gcc)",
+    "done": ["{data}/build/version.txt", "{data}/game/default.xbe"],
+    "keeps_copy": true
+  },
+  "config": [
+    {
+      "id": "main",
+      "format": "ini",
+      "file": [{ "path": "{data}/settings.ini" }],
+      "new": { "settings/UG_SCALE": "2" }
+    }
+  ],
+  "settings": [
+    {
+      "id": "window", "label": "Window", "group": "Display",
+      "help": "Fullscreen is borderless and uses your screen's own resolution. F11 switches in the game.",
+      "choices": [
+        { "label": "Windowed", "set": { "settings/UG_FULLSCREEN": "0" } },
+        { "label": "Fullscreen", "set": { "settings/UG_FULLSCREEN": "1" } }
+      ],
+      "defaults": { "settings/UG_FULLSCREEN": "0" }
+    },
+    {
+      "id": "window_size", "label": "Window size", "group": "Display",
+      "help": "The size of the game's window. One that is too large for your screen is made to fit.",
+      "choices": [
+        { "label": "1280 x 720", "set": { "settings/UG_WINDOW": "1280x720" } },
+        { "label": "1600 x 900", "set": { "settings/UG_WINDOW": "1600x900" } },
+        { "label": "1920 x 1080", "set": { "settings/UG_WINDOW": "1920x1080" } },
+        { "label": "2560 x 1440", "set": { "settings/UG_WINDOW": "2560x1440" } },
+        { "label": "3840 x 2160", "set": { "settings/UG_WINDOW": "3840x2160" } }
+      ],
+      "when": { "settings/UG_FULLSCREEN": "0" }
+    },
+    {
+      "id": "screen", "label": "Screen", "group": "Display",
+      "help": "16:9 is the game's own widescreen mode: you see more of the level.",
+      "choices": [
+        { "label": "16:9 widescreen", "set": { "settings/UG_WIDESCREEN": "1" } },
+        { "label": "4:3 original", "set": { "settings/UG_WIDESCREEN": "0" } }
+      ],
+      "defaults": { "settings/UG_WIDESCREEN": "1" }
+    },
+    {
+      "id": "picture", "label": "Picture", "group": "Display",
+      "help": "How the picture fits a screen of another shape.",
+      "choices": [
+        { "label": "Keep shape, black bars", "set": { "settings/UG_ASPECT": "keep" } },
+        { "label": "Stretch", "set": { "settings/UG_ASPECT": "stretch" } }
+      ],
+      "defaults": { "settings/UG_ASPECT": "keep" }
+    },
+    {
+      "id": "fps", "label": "Frame rate", "group": "Display",
+      "help": "The game plays at the same speed at both.",
+      "choices": [
+        { "label": "60", "set": { "settings/UG_FPS": "60" } },
+        { "label": "30", "set": { "settings/UG_FPS": "30" } }
+      ],
+      "defaults": { "settings/UG_FPS": "60" }
+    },
+    {
+      "id": "vsync", "label": "V-Sync", "group": "Display",
+      "help": "Waits for your screen's refresh, so the picture doesn't tear.",
+      "choices": [
+        { "label": "On", "set": { "settings/UG_VSYNC": "1" } },
+        { "label": "Off", "set": { "settings/UG_VSYNC": "0" } }
+      ],
+      "defaults": { "settings/UG_VSYNC": "1" }
+    },
+    {
+      "id": "scale", "label": "Resolution", "group": "Graphics",
+      "help": "What the game draws at, as a multiple of the Xbox's 480 lines. Higher is sharper and needs a faster graphics card.",
+      "choices": [
+        { "label": "1x (480 lines)", "set": { "settings/UG_SCALE": "1" } },
+        { "label": "2x (960 lines)", "set": { "settings/UG_SCALE": "2" } },
+        { "label": "3x (1440 lines)", "set": { "settings/UG_SCALE": "3" } },
+        { "label": "4x (1920 lines)", "set": { "settings/UG_SCALE": "4" } },
+        { "label": "5x (2400 lines)", "set": { "settings/UG_SCALE": "5" } },
+        { "label": "6x (2880 lines)", "set": { "settings/UG_SCALE": "6" } },
+        { "label": "8x (3840 lines)", "set": { "settings/UG_SCALE": "8" } }
+      ],
+      "defaults": { "settings/UG_SCALE": "2" }
+    },
+    {
+      "id": "fxaa", "label": "Anti-aliasing", "group": "Graphics",
+      "help": "Smooths jagged edges (FXAA). The HUD stays sharp.",
+      "choices": [
+        { "label": "Off", "set": { "settings/UG_FXAA": "0" } },
+        { "label": "On", "set": { "settings/UG_FXAA": "1" } }
+      ],
+      "defaults": { "settings/UG_FXAA": "0" }
+    },
+    {
+      "id": "ao", "label": "Ambient occlusion", "group": "Graphics",
+      "help": "Soft shading in corners and where things touch.",
+      "choices": [
+        { "label": "Off", "set": { "settings/UG_AO": "0" } },
+        { "label": "On", "set": { "settings/UG_AO": "1" } }
+      ],
+      "defaults": { "settings/UG_AO": "0" }
+    },
+    {
+      "id": "aniso", "label": "Texture filtering", "group": "Graphics",
+      "help": "Keeps roads and walls sharp at shallow angles.",
+      "choices": [
+        { "label": "Off", "set": { "settings/UG_ANISO": "0" } },
+        { "label": "2x", "set": { "settings/UG_ANISO": "2" } },
+        { "label": "4x", "set": { "settings/UG_ANISO": "4" } },
+        { "label": "8x", "set": { "settings/UG_ANISO": "8" } },
+        { "label": "16x", "set": { "settings/UG_ANISO": "16" } }
+      ],
+      "defaults": { "settings/UG_ANISO": "16" }
+    },
+    {
+      "id": "drawdist", "label": "Draw distance", "group": "Graphics",
+      "help": "Max keeps far people, cars and props from vanishing.",
+      "choices": [
+        { "label": "Xbox", "set": { "settings/UG_DRAWDIST": "0" } },
+        { "label": "Max", "set": { "settings/UG_DRAWDIST": "1" } }
+      ],
+      "defaults": { "settings/UG_DRAWDIST": "0" }
+    },
+    {
+      "id": "pads", "label": "Players", "group": "Controls",
+      "help": "Gamepads in the game. Two players play in split screen.",
+      "choices": [
+        { "label": "1", "set": { "settings/UG_PADS": "1" } },
+        { "label": "2", "set": { "settings/UG_PADS": "2" } }
+      ],
+      "defaults": { "settings/UG_PADS": "1" }
+    },
+    {
+      "id": "invert_y", "label": "Camera up/down", "group": "Controls",
+      "help": "The right stick. Xbox is the original, inverted direction.",
+      "choices": [
+        { "label": "Normal", "set": { "settings/UG_INVERTY": "1" } },
+        { "label": "Xbox", "set": { "settings/UG_INVERTY": "0" } }
+      ],
+      "defaults": { "settings/UG_INVERTY": "1" }
+    },
+    {
+      "id": "invert_x", "label": "Camera left/right", "group": "Controls",
+      "help": "The right stick. Xbox is the original, inverted direction.",
+      "choices": [
+        { "label": "Normal", "set": { "settings/UG_INVERTX": "1" } },
+        { "label": "Xbox", "set": { "settings/UG_INVERTX": "0" } }
+      ],
+      "defaults": { "settings/UG_INVERTX": "1" }
+    }
+  ],
+  "folders": {
+    "game": [{ "path": "{data}" }],
+    "saves": [{ "path": "{data}/out/hdd/p1/UDATA" }],
+    "logs": [{ "path": "{data}/out" }]
+  },
+  "saves": ["{data}/out/hdd/p1/UDATA", "{data}/settings.ini"],
+  "actions": [
+    { "id": "saves", "label": "Saves", "help": "Your skaters and story progress.", "open": "saves" },
+    { "id": "logs", "label": "Logs", "help": "The game's log, for bug reports.", "open": "logs" }
+  ],
+  "exit_codes": {
+    "2": "The game isn't set up yet. Press Set Up Again on the game's page."
+  },
+  "system": {
+    "windows": { "version": "10", "graphics": { "vulkan": "1.3" } },
+    "linux": { "glibc": "2.38", "graphics": { "vulkan": "1.3" } }
+  }
+}
