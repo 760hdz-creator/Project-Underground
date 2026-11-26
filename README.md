@@ -68,7 +68,8 @@ The installer checks `default.xbe` against that SHA-256 and stops if it is anoth
 > - **Your antivirus quarantines `underground.exe` after the build:** restore it and allow the install folder, then run the
 >   setup again and choose the update. Don't turn your antivirus off completely.
 > - Only download from the official [Forge](https://git.8gramlabs.com/8gramlabs/Project-Underground/releases),
->   [GitLab](https://gitlab.com/octagram-labs-group/Project-Underground/-/releases) or [GitHub](https://github.com/760hdz-creator/Project-Underground/releases) release pages.
+>   [GitLab](https://gitlab.com/octagram-labs-group/Project-Underground/-/releases) or [GitHub](https://github.com/760hdz-creator/Project-Underground/releases) release pages,
+>   or from recomp launcher sites like [RecompLauncher](https://recomplauncher.com/game/project-underground) or [Quiver](https://github.com/tgeorgiadis/quiver).
 
 > [!NOTE]
 > **Online play is being worked on.** For now only local two-player split screen is available.
