@@ -253,6 +253,13 @@ python -I tools\ug_build.py --root <build folder> --iso "<path to your disc imag
 This is the same build the installer runs. `python -I installer\build.py` packages
 `dist\ProjectUnderground-Setup-<version>.exe`. Linux: `tools/build_linux.sh` and `tools/package_linux.sh`.
 
+## Support
+
+This project is free, and it stays free. I work on it in my free time. If you'd like to support that, you can leave a
+tip on Ko-fi. Donations are completely optional and don't unlock anything.
+
+<a href="https://ko-fi.com/8gram_labs"><img src="https://ko-fi.com/img/githubbutton_sm.svg" alt="Support me on Ko-fi"></a>
+
 ## Legal
 
 Tony Hawk's Underground is a trademark of its owners. This project is not affiliated with or endorsed by them. It
