@@ -13,7 +13,7 @@
 [![60 fps](https://img.shields.io/badge/60_fps-default-success)](#features)
 [![Release](https://img.shields.io/badge/release-Windows_%2B_Linux-success)](#download)
 
-<a href="https://recomplauncher.com"><picture><source media="(prefers-color-scheme: dark)" srcset="https://recomplauncher.com/assets/press/launcher/badge-light.svg"><img alt="Get it on RecompLauncher" src="https://recomplauncher.com/assets/press/launcher/badge-dark.svg" height="48"></picture></a>
+<a href="https://recomplauncher.com/game/project-underground"><picture><source media="(prefers-color-scheme: dark)" srcset="https://recomplauncher.com/assets/press/launcher/badge-light.svg"><img alt="Get it on RecompLauncher" src="https://recomplauncher.com/assets/press/launcher/badge-dark.svg" height="48"></picture></a>
 
 This project is free, and it stays free. I work on it in my free time. If you'd like to support that, you can leave a tip on Ko-fi. Donations are completely optional and don't unlock anything.
 
