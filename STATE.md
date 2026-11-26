@@ -123,6 +123,9 @@ print(','.join(ev))")" UG_SHOT=1200 ./out/underground.exe   (NJ level by ~frame 
   script: user to confirm by ear (SFX master = float at 0x2299A8, setter 3E840; music/speech via 33D70).
   2ac01ec (user: ambience still loud, music quieter, NPCs a bit louder): mix trims UG_MIXSFX -4 / UG_MIXVOICE +3 (mono
   streams) / UG_MIXMUSIC +4 (stereo streams) dB, Bink untouched, soft limiter above -2 dB. Installed to the user's OneDrive install.
+- FIXED 2026-11-25: Bink movies after any 3D scene were black (user: Tampa win). Movies swap with 1D8C = 0 and the shadow maps
+  render to a dummy color surface at 0, so flip_impl showed that one. Now 1D8C = 0 presents the surface just drawn. Repro: attract
+  demo_1.bik (menu idle ~35 s). Debug: UG_CUTSUB=<name> plays data/cutscenes/<name>.cut in place of Intro_01 (new game).
 
 RESUME HERE (paused 2026-11-24 ~00:30, user's request):
 A. PINK HOUSE (FIXED 2026-11-24, see "PINK HOUSE FIXED" below; kept for history) (NJ, user screenshot): a pink house wall shows a diagonal split, an untextured flat-pink part and

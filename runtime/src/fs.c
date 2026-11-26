@@ -160,6 +160,13 @@ static uint32_t open_common(uint32_t handle_out, uint32_t oa, uint32_t io, uint3
         iosb(io, ST_PATH_NOT_FOUND, 0);
         return ST_PATH_NOT_FOUND;
     }
+    {   /* UG_CUTSUB=<name>: debug, the first story cutscene (Intro_01) plays data/cutscenes/<name>.cut instead */
+        const char *e = getenv("UG_CUTSUB"), *q = strrchr(host, '\\');
+        if (e && *e && q && !_stricmp(q + 1, "Intro_01.cut.Xbx")) {
+            snprintf((char *)q + 1, MAX_PATH - (size_t)(q + 1 - host), "%s.cut.xbx", e);
+            LOG("[fs] cutscene Intro_01 -> %s (UG_CUTSUB)\n", e);
+        }
+    }
     DWORD attr = GetFileAttributesA(host);
     int exists = attr != INVALID_FILE_ATTRIBUTES;
     int want_dir = (options & 1) != 0; /* FILE_DIRECTORY_FILE */

@@ -2752,7 +2752,9 @@ static void flip_impl(uint32_t addr) {
                 tcache[i].hd = 0;
             }
     /* XDK 5659 swaps without naming the front buffer (4242 left it in 1D8C): present the surface just rendered */
-    Surface *s = find_rt(addr);
+    /* 1D8C = 0 (movies swap without it) is no surface: the shadow maps render to a dummy color surface at 0, so after any
+     * 3D scene that one (black) was shown instead of the movie */
+    Surface *s = addr ? find_rt(addr) : NULL;
     if (!s) s = cur_rt;
     last_present = s;
     {   /* UG_FXAB=1: draws per frame, on (even) against off (odd) */
