@@ -13,8 +13,6 @@
 [![60 fps](https://img.shields.io/badge/60_fps-default-success)](#features)
 [![Release](https://img.shields.io/badge/release-Windows_%2B_Linux-success)](#download)
 
-<a href="https://recomplauncher.com"><picture><source media="(prefers-color-scheme: dark)" srcset="https://recomplauncher.com/assets/press/launcher/badge-light.svg"><img alt="Get it on RecompLauncher" src="https://recomplauncher.com/assets/press/launcher/badge-dark.svg" height="48"></picture></a>
-
 A static recompilation by 8gram Labs: the original x86 game code is translated to C and compiled natively for
 64-bit Windows, Linux and Android phones, with its own Vulkan renderer, higher resolutions, 60 fps and a launcher.
 
@@ -30,7 +28,7 @@ A static recompilation by 8gram Labs: the original x86 game code is translated t
 | | File |
 |---|---|
 | **Windows 10/11** (64-bit, Vulkan 1.3 GPU) | `ProjectUnderground-Setup-<version>.exe` |
-| **Windows**, without an installer, or for RecompLauncher | `ProjectUnderground-<version>-Windows-x64.zip` |
+| **Windows**, without an installer | `ProjectUnderground-<version>-Windows-x64.zip` |
 | **Linux** (x86-64, glibc 2.38+, Vulkan 1.3 GPU) | `ProjectUnderground-Linux-x64-<version>.tar.gz` |
 
 Get them from the releases on [git.8gramlabs.com](https://git.8gramlabs.com/8gramlabs/Project-Underground/releases) or
