@@ -274,6 +274,9 @@ SESSION 2026-11-24 (polish, after the graphics options):
   all files; "Load last save" then reads it without an error. Test windows take the user's controller: ask before a scripted run.
 - RecompLauncher: submitted 2026-11-24 from the Octagram Labs-group developer account (Made by 8gram Labs); review 24-48 h.
   After it is listed: point the README badge at its own page. Their form check does not open GitLab release files (said so in the note).
+- RELEASED v0.1.6 (tag edd9176, 2026-11-25, user said push): audio mix-bin levels + trims, Bink after 3D no longer black.
+  Windows + Linux (WSL fresh --iso install OK), GitLab + forge releases, GitHub gets branch + tag only. Both sites' downloads match
+  the SHA-256 in out/dev/rel/notes016.md. The user's install still says VERSION 0.1.5 (exe patched by hand): the launcher offers 0.1.6.
 - RELEASED v0.1.5 (tag e6e4e3e, 2026-11-25): the two save fixes above, Windows + Linux, both sites; downloads match the notes. The real
   setup updated the user's install (--update --dir). Linux: fresh --iso install in WSL only. Not tested: the launcher's own update
   0.1.4 -> 0.1.5, Android on the phone. Build script for WSL: out/dev/rel/relb.sh. Saves before it: G:/ug_backup/hdd_before_0.1.5.
