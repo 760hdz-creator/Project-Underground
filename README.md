@@ -13,6 +13,10 @@
 [![60 fps](https://img.shields.io/badge/60_fps-default-success)](#features)
 [![Release](https://img.shields.io/badge/release-Windows_%2B_Linux-success)](#download)
 
+This project is free, and it stays free. I work on it in my free time. If you'd like to support that, you can leave a tip on Ko-fi. Donations are completely optional and don't unlock anything.
+
+[![Support me on Ko-fi](https://ko-fi.com/img/githubbutton_sm.svg)](https://ko-fi.com/8gram_labs)
+
 A static recompilation by 8gram Labs: the original x86 game code is translated to C and compiled natively for
 64-bit Windows, Linux and Android phones, with its own Vulkan renderer, higher resolutions, 60 fps and a launcher.
 
@@ -252,13 +256,6 @@ python -I tools\ug_build.py --root <build folder> --iso "<path to your disc imag
 
 This is the same build the installer runs. `python -I installer\build.py` packages
 `dist\ProjectUnderground-Setup-<version>.exe`. Linux: `tools/build_linux.sh` and `tools/package_linux.sh`.
-
-## Support
-
-This project is free, and it stays free. I work on it in my free time. If you'd like to support that, you can leave a
-tip on Ko-fi. Donations are completely optional and don't unlock anything.
-
-<a href="https://ko-fi.com/8gram_labs"><img src="https://ko-fi.com/img/githubbutton_sm.svg" alt="Support me on Ko-fi"></a>
 
 ## Legal
 
